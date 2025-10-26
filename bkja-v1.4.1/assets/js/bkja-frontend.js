@@ -922,7 +922,12 @@
                         }
                         if(!response.ok){
                             var error = new Error('Request failed');
-                            error.data = data;
+                            if(data && data.data){
+                                error.data = data.data;
+                            } else {
+                                error.data = data;
+                            }
+                            error.status = response.status;
                             throw error;
                         }
                         return data;
@@ -972,7 +977,8 @@
                     var data = err && err.data ? err.data : null;
                     if(data && data.error === 'guest_limit'){
                         var loginUrl = (data.login_url || '/wp-login.php');
-                        pushBotHtml('<div style="color:#d32f2f;font-weight:700;padding:12px 0;">برای ادامه گفتگو باید عضو سایت شوید.<br> <a href="'+loginUrl+'" style="color:#1976d2;text-decoration:underline;font-weight:700;">ورود یا ثبت‌نام</a></div>');
+                        var limitMsg = data.msg || 'برای ادامه گفتگو باید عضو سایت شوید.';
+                        pushBotHtml('<div style="color:#d32f2f;font-weight:700;padding:12px 0;">'+esc(limitMsg)+'<br> <a href="'+loginUrl+'" style="color:#1976d2;text-decoration:underline;font-weight:700;">ورود یا ثبت‌نام</a></div>');
                     } else {
                         pushBot('خطا در ارتباط با سرور');
                     }
