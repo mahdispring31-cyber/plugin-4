@@ -770,3 +770,4 @@ if ( ! function_exists('bkja_update_job_handler') ) {
 		exit;
 	}
 }
+// test auto update
