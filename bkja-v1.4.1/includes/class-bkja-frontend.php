@@ -50,7 +50,7 @@ class BKJA_Frontend {
             wp_send_json_error(array('error'=>'empty_message'),400);
         }
 
-        $user_id = get_current_user_id() ?: 0;
+        $user_id   = get_current_user_id() ?: 0;
         $free_limit = (int)get_option('bkja_free_messages_per_day',5);
         // تعیین آدرس ورود/عضویت ووکامرس اگر فعال است
         $login_url = function_exists('wc_get_page_permalink') ? wc_get_page_permalink('myaccount') : wp_login_url();
@@ -61,18 +61,11 @@ class BKJA_Frontend {
             if(empty($session) || strpos($session, 'guest_') !== 0){
                 wp_send_json_error(array('error'=>'invalid_session','msg'=>'جلسه مهمان معتبر نیست.'),400);
             }
-            global $wpdb;
-            $table = $wpdb->prefix . 'bkja_chats';
             if($free_limit <= 0){
                 wp_send_json_error(array('error'=>'guest_limit','msg'=>'برای ادامه گفتگو باید عضو سایت شوید.','login_url'=>$login_url),403);
             }
-            // فقط پیام‌های واقعی کاربر مهمان را بشمار (message باید خالی نباشد)
-            $msg_count = $wpdb->get_var(
-                $wpdb->prepare(
-                    "SELECT COUNT(*) FROM {$table} WHERE session_id = %s AND message IS NOT NULL AND message <> '' AND created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)",
-                    $session
-                )
-            );
+            // فقط پیام‌های واقعی کاربر مهمان را بشمار
+            $msg_count = BKJA_Database::count_guest_messages($session);
             if($msg_count >= $free_limit){
                 wp_send_json_error(array('error'=>'guest_limit','msg'=>'برای ادامه گفتگو باید عضو سایت شوید.','login_url'=>$login_url),403);
             }

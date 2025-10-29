@@ -118,6 +118,33 @@ class BKJA_Database {
     }
 
     /**
+     * شمارش پیام‌های کاربر مهمان در بازه مشخص
+     */
+    public static function count_guest_messages( $session_id, $max_age_seconds = DAY_IN_SECONDS ) {
+        if ( empty( $session_id ) ) {
+            return 0;
+        }
+
+        global $wpdb;
+        $table      = $wpdb->prefix . 'bkja_chats';
+        $session_id = sanitize_text_field( $session_id );
+        $max_age_seconds = (int) $max_age_seconds;
+
+        $sql    = "SELECT COUNT(*) FROM {$table} WHERE session_id = %s AND message IS NOT NULL AND message <> ''";
+        $params = array( $session_id );
+
+        if ( $max_age_seconds > 0 ) {
+            $timestamp_gmt = current_time( 'timestamp', true );
+            $threshold     = gmdate( 'Y-m-d H:i:s', max( 0, $timestamp_gmt - $max_age_seconds ) );
+            $sql          .= ' AND created_at >= %s';
+            $params[]      = $threshold;
+        }
+
+        $prepared = $wpdb->prepare( $sql, $params );
+        return (int) $wpdb->get_var( $prepared );
+    }
+
+    /**
      * insert_job
      * درج یک رکورد شغلی (هر رکورد متعلق به یک کاربر/مشاهده است)
      */

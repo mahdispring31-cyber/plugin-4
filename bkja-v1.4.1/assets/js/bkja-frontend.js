@@ -975,6 +975,12 @@
                 }).catch(function(err){
                     personalityFlow.awaitingResult = false;
                     var data = err && err.data ? err.data : null;
+                    if(!data && err && err.responseJSON){
+                        data = err.responseJSON;
+                    }
+                    if(data && data.data){
+                        data = data.data;
+                    }
                     if(data && data.error === 'guest_limit'){
                         var loginUrl = (data.login_url || '/wp-login.php');
                         var limitMsg = data.msg || 'برای ادامه گفتگو باید عضو سایت شوید.';
