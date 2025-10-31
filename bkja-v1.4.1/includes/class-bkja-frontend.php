@@ -13,8 +13,8 @@ class BKJA_Frontend {
     }
 
     public static function enqueue_assets(){
-        wp_enqueue_style('bkja-frontend', BKJA_PLUGIN_URL.'assets/css/bkja-frontend.css', array(), '1.3.2');
-        wp_enqueue_script('bkja-frontend', BKJA_PLUGIN_URL.'assets/js/bkja-frontend.js', array('jquery'), '1.3.2', true);
+        wp_enqueue_style('bkja-frontend', BKJA_PLUGIN_URL.'assets/css/bkja-frontend.css', array(), '1.3.3');
+        wp_enqueue_script('bkja-frontend', BKJA_PLUGIN_URL.'assets/js/bkja-frontend.js', array('jquery'), '1.3.3', true);
         $data = array(
             'ajax_url' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('bkja_nonce'),
@@ -39,7 +39,10 @@ class BKJA_Frontend {
     }
 
     public static function ajax_send_message(){
-        check_ajax_referer('bkja_nonce','nonce');
+        $nonce = isset($_POST['nonce']) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+        if ( ! wp_verify_nonce( $nonce, 'bkja_nonce' ) ) {
+            wp_send_json_error(array('error'=>'invalid_nonce'),403);
+        }
         $message         = isset($_POST['message']) ? sanitize_textarea_field(wp_unslash($_POST['message'])) : '';
         $category        = isset($_POST['category']) ? sanitize_text_field(wp_unslash($_POST['category'])) : '';
         $session         = isset($_POST['session']) ? sanitize_text_field(wp_unslash($_POST['session'])) : '';
@@ -160,7 +163,10 @@ class BKJA_Frontend {
     }
 
     public static function ajax_feedback(){
-        check_ajax_referer('bkja_nonce','nonce');
+        $nonce = isset($_POST['nonce']) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+        if ( ! wp_verify_nonce( $nonce, 'bkja_nonce' ) ) {
+            wp_send_json_error(array('error'=>'invalid_nonce'),403);
+        }
 
         $vote = isset($_POST['vote']) ? intval($_POST['vote']) : 0;
         if (!in_array($vote, array(1,-1), true)) {
@@ -211,7 +217,10 @@ class BKJA_Frontend {
     }
 
     public static function ajax_get_history(){
-        check_ajax_referer('bkja_nonce','nonce');
+        $nonce = isset($_POST['nonce']) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+        if ( ! wp_verify_nonce( $nonce, 'bkja_nonce' ) ) {
+            wp_send_json_error(array('error'=>'invalid_nonce'),403);
+        }
 
         $session = isset($_POST['session']) ? sanitize_text_field(wp_unslash($_POST['session'])) : '';
         $user_id = get_current_user_id() ?: 0;
