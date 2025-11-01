@@ -4,6 +4,217 @@
     var SHOW_TECH_META = false;
     var config = window.BKJA || window.bkja_vars || {};
     var nonceRefreshRequest = null;
+    var sessionId = '';
+    var guestUsageKey = '';
+    var guestUsage = null;
+
+    function storageUsable(){
+        if(typeof localStorage === 'undefined'){
+            return false;
+        }
+        try {
+            var testKey = '__bkja_test__';
+            localStorage.setItem(testKey, testKey);
+            localStorage.removeItem(testKey);
+            return true;
+        } catch (storageError) {
+            return false;
+        }
+    }
+
+    function readCookie(name){
+        var escaped = name.replace(/([.$?*|{}()\[\]\\\/\+^])/g, '\\$1');
+        var pattern = new RegExp('(?:^|; )' + escaped + '=([^;]*)');
+        var match = document.cookie.match(pattern);
+        return match ? decodeURIComponent(match[1]) : '';
+    }
+
+    function writeCookie(name, value, days){
+        var expires = '';
+        if(typeof days === 'number'){
+            var date = new Date();
+            date.setTime(date.getTime() + days * 24 * 60 * 60 * 1000);
+            expires = '; expires=' + date.toUTCString();
+        }
+        document.cookie = name + '=' + encodeURIComponent(value || '') + expires + '; path=/';
+    }
+
+    var localStorageAvailable = storageUsable();
+    var sessionStorageAvailable = localStorageAvailable;
+    var guestUsageStorageAvailable = localStorageAvailable;
+    var SESSION_STORAGE_KEY = 'bkja_session_id';
+
+    function nowMs(){
+        if(typeof Date !== 'undefined' && Date.now){
+            return Date.now();
+        }
+        return new Date().getTime();
+    }
+
+    function loadGuestUsage(){
+        var usage = { count: 0, updated: nowMs() };
+        if(!guestUsageKey){
+            return usage;
+        }
+        if(guestUsageStorageAvailable){
+            try {
+                var raw = localStorage.getItem(guestUsageKey);
+                if(raw){
+                    var parsed = JSON.parse(raw);
+                    if(parsed && typeof parsed.count === 'number' && parsed.count >= 0){
+                        usage.count = parsed.count;
+                    }
+                    if(parsed && typeof parsed.updated === 'number' && parsed.updated > 0){
+                        usage.updated = parsed.updated;
+                    }
+                }
+            } catch(storageError){
+                guestUsageStorageAvailable = false;
+            }
+        }
+        if(!usage.updated || usage.updated <= 0){
+            usage.updated = nowMs();
+        }
+        var maxAgeMs = 24 * 60 * 60 * 1000;
+        if(usage.updated && nowMs() - usage.updated > maxAgeMs){
+            usage.count = 0;
+            usage.updated = nowMs();
+        }
+        return usage;
+    }
+
+    function persistGuestUsage(){
+        if(!guestUsageStorageAvailable || !guestUsageKey){
+            return;
+        }
+        try {
+            localStorage.setItem(guestUsageKey, JSON.stringify({
+                count: guestUsage && typeof guestUsage.count === 'number' ? guestUsage.count : 0,
+                updated: guestUsage && typeof guestUsage.updated === 'number' ? guestUsage.updated : nowMs()
+            }));
+        } catch(storageError){
+            guestUsageStorageAvailable = false;
+        }
+    }
+
+    function setGuestUsageCount(value){
+        var parsed = parseInt(value, 10);
+        if(isNaN(parsed) || parsed < 0){
+            parsed = 0;
+        }
+        if(!guestUsage){
+            guestUsage = { count: parsed, updated: nowMs() };
+        } else {
+            guestUsage.count = parsed;
+            guestUsage.updated = nowMs();
+        }
+        persistGuestUsage();
+    }
+
+    function incrementGuestUsage(){
+        setGuestUsageCount(getGuestUsageCount() + 1);
+    }
+
+    function getGuestUsageCount(){
+        if(guestUsage && typeof guestUsage.count === 'number' && guestUsage.count >= 0){
+            return guestUsage.count;
+        }
+        return 0;
+    }
+
+    function getGuestLimit(){
+        var limit = parseInt(config.free_limit, 10);
+        if(isNaN(limit) || limit < 0){
+            return 0;
+        }
+        return limit;
+    }
+
+    function updateGuestLimitFromServer(value){
+        var parsed = parseInt(value, 10);
+        if(!isNaN(parsed)){
+            config.free_limit = parsed;
+        }
+    }
+
+    function defaultLoginUrl(){
+        var url = config.login_url;
+        if(typeof url !== 'string' || !url.length){
+            url = '/wp-login.php';
+        }
+        return url;
+    }
+
+    function canGuestSendMessage(){
+        if(isTruthy(config.is_logged_in)){
+            return true;
+        }
+        var limit = getGuestLimit();
+        if(limit <= 0){
+            return false;
+        }
+        return getGuestUsageCount() < limit;
+    }
+
+    function generateGuestSessionId(){
+        return 'guest_' + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2, 6);
+    }
+
+    function persistSessionId(value){
+        if(!value){
+            return;
+        }
+        if(sessionStorageAvailable){
+            try {
+                localStorage.setItem(SESSION_STORAGE_KEY, value);
+            } catch(storageError){
+                sessionStorageAvailable = false;
+                guestUsageStorageAvailable = false;
+            }
+        }
+        writeCookie(SESSION_STORAGE_KEY, value, 30);
+    }
+
+    function obtainStoredSessionId(){
+        if(sessionStorageAvailable){
+            try {
+                var stored = localStorage.getItem(SESSION_STORAGE_KEY);
+                if(stored){
+                    return stored;
+                }
+            } catch(storageError){
+                sessionStorageAvailable = false;
+                guestUsageStorageAvailable = false;
+            }
+        }
+        var cookieVal = readCookie(SESSION_STORAGE_KEY);
+        return cookieVal || '';
+    }
+
+    function applyGuestSession(newSession){
+        if(typeof newSession !== 'string'){
+            return;
+        }
+        var trimmed = $.trim(newSession);
+        if(!trimmed || trimmed.indexOf('guest_') !== 0){
+            return;
+        }
+        persistSessionId(trimmed);
+        sessionId = trimmed;
+        guestUsageKey = 'bkja_guest_usage_v2_' + sessionId;
+        guestUsage = loadGuestUsage();
+    }
+
+    function ensureSessionId(){
+        var stored = obtainStoredSessionId();
+        if(stored && stored.indexOf('guest_') === 0){
+            applyGuestSession(stored);
+            return sessionId;
+        }
+        var generated = generateGuestSessionId();
+        applyGuestSession(generated);
+        return sessionId;
+    }
 
     function refreshNonce(){
         if(nonceRefreshRequest){
@@ -24,6 +235,9 @@
                 }
                 if(res.data.hasOwnProperty('login_url') && res.data.login_url){
                     config.login_url = res.data.login_url;
+                }
+                if(res.data.guest_session){
+                    applyGuestSession(res.data.guest_session);
                 }
                 deferred.resolve(true);
             } else {
@@ -47,6 +261,9 @@
             dataType: options.dataType || 'json',
             data: payload
         }).done(function(res, textStatus, jqXHR){
+            if(res && res.data && res.data.guest_session){
+                applyGuestSession(res.data.guest_session);
+            }
             if(res && res.data && res.data.error === 'invalid_nonce' && !options._retry){
                 refreshNonce().then(function(success){
                     if(success){
@@ -65,6 +282,9 @@
             }
         }).fail(function(jqXHR, textStatus, errorThrown){
             var responseJSON = jqXHR && jqXHR.responseJSON;
+            if(responseJSON && responseJSON.data && responseJSON.data.guest_session){
+                applyGuestSession(responseJSON.data.guest_session);
+            }
             var invalidNonce = jqXHR && jqXHR.status === 403 && responseJSON && responseJSON.data && responseJSON.data.error === 'invalid_nonce';
             if(!invalidNonce && responseJSON && responseJSON.data && responseJSON.data.error === 'invalid_nonce'){
                 invalidNonce = true;
@@ -262,127 +482,12 @@
             ]
         };
 
-        function getSessionId(){
-            var s = localStorage.getItem('bkja_session_id');
-            if(!s){
-                s = 'guest_' + Math.random().toString(36).substr(2,9);
-                localStorage.setItem('bkja_session_id', s);
-            }
-            return s;
+        sessionId = ensureSessionId();
+        if(!guestUsageKey){
+            guestUsageKey = 'bkja_guest_usage_v2_' + sessionId;
         }
-        var sessionId = getSessionId();
-
-        var guestUsageStorageAvailable = typeof localStorage !== 'undefined';
-        var guestUsageKey = 'bkja_guest_usage_v2_' + sessionId;
-        var guestUsage = loadGuestUsage();
-
-        function nowMs(){
-            if(typeof Date !== 'undefined' && Date.now){
-                return Date.now();
-            }
-            return new Date().getTime();
-        }
-
-        function loadGuestUsage(){
-            var usage = { count: 0, updated: nowMs() };
-            if(guestUsageStorageAvailable){
-                try {
-                    var raw = localStorage.getItem(guestUsageKey);
-                    if(raw){
-                        var parsed = JSON.parse(raw);
-                        if(parsed && typeof parsed.count === 'number' && parsed.count >= 0){
-                            usage.count = parsed.count;
-                        }
-                        if(parsed && typeof parsed.updated === 'number' && parsed.updated > 0){
-                            usage.updated = parsed.updated;
-                        }
-                    }
-                } catch(storageError){
-                    guestUsageStorageAvailable = false;
-                }
-            }
-            if(!usage.updated || usage.updated <= 0){
-                usage.updated = nowMs();
-            }
-            var maxAgeMs = 24 * 60 * 60 * 1000;
-            if(usage.updated && nowMs() - usage.updated > maxAgeMs){
-                usage.count = 0;
-                usage.updated = nowMs();
-            }
-            return usage;
-        }
-
-        function persistGuestUsage(){
-            if(!guestUsageStorageAvailable){
-                return;
-            }
-            try {
-                localStorage.setItem(guestUsageKey, JSON.stringify({
-                    count: guestUsage && typeof guestUsage.count === 'number' ? guestUsage.count : 0,
-                    updated: guestUsage && typeof guestUsage.updated === 'number' ? guestUsage.updated : nowMs()
-                }));
-            } catch(storageError){
-                guestUsageStorageAvailable = false;
-            }
-        }
-
-        function setGuestUsageCount(value){
-            var parsed = parseInt(value, 10);
-            if(isNaN(parsed) || parsed < 0){
-                parsed = 0;
-            }
-            if(!guestUsage){
-                guestUsage = { count: parsed, updated: nowMs() };
-            } else {
-                guestUsage.count = parsed;
-                guestUsage.updated = nowMs();
-            }
-            persistGuestUsage();
-        }
-
-        function incrementGuestUsage(){
-            setGuestUsageCount(getGuestUsageCount() + 1);
-        }
-
-        function getGuestUsageCount(){
-            if(guestUsage && typeof guestUsage.count === 'number' && guestUsage.count >= 0){
-                return guestUsage.count;
-            }
-            return 0;
-        }
-
-        function getGuestLimit(){
-            var limit = parseInt(config.free_limit, 10);
-            if(isNaN(limit) || limit < 0){
-                return 0;
-            }
-            return limit;
-        }
-
-        function updateGuestLimitFromServer(value){
-            var parsed = parseInt(value, 10);
-            if(!isNaN(parsed)){
-                config.free_limit = parsed;
-            }
-        }
-
-        function defaultLoginUrl(){
-            var url = config.login_url;
-            if(typeof url !== 'string' || !url.length){
-                url = '/wp-login.php';
-            }
-            return url;
-        }
-
-        function canGuestSendMessage(){
-            if(isTruthy(config.is_logged_in)){
-                return true;
-            }
-            var limit = getGuestLimit();
-            if(limit <= 0){
-                return false;
-            }
-            return getGuestUsageCount() < limit;
+        if(!guestUsage){
+            guestUsage = loadGuestUsage();
         }
 
         function esc(s){ return $('<div/>').text(s).html(); }
@@ -441,6 +546,9 @@
         }
 
         function handleGuestLimitExceeded(payload){
+            if(payload && payload.guest_session){
+                applyGuestSession(payload.guest_session);
+            }
             if(payload && Object.prototype.hasOwnProperty.call(payload, 'limit')){
                 updateGuestLimitFromServer(payload.limit);
             }
@@ -1228,6 +1336,9 @@
                         return;
                     }
                     if(res && res.success){
+                        if(res.data && res.data.guest_session){
+                            applyGuestSession(res.data.guest_session);
+                        }
                         if(!isTruthy(config.is_logged_in)){
                             if(res.data){
                                 if(Object.prototype.hasOwnProperty.call(res.data, 'guest_message_limit')){
@@ -1301,6 +1412,9 @@
                             pushBot('خطا در ارتباط با سرور');
                         }
                         return;
+                    }
+                    if(data && data.guest_session){
+                        applyGuestSession(data.guest_session);
                     }
                     if(data && data.error === 'guest_limit'){
                         handleGuestLimitExceeded(data);
