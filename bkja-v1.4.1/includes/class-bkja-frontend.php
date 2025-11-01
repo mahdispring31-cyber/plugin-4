@@ -12,6 +12,34 @@ class BKJA_Frontend {
         add_action('wp_ajax_nopriv_bkja_feedback', array(__CLASS__,'ajax_feedback'));
     }
 
+    public static function ensure_guest_session( $session = '', $set_cookie = true ) {
+        $generated = false;
+
+        $session = is_string( $session ) ? trim( $session ) : '';
+
+        if ( '' === $session && isset( $_COOKIE['bkja_session_id'] ) ) {
+            $cookie_session = sanitize_text_field( wp_unslash( $_COOKIE['bkja_session_id'] ) );
+            if ( preg_match( '/^guest_[A-Za-z0-9]{5,}$/', $cookie_session ) ) {
+                $session = $cookie_session;
+            }
+        }
+
+        if ( '' !== $session && preg_match( '/^guest_[A-Za-z0-9]{5,}$/', $session ) ) {
+            return array( $session, $generated );
+        }
+
+        $session   = 'guest_' . wp_generate_password( 18, false, false );
+        $generated = true;
+
+        if ( $set_cookie && ! headers_sent() ) {
+            $path   = defined( 'COOKIEPATH' ) && COOKIEPATH ? COOKIEPATH : '/';
+            $domain = defined( 'COOKIE_DOMAIN' ) ? COOKIE_DOMAIN : '';
+            setcookie( 'bkja_session_id', $session, time() + DAY_IN_SECONDS, $path, $domain, is_ssl(), false );
+        }
+
+        return array( $session, $generated );
+    }
+
     public static function enqueue_assets(){
         wp_enqueue_style('bkja-frontend', BKJA_PLUGIN_URL.'assets/css/bkja-frontend.css', array(), '1.3.4');
         wp_enqueue_script('bkja-frontend', BKJA_PLUGIN_URL.'assets/js/bkja-frontend.js', array('jquery'), '1.3.4', true);
@@ -63,10 +91,7 @@ class BKJA_Frontend {
         $msg_count = null;
         $guest_message_count = null;
         if(!$user_id){
-            // session_id باید مقدار داشته باشد و معتبر باشد
-            if(empty($session) || strpos($session, 'guest_') !== 0){
-                wp_send_json_error(array('error'=>'invalid_session','msg'=>'جلسه مهمان معتبر نیست.'),400);
-            }
+            list( $session, $session_generated ) = self::ensure_guest_session( $session );
             if($free_limit <= 0){
                 wp_send_json_error(array(
                     'error'     => 'guest_limit',
@@ -74,6 +99,7 @@ class BKJA_Frontend {
                     'login_url' => $login_url,
                     'count'     => 0,
                     'limit'     => (int) $free_limit,
+                    'guest_session' => $session,
                 ),403);
             }
             // فقط پیام‌های واقعی کاربر مهمان را بشمار
@@ -85,6 +111,7 @@ class BKJA_Frontend {
                     'login_url'  => $login_url,
                     'count'      => (int) $msg_count,
                     'limit'      => (int) $free_limit,
+                    'guest_session' => $session,
                 ),403);
             }
         }
@@ -183,6 +210,7 @@ class BKJA_Frontend {
         if(!$user_id){
             $response_payload['guest_message_count'] = $guest_message_count !== null ? (int) $guest_message_count : 0;
             $response_payload['guest_message_limit'] = (int) $free_limit;
+            $response_payload['guest_session']       = $session;
         }
 
         wp_send_json_success($response_payload);
@@ -254,9 +282,7 @@ class BKJA_Frontend {
         if ($user_id) {
             $rows = BKJA_Database::get_user_history($user_id,200);
         } else {
-            if (empty($session)) {
-                wp_send_json_error(array('error'=>'no_session'),400);
-            }
+            list( $session, $session_generated ) = self::ensure_guest_session( $session );
             $rows = BKJA_Database::get_history_by_session($session,200);
         }
 
@@ -271,6 +297,11 @@ class BKJA_Frontend {
             }
         }
 
-        wp_send_json_success(array('items'=>$items));
+        $payload = array('items'=>$items);
+        if ( ! $user_id ) {
+            $payload['guest_session'] = $session;
+        }
+
+        wp_send_json_success($payload);
     }
 }
