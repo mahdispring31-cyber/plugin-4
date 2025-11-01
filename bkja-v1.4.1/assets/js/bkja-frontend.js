@@ -459,6 +459,25 @@
             showGuestLimitNotice(payload && payload.msg ? payload.msg : null, payload && payload.login_url ? payload.login_url : null);
         }
 
+        function maybeAnnounceGuestLimitReached(){
+            if(isTruthy(config.is_logged_in)){
+                return;
+            }
+            var limit = getGuestLimit();
+            if(limit <= 0){
+                return;
+            }
+            var count = getGuestUsageCount();
+            if(count < limit){
+                return;
+            }
+            handleGuestLimitExceeded({
+                limit: limit,
+                count: count,
+                login_url: config.login_url
+            });
+        }
+
         function mapCategoryToHumanName(category){
             if(category === null || category === undefined){
                 return '';
@@ -1252,6 +1271,7 @@
                                 if(feedbackEnabled && reply && reply.length){
                                     attachFeedbackControls($bubble, meta, contextMessage, reply, { highlight: highlightFeedback });
                                 }
+                                maybeAnnounceGuestLimitReached();
                             }
                         });
                     } else if(res && res.error === 'guest_limit'){
