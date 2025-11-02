@@ -12,16 +12,55 @@ class BKJA_Frontend {
         add_action('wp_ajax_nopriv_bkja_feedback', array(__CLASS__,'ajax_feedback'));
     }
 
+    private static function canonical_session_id( $posted ) {
+        $posted = is_string( $posted ) ? sanitize_text_field( wp_unslash( $posted ) ) : '';
+        $cookie = isset( $_COOKIE['bkja_session'] ) ? sanitize_text_field( wp_unslash( $_COOKIE['bkja_session'] ) ) : '';
+
+        $session_id = $cookie ? $cookie : $posted;
+
+        if ( strlen( $session_id ) < 12 ) {
+            $session_id = 'bkja_' . wp_generate_password( 20, false, false );
+        }
+
+        if ( ! headers_sent() ) {
+            $path   = defined( 'COOKIEPATH' ) && COOKIEPATH ? COOKIEPATH : '/';
+            $domain = defined( 'COOKIE_DOMAIN' ) ? COOKIE_DOMAIN : '';
+            setcookie( 'bkja_session', $session_id, time() + ( 30 * DAY_IN_SECONDS ), $path, $domain, is_ssl(), true );
+        }
+
+        $_COOKIE['bkja_session'] = $session_id;
+
+        return $session_id;
+    }
+
+    public static function get_session( $posted = '' ) {
+        return self::canonical_session_id( $posted );
+    }
+
     public static function enqueue_assets(){
-        wp_enqueue_style('bkja-frontend', BKJA_PLUGIN_URL.'assets/css/bkja-frontend.css', array(), '1.3.2');
-        wp_enqueue_script('bkja-frontend', BKJA_PLUGIN_URL.'assets/js/bkja-frontend.js', array('jquery'), '1.3.2', true);
+        wp_enqueue_style('bkja-frontend', BKJA_PLUGIN_URL.'assets/css/bkja-frontend.css', array(), '1.3.4');
+        wp_enqueue_script('bkja-frontend', BKJA_PLUGIN_URL.'assets/js/bkja-frontend.js', array('jquery'), '1.3.4', true);
+        $free_limit_option = get_option( 'bkja_free_limit', null );
+        if ( null === $free_limit_option || '' === $free_limit_option ) {
+            $free_limit_option = get_option( 'bkja_free_messages_per_day', 2 );
+        }
+
+        $free_limit = (int) $free_limit_option;
+        if ( $free_limit <= 0 ) {
+            $free_limit = 2;
+        }
+
+        $session_for_js = self::canonical_session_id( isset( $_COOKIE['bkja_session'] ) ? $_COOKIE['bkja_session'] : '' );
+
         $data = array(
             'ajax_url' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('bkja_nonce'),
             'is_logged_in' => is_user_logged_in() ? 1 : 0,
-            'free_limit' => (int)get_option('bkja_free_messages_per_day',5),
+            'free_limit' => $free_limit,
+            'login_url' => esc_url( function_exists('wc_get_page_permalink') ? wc_get_page_permalink('myaccount') : wp_login_url() ),
             'enable_feedback' => get_option('bkja_enable_feedback','0') === '1' ? 1 : 0,
             'enable_quick_actions' => get_option('bkja_enable_quick_actions','0') === '1' ? 1 : 0,
+            'server_session' => $session_for_js,
         );
         wp_localize_script('bkja-frontend','bkja_vars',$data);
         wp_localize_script('bkja-frontend','BKJA',$data);
@@ -39,10 +78,14 @@ class BKJA_Frontend {
     }
 
     public static function ajax_send_message(){
-        check_ajax_referer('bkja_nonce','nonce');
-        $message         = isset($_POST['message']) ? sanitize_textarea_field(wp_unslash($_POST['message'])) : '';
-        $category        = isset($_POST['category']) ? sanitize_text_field(wp_unslash($_POST['category'])) : '';
-        $session         = isset($_POST['session']) ? sanitize_text_field(wp_unslash($_POST['session'])) : '';
+        $nonce = isset($_POST['nonce']) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+        if ( ! wp_verify_nonce( $nonce, 'bkja_nonce' ) ) {
+            wp_send_json_error(array('error'=>'invalid_nonce'),403);
+        }
+        $message         = isset($_POST['message']) ? sanitize_textarea_field( wp_unslash( $_POST['message'] ) ) : '';
+        $category        = isset($_POST['category']) ? sanitize_text_field( wp_unslash( $_POST['category'] ) ) : '';
+        $raw_session     = isset($_POST['session']) ? $_POST['session'] : '';
+        $session         = self::canonical_session_id( $raw_session );
         $job_title_hint  = isset($_POST['job_title']) ? sanitize_text_field(wp_unslash($_POST['job_title'])) : '';
         $job_slug        = isset($_POST['job_slug']) ? sanitize_text_field(wp_unslash($_POST['job_slug'])) : '';
 
@@ -51,38 +94,58 @@ class BKJA_Frontend {
         }
 
         $user_id = get_current_user_id() ?: 0;
-        $free_limit = (int)get_option('bkja_free_messages_per_day',5);
-        // تعیین آدرس ورود/عضویت ووکامرس اگر فعال است
+        $free_limit_option = get_option( 'bkja_free_limit', null );
+        if ( null === $free_limit_option || '' === $free_limit_option ) {
+            $free_limit_option = get_option( 'bkja_free_messages_per_day', 2 );
+        }
+        $free_limit = (int) $free_limit_option;
+        if ( $free_limit <= 0 ) {
+            $free_limit = 2;
+        }
         $login_url = function_exists('wc_get_page_permalink') ? wc_get_page_permalink('myaccount') : wp_login_url();
 
-        // اگر کاربر مهمان است، تعداد پیام‌های ارسالی را بررسی کن
-        if(!$user_id){
-            // session_id باید مقدار داشته باشد و معتبر باشد
-            if(empty($session) || strpos($session, 'guest_') !== 0){
-                wp_send_json_error(array('error'=>'invalid_session','msg'=>'جلسه مهمان معتبر نیست.'),400);
-            }
+        $msg_count = null;
+        $guest_message_count = null;
+
+        if ( ! $user_id ) {
             global $wpdb;
             $table = $wpdb->prefix . 'bkja_chats';
-            // فقط پیام‌های واقعی کاربر مهمان را بشمار (response باید NULL باشد)
-            $msg_count = $wpdb->get_var(
+
+            $msg_count = (int) $wpdb->get_var(
                 $wpdb->prepare(
-                    "SELECT COUNT(*) FROM {$table} WHERE session_id = %s AND message IS NOT NULL AND response IS NULL AND created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)",
+                    "SELECT COUNT(*) FROM {$table}
+                     WHERE session_id = %s
+                       AND message IS NOT NULL AND message <> ''
+                       AND created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)",
                     $session
                 )
             );
-            if($msg_count >= $free_limit){
-                wp_send_json_error(array('error'=>'guest_limit','msg'=>'برای ادامه گفتگو باید عضو سایت شوید.','login_url'=>$login_url),403);
+
+            if ( $msg_count >= $free_limit ) {
+                wp_send_json_success(
+                    array(
+                        'ok'            => false,
+                        'error'         => 'guest_limit',
+                        'login_url'     => esc_url( $login_url ),
+                        'limit'         => (int) $free_limit,
+                        'count'         => (int) $msg_count,
+                        'guest_session' => $session,
+                        'server_session' => $session,
+                    ),
+                    200
+                );
             }
         }
 
-        // save user message
-        BKJA_Database::insert_chat(array(
-            'user_id'      => $user_id ?: null,
-            'session_id'   => $session,
-            'job_category' => $category,
-            'message'      => $message,
-            'response'     => null
-        ));
+        $_bkja_user_row_id = BKJA_Database::insert_chat(
+            array(
+                'user_id'      => $user_id ?: null,
+                'session_id'   => $session,
+                'job_category' => $category,
+                'message'      => (string) $message,
+                'response'     => null,
+            )
+        );
 
         $selected_model = get_option('bkja_model', '');
         $resolved_model = BKJA_Chat::resolve_model($selected_model);
@@ -96,75 +159,94 @@ class BKJA_Frontend {
             'job_slug'       => $job_slug,
         ));
 
-        $suggestions    = array();
-        $reply_meta     = null;
-        $from_cache     = false;
-        $meta_payload   = array();
+        $reply              = '';
+        $suggestions        = array();
+        $from_cache         = false;
+        $meta_payload       = array();
         $normalized_message = BKJA_Chat::normalize_message($message);
-        if (is_wp_error($ai_response)) {
-            $reply = 'خطا یا کلید API تنظیم نشده. '.$ai_response->get_error_message();
+
+        if ( is_wp_error( $ai_response ) ) {
+            $reply = 'خطا یا کلید API تنظیم نشده. ' . $ai_response->get_error_message();
         } else {
-            $reply = isset($ai_response['text']) ? (string)$ai_response['text'] : '';
-            $suggestions = !empty($ai_response['suggestions']) && is_array($ai_response['suggestions']) ? $ai_response['suggestions'] : array();
-            $from_cache = !empty($ai_response['from_cache']);
+            $reply        = isset( $ai_response['text'] ) ? (string) $ai_response['text'] : '';
+            $suggestions  = ! empty( $ai_response['suggestions'] ) && is_array( $ai_response['suggestions'] ) ? $ai_response['suggestions'] : array();
+            $from_cache   = ! empty( $ai_response['from_cache'] );
             $meta_payload = array(
                 'suggestions'        => $suggestions,
-                'context_used'       => !empty($ai_response['context_used']),
+                'context_used'       => ! empty( $ai_response['context_used'] ),
                 'from_cache'         => $from_cache,
-                'source'             => isset($ai_response['source']) ? $ai_response['source'] : 'openai',
-                'model'              => isset($ai_response['model']) ? $ai_response['model'] : $resolved_model,
+                'source'             => isset( $ai_response['source'] ) ? $ai_response['source'] : 'openai',
+                'model'              => isset( $ai_response['model'] ) ? $ai_response['model'] : $resolved_model,
                 'category'           => $category,
                 'normalized_message' => $normalized_message,
-                'job_title'          => !empty($ai_response['job_title']) ? $ai_response['job_title'] : '',
+                'job_title'          => ! empty( $ai_response['job_title'] ) ? $ai_response['job_title'] : '',
             );
 
-            if (isset($ai_response['meta']) && is_array($ai_response['meta'])) {
-                $meta_payload = array_merge($meta_payload, $ai_response['meta']);
+            if ( isset( $ai_response['meta'] ) && is_array( $ai_response['meta'] ) ) {
+                $meta_payload = array_merge( $meta_payload, $ai_response['meta'] );
             }
 
-            if (!isset($meta_payload['category']) || $meta_payload['category'] === '') {
+            if ( ! isset( $meta_payload['category'] ) || '' === $meta_payload['category'] ) {
                 $meta_payload['category'] = $category;
             }
 
-            if (!isset($meta_payload['job_title']) || $meta_payload['job_title'] === '') {
-                if (!empty($ai_response['job_title'])) {
+            if ( ! isset( $meta_payload['job_title'] ) || '' === $meta_payload['job_title'] ) {
+                if ( ! empty( $ai_response['job_title'] ) ) {
                     $meta_payload['job_title'] = $ai_response['job_title'];
-                } elseif (!empty($job_title_hint)) {
+                } elseif ( ! empty( $job_title_hint ) ) {
                     $meta_payload['job_title'] = $job_title_hint;
                 }
             }
 
-            if (!isset($meta_payload['job_slug'])) {
-                if (isset($ai_response['job_slug'])) {
+            if ( ! isset( $meta_payload['job_slug'] ) ) {
+                if ( isset( $ai_response['job_slug'] ) ) {
                     $meta_payload['job_slug'] = $ai_response['job_slug'];
-                } elseif (!empty($job_slug)) {
+                } elseif ( ! empty( $job_slug ) ) {
                     $meta_payload['job_slug'] = $job_slug;
                 }
             }
-
-            $reply_meta = wp_json_encode($meta_payload);
         }
 
-        // save bot reply
-        BKJA_Database::insert_chat(array(
-            'user_id'      => $user_id ?: null,
-            'session_id'   => $session,
-            'job_category' => $category,
-            'message'      => null,
-            'response'     => $reply,
-            'meta'         => $reply_meta
-        ));
+        $reply_meta_json = '';
+        if ( ! empty( $meta_payload ) ) {
+            $reply_meta_json = wp_json_encode( $meta_payload, JSON_UNESCAPED_UNICODE );
+            if ( false === $reply_meta_json ) {
+                $reply_meta_json = wp_json_encode( $meta_payload );
+            }
+        }
 
-        wp_send_json_success(array(
+        if ( ! empty( $_bkja_user_row_id ) ) {
+            BKJA_Database::update_chat_response( (int) $_bkja_user_row_id, $reply, $reply_meta_json );
+        }
+
+        if(!$user_id){
+            $guest_message_count = BKJA_Database::count_guest_messages($session);
+        }
+
+        $response_payload = array(
+            'ok'          => true,
             'reply'       => $reply,
             'suggestions' => $suggestions,
             'from_cache'  => $from_cache,
             'meta'        => $meta_payload,
-        ));
+        );
+
+        $response_payload['server_session'] = $session;
+
+        if(!$user_id){
+            $response_payload['guest_message_count'] = $guest_message_count !== null ? (int) $guest_message_count : 0;
+            $response_payload['guest_message_limit'] = (int) $free_limit;
+            $response_payload['guest_session']       = $session;
+        }
+
+        wp_send_json_success($response_payload);
     }
 
     public static function ajax_feedback(){
-        check_ajax_referer('bkja_nonce','nonce');
+        $nonce = isset($_POST['nonce']) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+        if ( ! wp_verify_nonce( $nonce, 'bkja_nonce' ) ) {
+            wp_send_json_error(array('error'=>'invalid_nonce'),403);
+        }
 
         $vote = isset($_POST['vote']) ? intval($_POST['vote']) : 0;
         if (!in_array($vote, array(1,-1), true)) {
@@ -215,17 +297,18 @@ class BKJA_Frontend {
     }
 
     public static function ajax_get_history(){
-        check_ajax_referer('bkja_nonce','nonce');
+        $nonce = isset($_POST['nonce']) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+        if ( ! wp_verify_nonce( $nonce, 'bkja_nonce' ) ) {
+            wp_send_json_error(array('error'=>'invalid_nonce'),403);
+        }
 
-        $session = isset($_POST['session']) ? sanitize_text_field(wp_unslash($_POST['session'])) : '';
+        $raw_session = isset($_POST['session']) ? $_POST['session'] : '';
+        $session = self::canonical_session_id( $raw_session );
         $user_id = get_current_user_id() ?: 0;
 
         if ($user_id) {
             $rows = BKJA_Database::get_user_history($user_id,200);
         } else {
-            if (empty($session)) {
-                wp_send_json_error(array('error'=>'no_session'),400);
-            }
             $rows = BKJA_Database::get_history_by_session($session,200);
         }
 
@@ -240,6 +323,12 @@ class BKJA_Frontend {
             }
         }
 
-        wp_send_json_success(array('items'=>$items));
+        $payload = array('items'=>$items);
+        if ( ! $user_id ) {
+            $payload['guest_session'] = $session;
+        }
+        $payload['server_session'] = $session;
+
+        wp_send_json_success($payload);
     }
 }

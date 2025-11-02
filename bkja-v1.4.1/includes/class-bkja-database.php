@@ -106,15 +106,62 @@ class BKJA_Database {
             'session_id'=>'',
             'job_category'=>'',
             'message'=>'',
-            'response'=>'',
+            'response'=>null,
             'meta'=>null,
             'status'=>'active',
             'feedback'=>'none'
         );
         $row = wp_parse_args( $data, $defaults );
-        $row = array_map( 'wp_slash', $row ); // محافظت از داده‌ها
+        $row = array_map( function( $value ) {
+            return is_string( $value ) ? wp_slash( $value ) : $value;
+        }, $row ); // محافظت از داده‌ها
         $wpdb->insert( $table, $row );
         return $wpdb->insert_id;
+    }
+
+    /**
+     * Update chatbot response for an existing chat row.
+     */
+    public static function update_chat_response( $id, $response, $meta_json = null ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'bkja_chats';
+
+        $data = array(
+            'response' => wp_kses_post( $response ),
+        );
+
+        if ( ! empty( $meta_json ) ) {
+            $data['meta'] = $meta_json;
+        }
+
+        $wpdb->update( $table, $data, array( 'id' => (int) $id ) );
+    }
+
+    /**
+     * شمارش پیام‌های کاربر مهمان در بازه مشخص
+     */
+    public static function count_guest_messages( $session_id, $max_age_seconds = DAY_IN_SECONDS ) {
+        if ( empty( $session_id ) ) {
+            return 0;
+        }
+
+        global $wpdb;
+        $table      = $wpdb->prefix . 'bkja_chats';
+        $session_id = sanitize_text_field( $session_id );
+        $max_age_seconds = (int) $max_age_seconds;
+
+        $sql    = "SELECT COUNT(*) FROM {$table} WHERE session_id = %s AND message IS NOT NULL AND message <> ''";
+        $params = array( $session_id );
+
+        if ( $max_age_seconds > 0 ) {
+            $timestamp_gmt = current_time( 'timestamp', true );
+            $threshold     = gmdate( 'Y-m-d H:i:s', max( 0, $timestamp_gmt - $max_age_seconds ) );
+            $sql          .= ' AND created_at >= %s';
+            $params[]      = $threshold;
+        }
+
+        $prepared = $wpdb->prepare( $sql, $params );
+        return (int) $wpdb->get_var( $prepared );
     }
 
     /**
@@ -305,7 +352,9 @@ class BKJA_Database {
                     'role'    => 'user',
                     'content' => $row->message,
                 );
-            } elseif ( ! empty( $row->response ) ) {
+            }
+
+            if ( ! empty( $row->response ) ) {
                 $history[] = array(
                     'role'    => 'assistant',
                     'content' => $row->response,

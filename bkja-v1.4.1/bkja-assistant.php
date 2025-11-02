@@ -91,8 +91,11 @@ function bkja_get_jobs_api(WP_REST_Request $request) {
 add_action('wp_ajax_bkja_get_job_summary','bkja_ajax_get_job_summary');
 add_action('wp_ajax_nopriv_bkja_get_job_summary','bkja_ajax_get_job_summary');
 function bkja_ajax_get_job_summary(){
-	check_ajax_referer('bkja_nonce','nonce');
-	$job_title = isset($_POST['job_title']) ? sanitize_text_field($_POST['job_title']) : '';
+        $nonce = isset($_POST['nonce']) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+        if ( ! wp_verify_nonce( $nonce, 'bkja_nonce' ) ) {
+                wp_send_json_error( array( 'error' => 'invalid_nonce' ), 403 );
+        }
+        $job_title = isset($_POST['job_title']) ? sanitize_text_field( wp_unslash( $_POST['job_title'] ) ) : '';
 	if(!$job_title) wp_send_json_error(['error'=>'empty_title'],400);
 	$summary = BKJA_Jobs::get_job_summary($job_title);
 	$free_messages = get_option('bkja_free_messages_per_day', 5);
@@ -104,8 +107,11 @@ function bkja_ajax_get_job_summary(){
 add_action('wp_ajax_bkja_get_job_records','bkja_ajax_get_job_records');
 add_action('wp_ajax_nopriv_bkja_get_job_records','bkja_ajax_get_job_records');
 function bkja_ajax_get_job_records(){
-	check_ajax_referer('bkja_nonce','nonce');
-	$job_title = isset($_POST['job_title']) ? sanitize_text_field($_POST['job_title']) : '';
+        $nonce = isset($_POST['nonce']) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+        if ( ! wp_verify_nonce( $nonce, 'bkja_nonce' ) ) {
+                wp_send_json_error( array( 'error' => 'invalid_nonce' ), 403 );
+        }
+        $job_title = isset($_POST['job_title']) ? sanitize_text_field( wp_unslash( $_POST['job_title'] ) ) : '';
 	$limit = isset($_POST['limit']) ? intval($_POST['limit']) : 5;
 	$offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
 	if(!$job_title) wp_send_json_error(['error'=>'empty_title'],400);
@@ -129,12 +135,45 @@ if ( file_exists(dirname(__FILE__) . '/includes/class-bkja-chat.php') ) { requir
 
 add_action('wp_ajax_bkja_get_categories','bkja_ajax_get_categories');
 add_action('wp_ajax_nopriv_bkja_get_categories','bkja_ajax_get_categories');
-function bkja_ajax_get_categories(){ check_ajax_referer('bkja_nonce','nonce'); $cats = BKJA_Jobs::get_categories(); wp_send_json_success(['categories'=>$cats]); }
+function bkja_ajax_get_categories(){ $nonce = isset($_POST['nonce']) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : ''; if ( ! wp_verify_nonce( $nonce, 'bkja_nonce' ) ) { wp_send_json_error(['error'=>'invalid_nonce'],403); } $cats = BKJA_Jobs::get_categories(); wp_send_json_success(['categories'=>$cats]); }
 
 add_action('wp_ajax_bkja_get_jobs','bkja_ajax_get_jobs');
 add_action('wp_ajax_nopriv_bkja_get_jobs','bkja_ajax_get_jobs');
-function bkja_ajax_get_jobs(){ check_ajax_referer('bkja_nonce','nonce'); $cat = isset($_POST['category_id'])? intval($_POST['category_id']):0; $jobs = BKJA_Jobs::get_jobs_by_category($cat); wp_send_json_success(['jobs'=>$jobs]); }
+function bkja_ajax_get_jobs(){ $nonce = isset($_POST['nonce']) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : ''; if ( ! wp_verify_nonce( $nonce, 'bkja_nonce' ) ) { wp_send_json_error(['error'=>'invalid_nonce'],403); } $cat = isset($_POST['category_id'])? intval($_POST['category_id']):0; $jobs = BKJA_Jobs::get_jobs_by_category($cat); wp_send_json_success(['jobs'=>$jobs]); }
 
 add_action('wp_ajax_bkja_get_job_detail','bkja_ajax_get_job_detail');
 add_action('wp_ajax_nopriv_bkja_get_job_detail','bkja_ajax_get_job_detail');
-function bkja_ajax_get_job_detail(){ check_ajax_referer('bkja_nonce','nonce'); $job_id = isset($_POST['job_id'])? intval($_POST['job_id']):0; $job = BKJA_Jobs::get_job_detail($job_id); if(!$job) wp_send_json_error(['error'=>'not_found'],404); global $wpdb; $table_chats = $wpdb->prefix.'bkja_chats'; if($wpdb->get_var("SHOW TABLES LIKE '{$table_chats}'") == $table_chats){ $wpdb->insert($table_chats,['user_id'=>get_current_user_id()?:null,'session_id'=>isset($_POST['session'])?sanitize_text_field($_POST['session']):null,'job_category'=>$job->category_id,'message'=>null,'response'=>wp_json_encode(['type'=>'job_card','data'=>$job]),'created_at'=>current_time('mysql')]); } wp_send_json_success(['job'=>$job]); }
+function bkja_ajax_get_job_detail(){ $nonce = isset($_POST['nonce']) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : ''; if ( ! wp_verify_nonce( $nonce, 'bkja_nonce' ) ) { wp_send_json_error(['error'=>'invalid_nonce'],403); } $job_id = isset($_POST['job_id'])? intval($_POST['job_id']):0; $job = BKJA_Jobs::get_job_detail($job_id); if(!$job) wp_send_json_error(['error'=>'not_found'],404); global $wpdb; $table_chats = $wpdb->prefix.'bkja_chats'; $raw_session = isset($_POST['session']) ? $_POST['session'] : ''; if ( class_exists( 'BKJA_Frontend' ) ) { $session = BKJA_Frontend::get_session( $raw_session ); } else { $session = is_string( $raw_session ) ? sanitize_text_field( wp_unslash( $raw_session ) ) : ''; if ( strlen( $session ) < 12 ) { $session = 'bkja_' . wp_generate_password( 20, false, false ); } } if($wpdb->get_var("SHOW TABLES LIKE '{$table_chats}'") == $table_chats){ $wpdb->insert($table_chats,['user_id'=>get_current_user_id()?:null,'session_id'=>$session,'job_category'=>$job->category_id,'message'=>null,'response'=>wp_json_encode(['type'=>'job_card','data'=>$job]),'created_at'=>current_time('mysql')]); } wp_send_json_success(['job'=>$job,'server_session'=>$session]); }
+
+add_action('wp_ajax_bkja_refresh_nonce','bkja_ajax_refresh_nonce');
+add_action('wp_ajax_nopriv_bkja_refresh_nonce','bkja_ajax_refresh_nonce');
+function bkja_ajax_refresh_nonce(){
+        $raw_session = isset($_POST['session']) ? $_POST['session'] : '';
+        if ( class_exists( 'BKJA_Frontend' ) ) {
+                $session = BKJA_Frontend::get_session( $raw_session );
+        } else {
+                $session = is_string( $raw_session ) ? sanitize_text_field( wp_unslash( $raw_session ) ) : '';
+                if ( strlen( $session ) < 12 ) {
+                        $session = 'bkja_' . wp_generate_password( 20, false, false );
+                }
+        }
+
+        $free_limit_option = get_option( 'bkja_free_limit', null );
+        if ( null === $free_limit_option || '' === $free_limit_option ) {
+                $free_limit_option = get_option( 'bkja_free_messages_per_day', 2 );
+        }
+        $free_limit = (int) $free_limit_option;
+        if ( $free_limit <= 0 ) {
+                $free_limit = 2;
+        }
+
+        $data = array(
+                'nonce' => wp_create_nonce('bkja_nonce'),
+                'is_logged_in' => is_user_logged_in() ? 1 : 0,
+                'free_limit' => $free_limit,
+                'login_url' => function_exists('wc_get_page_permalink') ? wc_get_page_permalink('myaccount') : wp_login_url(),
+                'guest_session' => $session,
+                'server_session' => $session,
+        );
+        wp_send_json_success( $data );
+}

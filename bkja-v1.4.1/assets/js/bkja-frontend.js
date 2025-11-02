@@ -3,6 +3,332 @@
     // Toggle dev-only meta notices in chat UI
     var SHOW_TECH_META = false;
     var config = window.BKJA || window.bkja_vars || {};
+    var nonceRefreshRequest = null;
+    var sessionId = '';
+    var guestUsageKey = '';
+    var guestUsage = null;
+
+    function storageUsable(){
+        if(typeof localStorage === 'undefined'){
+            return false;
+        }
+        try {
+            var testKey = '__bkja_test__';
+            localStorage.setItem(testKey, testKey);
+            localStorage.removeItem(testKey);
+            return true;
+        } catch (storageError) {
+            return false;
+        }
+    }
+
+    var localStorageAvailable = storageUsable();
+    var guestUsageStorageAvailable = localStorageAvailable;
+
+    function generateSessionId(){
+        return 'bkja_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    }
+
+    function readCookie(name){
+        var m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/([.$?*|{}()\[\]\\/+^])/g, '\\$1') + '=([^;]*)'));
+        return m ? decodeURIComponent(m[1]) : '';
+    }
+
+    function writeCookie(name, val, days){
+        var exp = new Date();
+        exp.setTime(exp.getTime() + (days*24*60*60*1000));
+        document.cookie = name + '=' + encodeURIComponent(val || '') + '; expires=' + exp.toUTCString() + '; path=/; SameSite=Lax';
+    }
+
+    function persistSessionValue(value){
+        if(!value){
+            return;
+        }
+        if(localStorageAvailable){
+            try {
+                localStorage.setItem('bkja_session', value);
+            } catch(storageError){
+                localStorageAvailable = false;
+                guestUsageStorageAvailable = false;
+            }
+        }
+        writeCookie('bkja_session', value, 30);
+    }
+
+    function assignActiveSession(value, options){
+        if(typeof value !== 'string'){
+            return;
+        }
+        var trimmed = $.trim(value);
+        if(!trimmed || trimmed.length <= 10){
+            return;
+        }
+        sessionId = trimmed;
+        config.session = trimmed;
+        config.server_session = trimmed;
+        if(window && window.BKJA){
+            window.BKJA.session = trimmed;
+            window.BKJA.server_session = trimmed;
+        }
+        persistSessionValue(trimmed);
+        guestUsageKey = 'bkja_guest_usage_v2_' + trimmed;
+        if(!options || options.reloadUsage !== false){
+            guestUsage = loadGuestUsage();
+        }
+    }
+
+    function bootstrapSession(){
+        var sess = readCookie('bkja_session') || '';
+        if(!sess && localStorageAvailable){
+            try {
+                var stored = localStorage.getItem('bkja_session');
+                if(stored){
+                    sess = stored;
+                }
+            } catch(storageError){
+                localStorageAvailable = false;
+                guestUsageStorageAvailable = false;
+            }
+        }
+        if(config && typeof config.server_session === 'string' && config.server_session.length > 10){
+            sess = config.server_session;
+        }
+        if(!sess){
+            sess = generateSessionId();
+        }
+        assignActiveSession(sess);
+        return sessionId;
+    }
+
+    function ensureSession(){
+        if(!sessionId || sessionId.length <= 10){
+            bootstrapSession();
+        }
+        return sessionId;
+    }
+
+    function syncSessionFromPayload(payload){
+        if(!payload){
+            return;
+        }
+        var nextSession = '';
+        if(payload.server_session && typeof payload.server_session === 'string'){
+            nextSession = payload.server_session;
+        } else if(payload.guest_session && typeof payload.guest_session === 'string'){
+            nextSession = payload.guest_session;
+        }
+        if(nextSession && nextSession.length > 10){
+            assignActiveSession(nextSession);
+        }
+    }
+
+    bootstrapSession();
+
+    function nowMs(){
+        if(typeof Date !== 'undefined' && Date.now){
+            return Date.now();
+        }
+        return new Date().getTime();
+    }
+
+    function loadGuestUsage(){
+        var usage = { count: 0, updated: nowMs() };
+        if(!guestUsageKey){
+            return usage;
+        }
+        if(guestUsageStorageAvailable){
+            try {
+                var raw = localStorage.getItem(guestUsageKey);
+                if(raw){
+                    var parsed = JSON.parse(raw);
+                    if(parsed && typeof parsed.count === 'number' && parsed.count >= 0){
+                        usage.count = parsed.count;
+                    }
+                    if(parsed && typeof parsed.updated === 'number' && parsed.updated > 0){
+                        usage.updated = parsed.updated;
+                    }
+                }
+            } catch(storageError){
+                guestUsageStorageAvailable = false;
+            }
+        }
+        if(!usage.updated || usage.updated <= 0){
+            usage.updated = nowMs();
+        }
+        var maxAgeMs = 24 * 60 * 60 * 1000;
+        if(usage.updated && nowMs() - usage.updated > maxAgeMs){
+            usage.count = 0;
+            usage.updated = nowMs();
+        }
+        return usage;
+    }
+
+    function persistGuestUsage(){
+        if(!guestUsageStorageAvailable || !guestUsageKey){
+            return;
+        }
+        try {
+            localStorage.setItem(guestUsageKey, JSON.stringify({
+                count: guestUsage && typeof guestUsage.count === 'number' ? guestUsage.count : 0,
+                updated: guestUsage && typeof guestUsage.updated === 'number' ? guestUsage.updated : nowMs()
+            }));
+        } catch(storageError){
+            guestUsageStorageAvailable = false;
+        }
+    }
+
+    function setGuestUsageCount(value){
+        var parsed = parseInt(value, 10);
+        if(isNaN(parsed) || parsed < 0){
+            parsed = 0;
+        }
+        if(!guestUsage){
+            guestUsage = { count: parsed, updated: nowMs() };
+        } else {
+            guestUsage.count = parsed;
+            guestUsage.updated = nowMs();
+        }
+        persistGuestUsage();
+    }
+
+    function incrementGuestUsage(){
+        setGuestUsageCount(getGuestUsageCount() + 1);
+    }
+
+    function getGuestUsageCount(){
+        if(guestUsage && typeof guestUsage.count === 'number' && guestUsage.count >= 0){
+            return guestUsage.count;
+        }
+        return 0;
+    }
+
+    function getGuestLimit(){
+        var limit = parseInt(config.free_limit, 10);
+        if(isNaN(limit) || limit < 0){
+            return 0;
+        }
+        return limit;
+    }
+
+    function updateGuestLimitFromServer(value){
+        var parsed = parseInt(value, 10);
+        if(!isNaN(parsed)){
+            config.free_limit = parsed;
+        }
+    }
+
+    function defaultLoginUrl(){
+        var url = config.login_url;
+        if(typeof url !== 'string' || !url.length){
+            url = '/wp-login.php';
+        }
+        return url;
+    }
+
+    function canGuestSendMessage(){
+        if(isTruthy(config.is_logged_in)){
+            return true;
+        }
+        var limit = getGuestLimit();
+        if(limit <= 0){
+            return false;
+        }
+        return getGuestUsageCount() < limit;
+    }
+
+    function refreshNonce(){
+        if(nonceRefreshRequest){
+            return nonceRefreshRequest;
+        }
+        var deferred = $.Deferred();
+        nonceRefreshRequest = deferred;
+        $.post(config.ajax_url, {
+            action: 'bkja_refresh_nonce'
+        }).done(function(res){
+            if(res && res.success && res.data && res.data.nonce){
+                config.nonce = res.data.nonce;
+                if(res.data.hasOwnProperty('is_logged_in')){
+                    config.is_logged_in = res.data.is_logged_in;
+                }
+                if(res.data.hasOwnProperty('free_limit')){
+                    config.free_limit = res.data.free_limit;
+                }
+                if(res.data.hasOwnProperty('login_url') && res.data.login_url){
+                    config.login_url = res.data.login_url;
+                }
+                if(res.data){
+                    syncSessionFromPayload(res.data);
+                }
+                deferred.resolve(true);
+            } else {
+                deferred.resolve(false);
+            }
+        }).fail(function(){
+            deferred.resolve(false);
+        }).always(function(){
+            nonceRefreshRequest = null;
+        });
+        return deferred.promise();
+    }
+
+    function ajaxWithNonce(params, options){
+        options = options || {};
+        ensureSession();
+        var deferred = $.Deferred();
+        var payload = $.extend({}, params, { nonce: config.nonce });
+        $.ajax({
+            url: config.ajax_url,
+            method: 'POST',
+            dataType: options.dataType || 'json',
+            data: payload
+        }).done(function(res, textStatus, jqXHR){
+            if(res && res.data){
+                syncSessionFromPayload(res.data);
+            }
+            if(res && res.data && res.data.error === 'invalid_nonce' && !options._retry){
+                refreshNonce().then(function(success){
+                    if(success){
+                        var retryOptions = $.extend({}, options, { _retry: true });
+                        ajaxWithNonce(params, retryOptions).done(function(){
+                            deferred.resolve.apply(deferred, arguments);
+                        }).fail(function(){
+                            deferred.reject.apply(deferred, arguments);
+                        });
+                    } else {
+                        deferred.reject(res, textStatus, jqXHR);
+                    }
+                });
+            } else {
+                deferred.resolve(res, textStatus, jqXHR);
+            }
+        }).fail(function(jqXHR, textStatus, errorThrown){
+            var responseJSON = jqXHR && jqXHR.responseJSON;
+            if(responseJSON && responseJSON.data){
+                syncSessionFromPayload(responseJSON.data);
+            }
+            var invalidNonce = jqXHR && jqXHR.status === 403 && responseJSON && responseJSON.data && responseJSON.data.error === 'invalid_nonce';
+            if(!invalidNonce && responseJSON && responseJSON.data && responseJSON.data.error === 'invalid_nonce'){
+                invalidNonce = true;
+            }
+            if(invalidNonce && !options._retry){
+                refreshNonce().then(function(success){
+                    if(success){
+                        var retryOptions = $.extend({}, options, { _retry: true });
+                        ajaxWithNonce(params, retryOptions).done(function(){
+                            deferred.resolve.apply(deferred, arguments);
+                        }).fail(function(){
+                            deferred.reject.apply(deferred, arguments);
+                        });
+                    } else {
+                        deferred.reject(jqXHR, textStatus, errorThrown);
+                    }
+                });
+            } else {
+                deferred.reject(jqXHR, textStatus, errorThrown);
+            }
+        });
+        return deferred.promise();
+    }
 
     function isTruthy(value){
         if(value === undefined || value === null){
@@ -35,6 +361,12 @@
     }
     if(typeof config.free_limit === 'undefined'){
         config.free_limit = 0;
+    }
+    if(!config.login_url && window.bkja_vars && window.bkja_vars.login_url){
+        config.login_url = window.bkja_vars.login_url;
+    }
+    if(!config.login_url){
+        config.login_url = '/wp-login.php';
     }
     function bkja_log(){ try{ console.log.apply(console, ['%cBKJA','color:#fff;background:#0b79d0;padding:2px 6px;border-radius:3px;'].concat(Array.prototype.slice.call(arguments))); }catch(e){} }
 
@@ -171,15 +503,10 @@
             ]
         };
 
-        function getSessionId(){ 
-            var s = localStorage.getItem('bkja_session_id'); 
-            if(!s){ 
-                s = 'guest_' + Math.random().toString(36).substr(2,9); 
-                localStorage.setItem('bkja_session_id', s);
-            } 
-            return s; 
+        ensureSession();
+        if(!guestUsage){
+            guestUsage = loadGuestUsage();
         }
-        var sessionId = getSessionId();
 
         function esc(s){ return $('<div/>').text(s).html(); }
         function formatMessage(text){
@@ -228,6 +555,73 @@
             var $m = $('<div class="bkja-bubble bot"></div>').html(content);
             $messages.append($m);
             $messages.scrollTop($messages.prop('scrollHeight'));
+        }
+
+        function handleGuestLimit(loginUrl, limit){
+            var $input = $('#bkja-user-message');
+            var $send  = $('#bkja-send');
+            var finalLimit = parseInt(limit, 10);
+            if(isNaN(finalLimit) || finalLimit < 0){
+                var fallbackLimit = parseInt(config.free_limit, 10);
+                if(isNaN(fallbackLimit) || fallbackLimit <= 0){
+                    fallbackLimit = 2;
+                }
+                finalLimit = fallbackLimit;
+            }
+            var loginHref = typeof loginUrl === 'string' && loginUrl.length ? loginUrl : defaultLoginUrl();
+
+            $input.prop('disabled', true);
+            $send.prop('disabled', true);
+
+            pushBotHtml(
+                '<div style="color:#d32f2f; font-weight:700; margin-top:8px;">' +
+                'حداکثر ' + esc(String(finalLimit)) + ' پیام رایگان در روز. ' +
+                '<a href="' + esc(loginHref) + '" style="text-decoration:underline;">ورود یا ثبت‌نام</a>' +
+                '</div>'
+            );
+        }
+
+        function handleGuestLimitExceeded(payload){
+            if(payload){
+                syncSessionFromPayload(payload);
+            }
+            var payloadHasLimit = payload && Object.prototype.hasOwnProperty.call(payload, 'limit');
+            if(payloadHasLimit){
+                updateGuestLimitFromServer(payload.limit);
+            }
+            if(payload && Object.prototype.hasOwnProperty.call(payload, 'count')){
+                var countVal = parseInt(payload.count, 10);
+                if(!isNaN(countVal)){
+                    setGuestUsageCount(countVal);
+                }
+            } else {
+                var limitVal = getGuestLimit();
+                setGuestUsageCount(limitVal);
+            }
+            if(payload && payload.login_url){
+                config.login_url = payload.login_url;
+            }
+            var limitForDisplay = payloadHasLimit ? payload.limit : getGuestLimit();
+            handleGuestLimit(payload && payload.login_url ? payload.login_url : config.login_url, limitForDisplay);
+        }
+
+        function maybeAnnounceGuestLimitReached(){
+            if(isTruthy(config.is_logged_in)){
+                return;
+            }
+            var limit = getGuestLimit();
+            if(limit <= 0){
+                return;
+            }
+            var count = getGuestUsageCount();
+            if(count < limit){
+                return;
+            }
+            handleGuestLimitExceeded({
+                limit: limit,
+                count: count,
+                login_url: config.login_url
+            });
         }
 
         function mapCategoryToHumanName(category){
@@ -566,6 +960,7 @@
                     datasetJobSlug = bubbleEl.getAttribute('data-job-slug') || '';
                 }
 
+                ensureSession();
                 var payload = {
                     action: 'bkja_feedback',
                     nonce: config.nonce,
@@ -825,7 +1220,12 @@
                 pushBot('سپاس از پاسخ‌هات! دارم بررسی می‌کنم که این شغل با روحیه‌ات هماهنگ هست یا نه...', {
                     onComplete: function(){
                         removeFollowups();
-                        sendMessageToServer(prompt, { contextMessage: prompt, highlightFeedback: true });
+                        if(!isTruthy(config.is_logged_in) && !canGuestSendMessage()){
+                            personalityFlow.awaitingResult = false;
+                            handleGuestLimitExceeded({});
+                            return;
+                        }
+                        sendMessageToServer(prompt, { contextMessage: prompt, highlightFeedback: true, _bypassLimit: true });
                         personalityFlow.answers = [];
                     }
                 });
@@ -840,6 +1240,18 @@
                 text = $.trim(String(text));
                 if(!text){
                     return;
+                }
+
+                if(!isTruthy(config.is_logged_in)){
+                    var limit = getGuestLimit();
+                    if(limit <= 0){
+                        handleGuestLimitExceeded({});
+                        return;
+                    }
+                    if(getGuestUsageCount() >= limit){
+                        handleGuestLimitExceeded({});
+                        return;
+                    }
                 }
 
                 removeFollowups();
@@ -886,12 +1298,27 @@
                     sendOptions.jobSlug = cleanJobHint(lastReplyMeta.job_slug);
                 }
 
+                sendOptions._bypassLimit = true;
                 sendMessageToServer(text, sendOptions);
             }
             window.dispatchUserMessage = dispatchUserMessage;
 
-            function sendMessageToServer(message, opts){
+            function sendMessageToServer(message, opts, isRetry){
                 opts = opts || {};
+                var hasRetried = !!isRetry;
+                var skipLimitCheck = !!opts._bypassLimit;
+                if(!skipLimitCheck && !isTruthy(config.is_logged_in)){
+                    var immediateLimit = getGuestLimit();
+                    if(immediateLimit <= 0){
+                        handleGuestLimitExceeded({});
+                        return;
+                    }
+                    if(getGuestUsageCount() >= immediateLimit){
+                        handleGuestLimitExceeded({});
+                        return;
+                    }
+                }
+                ensureSession();
                 var contextMessage = opts.contextMessage || message;
                 var payload = new URLSearchParams();
                 payload.append('action', 'bkja_send_message');
@@ -922,14 +1349,54 @@
                         }
                         if(!response.ok){
                             var error = new Error('Request failed');
-                            error.data = data;
+                            if(data && data.data){
+                                error.data = data.data;
+                            } else {
+                                error.data = data;
+                            }
+                            error.status = response.status;
                             throw error;
                         }
                         return data;
                     });
                 }).then(function(res){
                     personalityFlow.awaitingResult = false;
+                    if(res && res.data && res.data.error === 'invalid_nonce'){
+                        if(!hasRetried){
+                            refreshNonce().then(function(success){
+                                if(success){
+                                    sendMessageToServer(message, opts, true);
+                                } else {
+                                    pushBot('خطا در ارتباط با سرور');
+                                }
+                            });
+                        } else {
+                            pushBot('خطا در ارتباط با سرور');
+                        }
+                        return;
+                    }
+                    if(res && res.data && res.data.error === 'guest_limit'){
+                        handleGuestLimitExceeded(res.data);
+                        return;
+                    }
                     if(res && res.success){
+                        if(res.data){
+                            syncSessionFromPayload(res.data);
+                        }
+                        if(!isTruthy(config.is_logged_in)){
+                            if(res.data){
+                                if(Object.prototype.hasOwnProperty.call(res.data, 'guest_message_limit')){
+                                    updateGuestLimitFromServer(res.data.guest_message_limit);
+                                }
+                                if(Object.prototype.hasOwnProperty.call(res.data, 'guest_message_count')){
+                                    setGuestUsageCount(res.data.guest_message_count);
+                                } else {
+                                    incrementGuestUsage();
+                                }
+                            } else {
+                                incrementGuestUsage();
+                            }
+                        }
                         var reply = res.data.reply || '';
                         var suggestions = Array.isArray(res.data.suggestions) ? res.data.suggestions : [];
                         var fromCache = !!res.data.from_cache;
@@ -959,20 +1426,40 @@
                                 if(feedbackEnabled && reply && reply.length){
                                     attachFeedbackControls($bubble, meta, contextMessage, reply, { highlight: highlightFeedback });
                                 }
+                                maybeAnnounceGuestLimitReached();
                             }
                         });
-                    } else if(res && res.error === 'guest_limit'){
-                        var loginUrl = (res.login_url || '/wp-login.php');
-                        pushBotHtml('<div style="color:#d32f2f;font-weight:700;padding:12px 0;">برای ادامه گفتگو باید عضو سایت شوید.<br> <a href="'+loginUrl+'" style="color:#1976d2;text-decoration:underline;font-weight:700;">ورود یا ثبت‌نام</a></div>');
                     } else {
                         pushBot('خطا در پاسخ');
                     }
                 }).catch(function(err){
                     personalityFlow.awaitingResult = false;
                     var data = err && err.data ? err.data : null;
+                    if(!data && err && err.responseJSON){
+                        data = err.responseJSON;
+                    }
+                    if(data && data.data){
+                        data = data.data;
+                    }
+                    if(data && data.error === 'invalid_nonce'){
+                        if(!hasRetried){
+                            refreshNonce().then(function(success){
+                                if(success){
+                                    sendMessageToServer(message, opts, true);
+                                } else {
+                                    pushBot('خطا در ارتباط با سرور');
+                                }
+                            });
+                        } else {
+                            pushBot('خطا در ارتباط با سرور');
+                        }
+                        return;
+                    }
+                    if(data){
+                        syncSessionFromPayload(data);
+                    }
                     if(data && data.error === 'guest_limit'){
-                        var loginUrl = (data.login_url || '/wp-login.php');
-                        pushBotHtml('<div style="color:#d32f2f;font-weight:700;padding:12px 0;">برای ادامه گفتگو باید عضو سایت شوید.<br> <a href="'+loginUrl+'" style="color:#1976d2;text-decoration:underline;font-weight:700;">ورود یا ثبت‌نام</a></div>');
+                        handleGuestLimitExceeded(data);
                     } else {
                         pushBot('خطا در ارتباط با سرور');
                     }
@@ -999,11 +1486,10 @@
                 $panel = $('<div id="bkja-history-panel" class="bkja-history-panel"></div>');
                 $("#bkja-menu-panel").append($panel);
             }
-            $.post(config.ajax_url, {
+            ajaxWithNonce({
                 action: "bkja_get_history",
-                nonce: config.nonce,
                 session: sessionId
-            }, function(res){
+            }).done(function(res){
                 if(res && res.success){
                     // حذف زیر دسته‌های باز هنگام نمایش تاریخچه
                     $(".bkja-jobs-sublist").remove();
@@ -1027,6 +1513,8 @@
                     html += '<button type="button" id="bkja-close-history" class="bkja-close-menu" style="float:left;">✖ بستن</button>';
                     $panel.html(html).show();
                 }
+            }).fail(function(){
+                $panel.html('<div class="bkja-history-title" style="color:#d32f2f;">خطا در دریافت تاریخچه</div>');
             });
         });
         $(document).on("click","#bkja-close-history",function(){
@@ -1035,10 +1523,9 @@
 
         // === منوی دسته‌ها و شغل‌ها ===
         function loadCategories(){
-            $.post(config.ajax_url, {
-                action: "bkja_get_categories",
-                nonce: config.nonce
-            }, function(res){
+            ajaxWithNonce({
+                action: "bkja_get_categories"
+            }).done(function(res){
                 if(res && res.success && res.data.categories){
                     var $list = $("#bkja-categories-list").empty();
                     // حذف هر دکمه تاریخچه قبلی
@@ -1063,6 +1550,8 @@
                         $list.append($li);
                     });
                 }
+            }).fail(function(){
+                $("#bkja-categories-list").html('<li style="padding:8px 0;color:#d32f2f;">خطا در دریافت دسته‌بندی‌ها</li>');
             });
         }
         loadCategories();
@@ -1094,11 +1583,10 @@
             // بعد از li اضافه شود
             $cat.after($sublist);
 
-            $.post(config.ajax_url,{
+            ajaxWithNonce({
                 action:"bkja_get_jobs",
-                nonce:config.nonce,
                 category_id:catId
-            },function(res){
+            }).done(function(res){
                 var $sub = $cat.next('.bkja-jobs-sublist').empty();
                 if(res && res.success && res.data.jobs && res.data.jobs.length){
                     res.data.jobs.forEach(function(job){
@@ -1108,6 +1596,9 @@
                 } else {
                     $sub.append('<div>❌ شغلی یافت نشد.</div>');
                 }
+            }).fail(function(){
+                var $sub = $cat.next('.bkja-jobs-sublist').empty();
+                $sub.append('<div style="color:#d32f2f;">خطا در دریافت شغل‌ها.</div>');
             });
         });
 
@@ -1128,14 +1619,12 @@
         function showJobSummaryAndRecords(job_title) {
             // دریافت خلاصه و اولین سری رکوردها با هم
             $.when(
-                $.post(config.ajax_url, {
+                ajaxWithNonce({
                     action: "bkja_get_job_summary",
-                    nonce: config.nonce,
                     job_title: job_title
                 }),
-                $.post(config.ajax_url, {
+                ajaxWithNonce({
                     action: "bkja_get_job_records",
-                    nonce: config.nonce,
                     job_title: job_title,
                     limit: 5,
                     offset: 0
@@ -1191,6 +1680,8 @@
                 } else {
                     pushBotHtml('<div>📭 تجربه‌ای برای این شغل ثبت نشده است.</div>');
                 }
+            }).fail(function(){
+                pushBotHtml('<div style="color:#d32f2f;">خطا در دریافت اطلاعات شغل.</div>');
             });
         }
 
@@ -1201,19 +1692,18 @@
             var limit = 5;
             var $btn = $(this);
             $btn.prop('disabled', true).text('⏳ در حال دریافت...');
-            $.post(config.ajax_url, {
+            ajaxWithNonce({
                 action: "bkja_get_job_records",
-                nonce: config.nonce,
                 job_title: job_title,
                 limit: limit,
                 offset: offset
-            }, function(res) {
+            }).done(function(res) {
                 $btn.prop('disabled', false).text('مشاهده تجربه کاربران این شغل');
                 if (res && res.success && res.data && res.data.records && res.data.records.length) {
                     res.data.records.forEach(function(r) {
                         var html = '<div class="bkja-job-record-card">';
                         html += '<h5>🧑‍💼 تجربه کاربر</h5>';
-                        if (r.income) html += '<p>� درآمد: ' + esc(r.income) + '</p>';
+                        if (r.income) html += '<p>💵 درآمد: ' + esc(r.income) + '</p>';
                         if (r.investment) html += '<p>💰 سرمایه: ' + esc(r.investment) + '</p>';
                         if (r.city) html += '<p>📍 شهر: ' + esc(r.city) + '</p>';
                         if (r.gender) html += '<p>👤 جنسیت: ' + esc(r.gender) + '</p>';
@@ -1235,6 +1725,9 @@
                     pushBotHtml('<div>📭 تجربه بیشتری برای این شغل ثبت نشده است.</div>');
                     $btn.remove();
                 }
+            }).fail(function(){
+                $btn.prop('disabled', false).text('مشاهده تجربه کاربران این شغل');
+                pushBotHtml('<div style="color:#d32f2f;">خطا در دریافت تجربه‌های بیشتر.</div>');
             });
         });
 
