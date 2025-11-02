@@ -1355,6 +1355,10 @@
                         }
                         return;
                     }
+                    if(res && res.success && res.data && res.data.error === 'guest_limit'){
+                        handleGuestLimitExceeded(res.data);
+                        return;
+                    }
                     if(res && res.success){
                         if(res.data && res.data.guest_session){
                             applyGuestSession(res.data.guest_session);
@@ -1405,8 +1409,9 @@
                                 maybeAnnounceGuestLimitReached();
                             }
                         });
-                    } else if(res && res.error === 'guest_limit'){
-                        handleGuestLimitExceeded(res && res.data ? res.data : res);
+                    } else if(res && (res.error === 'guest_limit' || (res.data && res.data.error === 'guest_limit'))){
+                        var payload = res.data && res.data.error === 'guest_limit' ? res.data : (res.data || res);
+                        handleGuestLimitExceeded(payload);
                     } else {
                         pushBot('خطا در پاسخ');
                     }

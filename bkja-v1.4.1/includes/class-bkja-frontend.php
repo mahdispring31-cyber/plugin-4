@@ -53,7 +53,7 @@ class BKJA_Frontend {
             'nonce' => wp_create_nonce('bkja_nonce'),
             'is_logged_in' => is_user_logged_in() ? 1 : 0,
             'free_limit' => max(0, (int) $free_limit_option),
-            'login_url' => function_exists('wc_get_page_permalink') ? wc_get_page_permalink('myaccount') : wp_login_url(),
+            'login_url' => esc_url( function_exists('wc_get_page_permalink') ? wc_get_page_permalink('myaccount') : wp_login_url() ),
             'enable_feedback' => get_option('bkja_enable_feedback','0') === '1' ? 1 : 0,
             'enable_quick_actions' => get_option('bkja_enable_quick_actions','0') === '1' ? 1 : 0,
         );
@@ -115,15 +115,16 @@ class BKJA_Frontend {
             );
 
             if ( $msg_count >= $free_limit ) {
-                wp_send_json_error(
+                wp_send_json_success(
                     array(
+                        'ok'            => false,
                         'error'         => 'guest_limit',
-                        'login_url'     => $login_url,
-                        'limit'         => $free_limit,
-                        'count'         => $msg_count,
+                        'login_url'     => esc_url( $login_url ),
+                        'limit'         => (int) $free_limit,
+                        'count'         => (int) $msg_count,
                         'guest_session' => $session,
                     ),
-                    403
+                    200
                 );
             }
         }
@@ -215,6 +216,7 @@ class BKJA_Frontend {
         }
 
         $response_payload = array(
+            'ok'          => true,
             'reply'       => $reply,
             'suggestions' => $suggestions,
             'from_cache'  => $from_cache,
