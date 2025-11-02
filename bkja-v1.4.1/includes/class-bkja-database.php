@@ -352,7 +352,9 @@ class BKJA_Database {
                     'role'    => 'user',
                     'content' => $row->message,
                 );
-            } elseif ( ! empty( $row->response ) ) {
+            }
+
+            if ( ! empty( $row->response ) ) {
                 $history[] = array(
                     'role'    => 'assistant',
                     'content' => $row->response,
