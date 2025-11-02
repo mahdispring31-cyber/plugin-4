@@ -539,17 +539,36 @@
             $messages.scrollTop($messages.prop('scrollHeight'));
         }
 
-        function showGuestLimitNotice(message, loginHref){
-            var limitMessage = typeof message === 'string' && message.length ? message : 'برای ادامه گفتگو باید عضو سایت شوید.';
-            var href = typeof loginHref === 'string' && loginHref.length ? loginHref : defaultLoginUrl();
-            pushBotHtml('<div style="color:#d32f2f;font-weight:700;padding:12px 0;">'+esc(limitMessage)+'<br> <a href="'+href+'" style="color:#1976d2;text-decoration:underline;font-weight:700;">ورود یا ثبت‌نام</a></div>');
+        function handleGuestLimit(loginUrl, limit){
+            var $input = $('#bkja-user-message');
+            var $send  = $('#bkja-send');
+            var finalLimit = parseInt(limit, 10);
+            if(isNaN(finalLimit) || finalLimit < 0){
+                var fallbackLimit = parseInt(config.free_limit, 10);
+                if(isNaN(fallbackLimit) || fallbackLimit <= 0){
+                    fallbackLimit = 2;
+                }
+                finalLimit = fallbackLimit;
+            }
+            var loginHref = typeof loginUrl === 'string' && loginUrl.length ? loginUrl : defaultLoginUrl();
+
+            $input.prop('disabled', true);
+            $send.prop('disabled', true);
+
+            pushBotHtml(
+                '<div style="color:#d32f2f; font-weight:700; margin-top:8px;">' +
+                'حداکثر ' + esc(String(finalLimit)) + ' پیام رایگان در روز. ' +
+                '<a href="' + esc(loginHref) + '" style="text-decoration:underline;">ورود یا ثبت‌نام</a>' +
+                '</div>'
+            );
         }
 
         function handleGuestLimitExceeded(payload){
             if(payload && payload.guest_session){
                 applyGuestSession(payload.guest_session);
             }
-            if(payload && Object.prototype.hasOwnProperty.call(payload, 'limit')){
+            var payloadHasLimit = payload && Object.prototype.hasOwnProperty.call(payload, 'limit');
+            if(payloadHasLimit){
                 updateGuestLimitFromServer(payload.limit);
             }
             if(payload && Object.prototype.hasOwnProperty.call(payload, 'count')){
@@ -564,7 +583,8 @@
             if(payload && payload.login_url){
                 config.login_url = payload.login_url;
             }
-            showGuestLimitNotice(payload && payload.msg ? payload.msg : null, payload && payload.login_url ? payload.login_url : null);
+            var limitForDisplay = payloadHasLimit ? payload.limit : getGuestLimit();
+            handleGuestLimit(payload && payload.login_url ? payload.login_url : config.login_url, limitForDisplay);
         }
 
         function maybeAnnounceGuestLimitReached(){
