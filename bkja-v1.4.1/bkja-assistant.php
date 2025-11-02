@@ -143,21 +143,37 @@ function bkja_ajax_get_jobs(){ $nonce = isset($_POST['nonce']) ? sanitize_text_f
 
 add_action('wp_ajax_bkja_get_job_detail','bkja_ajax_get_job_detail');
 add_action('wp_ajax_nopriv_bkja_get_job_detail','bkja_ajax_get_job_detail');
-function bkja_ajax_get_job_detail(){ $nonce = isset($_POST['nonce']) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : ''; if ( ! wp_verify_nonce( $nonce, 'bkja_nonce' ) ) { wp_send_json_error(['error'=>'invalid_nonce'],403); } $job_id = isset($_POST['job_id'])? intval($_POST['job_id']):0; $job = BKJA_Jobs::get_job_detail($job_id); if(!$job) wp_send_json_error(['error'=>'not_found'],404); global $wpdb; $table_chats = $wpdb->prefix.'bkja_chats'; $session = isset($_POST['session']) ? sanitize_text_field( wp_unslash( $_POST['session'] ) ) : ''; if ( class_exists( 'BKJA_Frontend' ) ) { list( $session ) = BKJA_Frontend::ensure_guest_session( $session, false ); } if($wpdb->get_var("SHOW TABLES LIKE '{$table_chats}'") == $table_chats){ $wpdb->insert($table_chats,['user_id'=>get_current_user_id()?:null,'session_id'=>$session,'job_category'=>$job->category_id,'message'=>null,'response'=>wp_json_encode(['type'=>'job_card','data'=>$job]),'created_at'=>current_time('mysql')]); } wp_send_json_success(['job'=>$job]); }
+function bkja_ajax_get_job_detail(){ $nonce = isset($_POST['nonce']) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : ''; if ( ! wp_verify_nonce( $nonce, 'bkja_nonce' ) ) { wp_send_json_error(['error'=>'invalid_nonce'],403); } $job_id = isset($_POST['job_id'])? intval($_POST['job_id']):0; $job = BKJA_Jobs::get_job_detail($job_id); if(!$job) wp_send_json_error(['error'=>'not_found'],404); global $wpdb; $table_chats = $wpdb->prefix.'bkja_chats'; $raw_session = isset($_POST['session']) ? $_POST['session'] : ''; if ( class_exists( 'BKJA_Frontend' ) ) { $session = BKJA_Frontend::get_session( $raw_session ); } else { $session = is_string( $raw_session ) ? sanitize_text_field( wp_unslash( $raw_session ) ) : ''; if ( strlen( $session ) < 12 ) { $session = 'bkja_' . wp_generate_password( 20, false, false ); } } if($wpdb->get_var("SHOW TABLES LIKE '{$table_chats}'") == $table_chats){ $wpdb->insert($table_chats,['user_id'=>get_current_user_id()?:null,'session_id'=>$session,'job_category'=>$job->category_id,'message'=>null,'response'=>wp_json_encode(['type'=>'job_card','data'=>$job]),'created_at'=>current_time('mysql')]); } wp_send_json_success(['job'=>$job,'server_session'=>$session]); }
 
 add_action('wp_ajax_bkja_refresh_nonce','bkja_ajax_refresh_nonce');
 add_action('wp_ajax_nopriv_bkja_refresh_nonce','bkja_ajax_refresh_nonce');
 function bkja_ajax_refresh_nonce(){
-        $session = '';
+        $raw_session = isset($_POST['session']) ? $_POST['session'] : '';
         if ( class_exists( 'BKJA_Frontend' ) ) {
-                list( $session ) = BKJA_Frontend::ensure_guest_session( '', true );
+                $session = BKJA_Frontend::get_session( $raw_session );
+        } else {
+                $session = is_string( $raw_session ) ? sanitize_text_field( wp_unslash( $raw_session ) ) : '';
+                if ( strlen( $session ) < 12 ) {
+                        $session = 'bkja_' . wp_generate_password( 20, false, false );
+                }
         }
+
+        $free_limit_option = get_option( 'bkja_free_limit', null );
+        if ( null === $free_limit_option || '' === $free_limit_option ) {
+                $free_limit_option = get_option( 'bkja_free_messages_per_day', 2 );
+        }
+        $free_limit = (int) $free_limit_option;
+        if ( $free_limit <= 0 ) {
+                $free_limit = 2;
+        }
+
         $data = array(
                 'nonce' => wp_create_nonce('bkja_nonce'),
                 'is_logged_in' => is_user_logged_in() ? 1 : 0,
-                'free_limit' => (int) get_option('bkja_free_messages_per_day', 5),
+                'free_limit' => $free_limit,
                 'login_url' => function_exists('wc_get_page_permalink') ? wc_get_page_permalink('myaccount') : wp_login_url(),
                 'guest_session' => $session,
+                'server_session' => $session,
         );
         wp_send_json_success( $data );
 }

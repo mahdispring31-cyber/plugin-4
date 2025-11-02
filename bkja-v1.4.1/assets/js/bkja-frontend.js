@@ -22,27 +22,107 @@
         }
     }
 
-    function readCookie(name){
-        var escaped = name.replace(/([.$?*|{}()\[\]\\\/\+^])/g, '\\$1');
-        var pattern = new RegExp('(?:^|; )' + escaped + '=([^;]*)');
-        var match = document.cookie.match(pattern);
-        return match ? decodeURIComponent(match[1]) : '';
-    }
-
-    function writeCookie(name, value, days){
-        var expires = '';
-        if(typeof days === 'number'){
-            var date = new Date();
-            date.setTime(date.getTime() + days * 24 * 60 * 60 * 1000);
-            expires = '; expires=' + date.toUTCString();
-        }
-        document.cookie = name + '=' + encodeURIComponent(value || '') + expires + '; path=/';
-    }
-
     var localStorageAvailable = storageUsable();
-    var sessionStorageAvailable = localStorageAvailable;
     var guestUsageStorageAvailable = localStorageAvailable;
-    var SESSION_STORAGE_KEY = 'bkja_session_id';
+
+    function generateSessionId(){
+        return 'bkja_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    }
+
+    function readCookie(name){
+        var m = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/([.$?*|{}()\[\]\\/+^])/g, '\\$1') + '=([^;]*)'));
+        return m ? decodeURIComponent(m[1]) : '';
+    }
+
+    function writeCookie(name, val, days){
+        var exp = new Date();
+        exp.setTime(exp.getTime() + (days*24*60*60*1000));
+        document.cookie = name + '=' + encodeURIComponent(val || '') + '; expires=' + exp.toUTCString() + '; path=/; SameSite=Lax';
+    }
+
+    function persistSessionValue(value){
+        if(!value){
+            return;
+        }
+        if(localStorageAvailable){
+            try {
+                localStorage.setItem('bkja_session', value);
+            } catch(storageError){
+                localStorageAvailable = false;
+                guestUsageStorageAvailable = false;
+            }
+        }
+        writeCookie('bkja_session', value, 30);
+    }
+
+    function assignActiveSession(value, options){
+        if(typeof value !== 'string'){
+            return;
+        }
+        var trimmed = $.trim(value);
+        if(!trimmed || trimmed.length <= 10){
+            return;
+        }
+        sessionId = trimmed;
+        config.session = trimmed;
+        config.server_session = trimmed;
+        if(window && window.BKJA){
+            window.BKJA.session = trimmed;
+            window.BKJA.server_session = trimmed;
+        }
+        persistSessionValue(trimmed);
+        guestUsageKey = 'bkja_guest_usage_v2_' + trimmed;
+        if(!options || options.reloadUsage !== false){
+            guestUsage = loadGuestUsage();
+        }
+    }
+
+    function bootstrapSession(){
+        var sess = readCookie('bkja_session') || '';
+        if(!sess && localStorageAvailable){
+            try {
+                var stored = localStorage.getItem('bkja_session');
+                if(stored){
+                    sess = stored;
+                }
+            } catch(storageError){
+                localStorageAvailable = false;
+                guestUsageStorageAvailable = false;
+            }
+        }
+        if(config && typeof config.server_session === 'string' && config.server_session.length > 10){
+            sess = config.server_session;
+        }
+        if(!sess){
+            sess = generateSessionId();
+        }
+        assignActiveSession(sess);
+        return sessionId;
+    }
+
+    function ensureSession(){
+        if(!sessionId || sessionId.length <= 10){
+            bootstrapSession();
+        }
+        return sessionId;
+    }
+
+    function syncSessionFromPayload(payload){
+        if(!payload){
+            return;
+        }
+        var nextSession = '';
+        if(payload.server_session && typeof payload.server_session === 'string'){
+            nextSession = payload.server_session;
+        } else if(payload.guest_session && typeof payload.guest_session === 'string'){
+            nextSession = payload.guest_session;
+        }
+        if(nextSession && nextSession.length > 10){
+            assignActiveSession(nextSession);
+        }
+    }
+
+    bootstrapSession();
 
     function nowMs(){
         if(typeof Date !== 'undefined' && Date.now){
@@ -156,66 +236,6 @@
         return getGuestUsageCount() < limit;
     }
 
-    function generateGuestSessionId(){
-        return 'guest_' + Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2, 6);
-    }
-
-    function persistSessionId(value){
-        if(!value){
-            return;
-        }
-        if(sessionStorageAvailable){
-            try {
-                localStorage.setItem(SESSION_STORAGE_KEY, value);
-            } catch(storageError){
-                sessionStorageAvailable = false;
-                guestUsageStorageAvailable = false;
-            }
-        }
-        writeCookie(SESSION_STORAGE_KEY, value, 30);
-    }
-
-    function obtainStoredSessionId(){
-        if(sessionStorageAvailable){
-            try {
-                var stored = localStorage.getItem(SESSION_STORAGE_KEY);
-                if(stored){
-                    return stored;
-                }
-            } catch(storageError){
-                sessionStorageAvailable = false;
-                guestUsageStorageAvailable = false;
-            }
-        }
-        var cookieVal = readCookie(SESSION_STORAGE_KEY);
-        return cookieVal || '';
-    }
-
-    function applyGuestSession(newSession){
-        if(typeof newSession !== 'string'){
-            return;
-        }
-        var trimmed = $.trim(newSession);
-        if(!trimmed || trimmed.indexOf('guest_') !== 0){
-            return;
-        }
-        persistSessionId(trimmed);
-        sessionId = trimmed;
-        guestUsageKey = 'bkja_guest_usage_v2_' + sessionId;
-        guestUsage = loadGuestUsage();
-    }
-
-    function ensureSessionId(){
-        var stored = obtainStoredSessionId();
-        if(stored && stored.indexOf('guest_') === 0){
-            applyGuestSession(stored);
-            return sessionId;
-        }
-        var generated = generateGuestSessionId();
-        applyGuestSession(generated);
-        return sessionId;
-    }
-
     function refreshNonce(){
         if(nonceRefreshRequest){
             return nonceRefreshRequest;
@@ -236,8 +256,8 @@
                 if(res.data.hasOwnProperty('login_url') && res.data.login_url){
                     config.login_url = res.data.login_url;
                 }
-                if(res.data.guest_session){
-                    applyGuestSession(res.data.guest_session);
+                if(res.data){
+                    syncSessionFromPayload(res.data);
                 }
                 deferred.resolve(true);
             } else {
@@ -253,6 +273,7 @@
 
     function ajaxWithNonce(params, options){
         options = options || {};
+        ensureSession();
         var deferred = $.Deferred();
         var payload = $.extend({}, params, { nonce: config.nonce });
         $.ajax({
@@ -261,8 +282,8 @@
             dataType: options.dataType || 'json',
             data: payload
         }).done(function(res, textStatus, jqXHR){
-            if(res && res.data && res.data.guest_session){
-                applyGuestSession(res.data.guest_session);
+            if(res && res.data){
+                syncSessionFromPayload(res.data);
             }
             if(res && res.data && res.data.error === 'invalid_nonce' && !options._retry){
                 refreshNonce().then(function(success){
@@ -282,8 +303,8 @@
             }
         }).fail(function(jqXHR, textStatus, errorThrown){
             var responseJSON = jqXHR && jqXHR.responseJSON;
-            if(responseJSON && responseJSON.data && responseJSON.data.guest_session){
-                applyGuestSession(responseJSON.data.guest_session);
+            if(responseJSON && responseJSON.data){
+                syncSessionFromPayload(responseJSON.data);
             }
             var invalidNonce = jqXHR && jqXHR.status === 403 && responseJSON && responseJSON.data && responseJSON.data.error === 'invalid_nonce';
             if(!invalidNonce && responseJSON && responseJSON.data && responseJSON.data.error === 'invalid_nonce'){
@@ -482,10 +503,7 @@
             ]
         };
 
-        sessionId = ensureSessionId();
-        if(!guestUsageKey){
-            guestUsageKey = 'bkja_guest_usage_v2_' + sessionId;
-        }
+        ensureSession();
         if(!guestUsage){
             guestUsage = loadGuestUsage();
         }
@@ -564,8 +582,8 @@
         }
 
         function handleGuestLimitExceeded(payload){
-            if(payload && payload.guest_session){
-                applyGuestSession(payload.guest_session);
+            if(payload){
+                syncSessionFromPayload(payload);
             }
             var payloadHasLimit = payload && Object.prototype.hasOwnProperty.call(payload, 'limit');
             if(payloadHasLimit){
@@ -942,6 +960,7 @@
                     datasetJobSlug = bubbleEl.getAttribute('data-job-slug') || '';
                 }
 
+                ensureSession();
                 var payload = {
                     action: 'bkja_feedback',
                     nonce: config.nonce,
@@ -1299,6 +1318,7 @@
                         return;
                     }
                 }
+                ensureSession();
                 var contextMessage = opts.contextMessage || message;
                 var payload = new URLSearchParams();
                 payload.append('action', 'bkja_send_message');
@@ -1355,13 +1375,13 @@
                         }
                         return;
                     }
-                    if(res && res.success && res.data && res.data.error === 'guest_limit'){
+                    if(res && res.data && res.data.error === 'guest_limit'){
                         handleGuestLimitExceeded(res.data);
                         return;
                     }
                     if(res && res.success){
-                        if(res.data && res.data.guest_session){
-                            applyGuestSession(res.data.guest_session);
+                        if(res.data){
+                            syncSessionFromPayload(res.data);
                         }
                         if(!isTruthy(config.is_logged_in)){
                             if(res.data){
@@ -1409,9 +1429,6 @@
                                 maybeAnnounceGuestLimitReached();
                             }
                         });
-                    } else if(res && (res.error === 'guest_limit' || (res.data && res.data.error === 'guest_limit'))){
-                        var payload = res.data && res.data.error === 'guest_limit' ? res.data : (res.data || res);
-                        handleGuestLimitExceeded(payload);
                     } else {
                         pushBot('خطا در پاسخ');
                     }
@@ -1438,8 +1455,8 @@
                         }
                         return;
                     }
-                    if(data && data.guest_session){
-                        applyGuestSession(data.guest_session);
+                    if(data){
+                        syncSessionFromPayload(data);
                     }
                     if(data && data.error === 'guest_limit'){
                         handleGuestLimitExceeded(data);
