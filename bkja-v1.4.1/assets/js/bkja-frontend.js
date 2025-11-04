@@ -7,6 +7,7 @@
     var sessionId = '';
     var guestUsageKey = '';
     var guestUsage = null;
+    var guestLimitResponder = null;
 
     function storageUsable(){
         if(typeof localStorage === 'undefined'){
@@ -243,6 +244,22 @@
         }
     }
 
+    function extractGuestLimitPayload(res){
+        if(!res){
+            return null;
+        }
+        var payload = null;
+        if(res.data && typeof res.data === 'object'){
+            payload = res.data;
+        } else if(typeof res === 'object'){
+            payload = res;
+        }
+        if(payload && payload.error === 'guest_limit'){
+            return payload;
+        }
+        return null;
+    }
+
     function defaultLoginUrl(){
         var url = config.login_url;
         if(typeof url !== 'string' || !url.length){
@@ -271,6 +288,12 @@
         $.post(config.ajax_url, {
             action: 'bkja_refresh_nonce'
         }).done(function(res){
+            var limitPayload = extractGuestLimitPayload(res);
+            if(limitPayload && typeof guestLimitResponder === 'function'){
+                guestLimitResponder(limitPayload);
+                deferred.resolve(false);
+                return;
+            }
             if(res && res.success && res.data && res.data.nonce){
                 config.nonce = res.data.nonce;
                 if(res.data.hasOwnProperty('is_logged_in')){
@@ -310,6 +333,12 @@
         }).done(function(res, textStatus, jqXHR){
             if(res && res.data){
                 syncSessionFromPayload(res.data);
+            }
+            var limitPayload = extractGuestLimitPayload(res);
+            if(limitPayload && typeof guestLimitResponder === 'function'){
+                guestLimitResponder(limitPayload);
+                deferred.resolve(res, textStatus, jqXHR);
+                return;
             }
             if(res && res.data && res.data.error === 'invalid_nonce' && !options._retry){
                 refreshNonce().then(function(success){
@@ -583,7 +612,7 @@
             $messages.scrollTop($messages.prop('scrollHeight'));
         }
 
-        function handleGuestLimit(loginUrl, limit){
+        function handleGuestLimit(loginUrl, limit, message){
             var $input = $('#bkja-user-message');
             var $send  = $('#bkja-send');
             var parsedLimit = typeof limit === 'number' ? limit : parseInt(limit, 10);
@@ -597,13 +626,27 @@
             parsedLimit = Math.max(0, parsedLimit);
             var loginHref = typeof loginUrl === 'string' && loginUrl.length ? loginUrl : defaultLoginUrl();
 
+            var notice = '';
+            if(typeof message === 'string' && message.trim().length){
+                notice = message.trim();
+            }
+            if(!notice){
+                notice = 'ظرفیت پیام‌های رایگان امروز شما به پایان رسیده است. برای ادامه گفتگو لطفاً وارد شوید یا عضویت خود را ارتقا دهید.';
+            }
+
+            var detailText = '';
+            if(parsedLimit > 0){
+                detailText = ' سهمیه امروز شامل ' + esc(String(parsedLimit)) + ' پیام رایگان است.';
+            }
+
             $input.prop('disabled', true);
             $send.prop('disabled', true);
 
             pushBotHtml(
                 '<div style="color:#d32f2f;font-weight:700;margin-top:8px;">' +
-                'حداکثر ' + esc(String(parsedLimit)) + ' پیام رایگان در روز. ' +
-                '<a href="' + esc(loginHref) + '" style="text-decoration:underline;">ورود یا ثبت‌نام</a>' +
+                esc(notice) +
+                (detailText ? '<div style="font-weight:400;margin-top:6px;">' + esc(detailText) + '</div>' : '') +
+                '<a href="' + esc(loginHref) + '" style="display:inline-block;margin-top:8px;text-decoration:underline;">ورود یا ثبت‌نام</a>' +
                 '</div>'
             );
         }
@@ -639,8 +682,15 @@
             }
 
             var loginTarget = payload && payload.login_url ? payload.login_url : config.login_url;
-            handleGuestLimit(loginTarget, limitValue);
+            var limitMessage = '';
+            if(payload && Object.prototype.hasOwnProperty.call(payload, 'message')){
+                limitMessage = String(payload.message || '');
+            }
+            handleGuestLimit(loginTarget, limitValue, limitMessage);
         }
+
+        guestLimitResponder = handleGuestLimitExceeded;
+
 
         function maybeAnnounceGuestLimitReached(){
             if(isTruthy(config.is_logged_in)){
@@ -1541,6 +1591,19 @@
                 action: "bkja_get_history",
                 session: sessionId
             }).done(function(res){
+                var limitPayload = extractGuestLimitPayload(res);
+                if(limitPayload){
+                    var limitNotice = '';
+                    if(limitPayload && limitPayload.message){
+                        limitNotice = $.trim(String(limitPayload.message));
+                    }
+                    if(!limitNotice){
+                        limitNotice = 'برای مشاهده تاریخچه لطفاً وارد حساب کاربری شوید.';
+                    }
+                    $panel.html('<div class="bkja-history-title" style="color:#d32f2f;">'+esc(limitNotice)+'</div>');
+                    revealPanel();
+                    return;
+                }
                 if(res && res.success){
                     var html = '<div class="bkja-history-title">گفتگوهای شما</div>';
                     html += '<div class="bkja-history-list">';
@@ -1574,6 +1637,15 @@
             ajaxWithNonce({
                 action: "bkja_get_categories"
             }).done(function(res){
+                var limitPayload = extractGuestLimitPayload(res);
+                if(limitPayload){
+                    var message = limitPayload && limitPayload.message ? $.trim(String(limitPayload.message)) : '';
+                    if(!message){
+                        message = 'برای مشاهده دسته‌بندی‌ها لطفاً وارد شوید.';
+                    }
+                    $("#bkja-categories-list").html('<li style="padding:8px 0;color:#d32f2f;">'+esc(message)+'</li>');
+                    return;
+                }
                 if(res && res.success && res.data.categories){
                     var $list = $("#bkja-categories-list").empty();
                     // حذف بخش تاریخچه قبلی و افزودن نسخه ثابت داخل سایدبار
@@ -1638,6 +1710,15 @@
                 category_id:catId
             }).done(function(res){
                 var $sub = $cat.next('.bkja-jobs-sublist').empty();
+                var limitPayload = extractGuestLimitPayload(res);
+                if(limitPayload){
+                    var limitNotice = limitPayload && limitPayload.message ? $.trim(String(limitPayload.message)) : '';
+                    if(!limitNotice){
+                        limitNotice = 'برای مشاهده فهرست مشاغل لطفاً وارد شوید.';
+                    }
+                    $sub.append('<div style="color:#d32f2f;">'+esc(limitNotice)+'</div>');
+                    return;
+                }
                 if(res && res.success && res.data.jobs && res.data.jobs.length){
                     res.data.jobs.forEach(function(job){
                         var $j = $('<div class="bkja-job-item" data-id="'+job.id+'">💼 '+esc(job.job_title || job.title)+'</div>');
@@ -1680,6 +1761,17 @@
                     offset: 0
                 })
             ).done(function(summaryRes, recordsRes) {
+                var summaryPayload = summaryRes && summaryRes[0] ? extractGuestLimitPayload(summaryRes[0]) : null;
+                var recordsPayload = recordsRes && recordsRes[0] ? extractGuestLimitPayload(recordsRes[0]) : null;
+                var limitPayload = summaryPayload || recordsPayload;
+                if(limitPayload){
+                    var limitNotice = limitPayload && limitPayload.message ? $.trim(String(limitPayload.message)) : '';
+                    if(!limitNotice){
+                        limitNotice = 'برای مشاهده جزئیات شغل لطفاً وارد شوید.';
+                    }
+                    pushBotHtml('<div style="color:#d32f2f;">'+esc(limitNotice)+'</div>');
+                    return;
+                }
                 var s = summaryRes[0] && summaryRes[0].success && summaryRes[0].data && summaryRes[0].data.summary ? summaryRes[0].data.summary : null;
                 var records = recordsRes[0] && recordsRes[0].success && recordsRes[0].data && recordsRes[0].data.records ? recordsRes[0].data.records : [];
                 var totalCount = recordsRes[0] && recordsRes[0].success && recordsRes[0].data && typeof recordsRes[0].data.total_count !== 'undefined' ? recordsRes[0].data.total_count : records.length;
@@ -1748,6 +1840,16 @@
                 limit: limit,
                 offset: offset
             }).done(function(res) {
+                var limitPayload = extractGuestLimitPayload(res);
+                if(limitPayload){
+                    var limitNotice = limitPayload && limitPayload.message ? $.trim(String(limitPayload.message)) : '';
+                    if(!limitNotice){
+                        limitNotice = 'برای مشاهده تجربه کاربران لطفاً وارد شوید.';
+                    }
+                    $btn.prop('disabled', false).text('مشاهده تجربه کاربران این شغل');
+                    pushBotHtml('<div style="color:#d32f2f;">'+esc(limitNotice)+'</div>');
+                    return;
+                }
                 $btn.prop('disabled', false).text('مشاهده تجربه کاربران این شغل');
                 if (res && res.success && res.data && res.data.records && res.data.records.length) {
                     res.data.records.forEach(function(r) {
