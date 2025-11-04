@@ -1513,25 +1513,35 @@
         // === تاریخچه گفتگو ===
         $(document).on("click", "#bkja-open-history", function(){
             var $btn = $(this);
-            var $panel = $("#bkja-history-panel");
-            var $wrap = $btn.closest(".bkja-menu-panel");
-            // حذف هر پنل تاریخچه یا دکمه شناور قبلی
-            $(".bkja-history-panel").remove();
-            $("#bkja-close-history").remove();
-            // اگر پنل وجود ندارد، بساز و اضافه کن
-            if ($panel.length === 0) {
-                $panel = $('<div id="bkja-history-panel" class="bkja-history-panel"></div>');
-                $("#bkja-menu-panel").append($panel);
+            var $container = $btn.closest("#bkja-history-container");
+            var $panel = $container.find("#bkja-history-panel");
+
+            if($btn.hasClass("is-loading")){
+                return;
             }
+
+            if($panel.is(":visible")){
+                $panel.stop(true, true).slideUp(200);
+                return;
+            }
+
+            $btn.addClass("is-loading");
+            $panel.stop(true, true).hide().html('<div class="bkja-history-title">در حال بارگذاری...</div>');
+
+            // بستن زیرمنوهای دسته‌ها هنگام نمایش تاریخچه
+            $(".bkja-jobs-sublist").remove();
+            $(".bkja-category-item.open").removeClass("open");
+
+            var revealPanel = function(){
+                $panel.stop(true, true).slideDown(220);
+                $btn.removeClass("is-loading");
+            };
+
             ajaxWithNonce({
                 action: "bkja_get_history",
                 session: sessionId
             }).done(function(res){
                 if(res && res.success){
-                    // حذف زیر دسته‌های باز هنگام نمایش تاریخچه
-                    $(".bkja-jobs-sublist").remove();
-                    $(".bkja-category-item.open").removeClass("open");
-                    // ساختار جدید پنل تاریخچه
                     var html = '<div class="bkja-history-title">گفتگوهای شما</div>';
                     html += '<div class="bkja-history-list">';
                     if(res.data.items && res.data.items.length){
@@ -1547,15 +1557,16 @@
                         html += '<div>📭 تاریخچه‌ای یافت نشد.</div>';
                     }
                     html += '</div>';
-                    html += '<button type="button" id="bkja-close-history" class="bkja-close-menu" style="float:left;">✖ بستن</button>';
-                    $panel.html(html).show();
+                    $panel.html(html);
+                    revealPanel();
+                } else {
+                    $panel.html('<div class="bkja-history-title" style="color:#d32f2f;">خطا در دریافت تاریخچه</div>');
+                    revealPanel();
                 }
             }).fail(function(){
                 $panel.html('<div class="bkja-history-title" style="color:#d32f2f;">خطا در دریافت تاریخچه</div>');
+                revealPanel();
             });
-        });
-        $(document).on("click","#bkja-close-history",function(){
-            $("#bkja-history-panel").remove();
         });
 
         // === منوی دسته‌ها و شغل‌ها ===
@@ -1565,11 +1576,13 @@
             }).done(function(res){
                 if(res && res.success && res.data.categories){
                     var $list = $("#bkja-categories-list").empty();
-                    // حذف هر دکمه تاریخچه قبلی
-                    $("#bkja-menu-panel #bkja-open-history").remove();
-                    // افزودن دکمه گفتگوهای شما بین پروفایل و دسته‌بندی‌ها
-                    var $historyBtn = $('<button id="bkja-open-history" type="button" class="bkja-close-menu" style="margin-bottom:12px;width:100%;font-weight:700;font-size:15px;color:#1976d2;background:linear-gradient(90deg,#e6f7ff,#dff3ff);border-radius:10px;border:none;box-shadow:0 1px 4px rgba(30,144,255,0.08);text-align:right;">🕘 گفتگوهای شما</button>');
-                    $(".bkja-profile-section").after($historyBtn);
+                    // حذف بخش تاریخچه قبلی و افزودن نسخه ثابت داخل سایدبار
+                    $("#bkja-history-container").remove();
+                    var $historyContainer = $('<div id="bkja-history-container" class="bkja-history-container"></div>');
+                    var $historyBtn = $('<button id="bkja-open-history" type="button" class="bkja-history-toggle">🕘 گفتگوهای شما</button>');
+                    var $historyPanel = $('<div id="bkja-history-panel" class="bkja-history-panel"></div>');
+                    $historyContainer.append($historyBtn).append($historyPanel);
+                    $(".bkja-profile-section").after($historyContainer);
                     res.data.categories.forEach(function(cat){
                         var icon = cat.icon || "💼";
                         if(cat.name){
