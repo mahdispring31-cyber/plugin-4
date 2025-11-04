@@ -12,29 +12,25 @@ class BKJA_Frontend {
         add_action('wp_ajax_nopriv_bkja_feedback', array(__CLASS__,'ajax_feedback'));
     }
 
-    private static function canonical_session_id( $posted ) {
-        $posted = is_string( $posted ) ? sanitize_text_field( wp_unslash( $posted ) ) : '';
-        $cookie = isset( $_COOKIE['bkja_session'] ) ? sanitize_text_field( wp_unslash( $_COOKIE['bkja_session'] ) ) : '';
-
-        $session_id = $cookie ? $cookie : $posted;
-
-        if ( strlen( $session_id ) < 12 ) {
-            $session_id = 'bkja_' . wp_generate_password( 20, false, false );
+    private static function canonical_session_id( $posted ){
+        $posted = is_string($posted) ? trim($posted) : '';
+        $cookie = isset($_COOKIE['bkja_session']) ? sanitize_text_field( wp_unslash( $_COOKIE['bkja_session'] ) ) : '';
+        $sid = $cookie ?: $posted;
+        if ( strlen($sid) < 12 ) {
+            $sid = 'bkja_' . wp_generate_password(20, false, false);
+            $cookie_domain = defined( 'COOKIE_DOMAIN' ) ? COOKIE_DOMAIN : '';
+            $cookie_path   = ( defined( 'COOKIEPATH' ) && COOKIEPATH ) ? COOKIEPATH : '/';
+            setcookie('bkja_session', $sid, time()+30*DAY_IN_SECONDS, $cookie_path, $cookie_domain, is_ssl(), true);
         }
-
-        if ( ! headers_sent() ) {
-            $path   = defined( 'COOKIEPATH' ) && COOKIEPATH ? COOKIEPATH : '/';
-            $domain = defined( 'COOKIE_DOMAIN' ) ? COOKIE_DOMAIN : '';
-            setcookie( 'bkja_session', $session_id, time() + ( 30 * DAY_IN_SECONDS ), $path, $domain, is_ssl(), true );
-        }
-
-        $_COOKIE['bkja_session'] = $session_id;
-
-        return $session_id;
+        return $sid;
     }
 
     public static function get_session( $posted = '' ) {
-        return self::canonical_session_id( $posted );
+        $value = '';
+        if ( is_string( $posted ) ) {
+            $value = sanitize_text_field( wp_unslash( $posted ) );
+        }
+        return self::canonical_session_id( $value );
     }
 
     public static function enqueue_assets(){
@@ -45,12 +41,7 @@ class BKJA_Frontend {
             $free_limit_option = get_option( 'bkja_free_messages_per_day', 2 );
         }
 
-        $free_limit = (int) $free_limit_option;
-        if ( $free_limit <= 0 ) {
-            $free_limit = 2;
-        }
-
-        $session_for_js = self::canonical_session_id( isset( $_COOKIE['bkja_session'] ) ? $_COOKIE['bkja_session'] : '' );
+        $free_limit = max( 0, (int) $free_limit_option );
 
         $data = array(
             'ajax_url' => admin_url('admin-ajax.php'),
@@ -60,7 +51,7 @@ class BKJA_Frontend {
             'login_url' => esc_url( function_exists('wc_get_page_permalink') ? wc_get_page_permalink('myaccount') : wp_login_url() ),
             'enable_feedback' => get_option('bkja_enable_feedback','0') === '1' ? 1 : 0,
             'enable_quick_actions' => get_option('bkja_enable_quick_actions','0') === '1' ? 1 : 0,
-            'server_session' => $session_for_js,
+            'server_session' => isset( $_COOKIE['bkja_session'] ) ? sanitize_text_field( wp_unslash( $_COOKIE['bkja_session'] ) ) : '',
         );
         wp_localize_script('bkja-frontend','bkja_vars',$data);
         wp_localize_script('bkja-frontend','BKJA',$data);
@@ -84,7 +75,7 @@ class BKJA_Frontend {
         }
         $message         = isset($_POST['message']) ? sanitize_textarea_field( wp_unslash( $_POST['message'] ) ) : '';
         $category        = isset($_POST['category']) ? sanitize_text_field( wp_unslash( $_POST['category'] ) ) : '';
-        $raw_session     = isset($_POST['session']) ? $_POST['session'] : '';
+        $raw_session     = isset($_POST['session']) ? sanitize_text_field( wp_unslash( $_POST['session'] ) ) : '';
         $session         = self::canonical_session_id( $raw_session );
         $job_title_hint  = isset($_POST['job_title']) ? sanitize_text_field(wp_unslash($_POST['job_title'])) : '';
         $job_slug        = isset($_POST['job_slug']) ? sanitize_text_field(wp_unslash($_POST['job_slug'])) : '';
@@ -98,10 +89,7 @@ class BKJA_Frontend {
         if ( null === $free_limit_option || '' === $free_limit_option ) {
             $free_limit_option = get_option( 'bkja_free_messages_per_day', 2 );
         }
-        $free_limit = (int) $free_limit_option;
-        if ( $free_limit <= 0 ) {
-            $free_limit = 2;
-        }
+        $free_limit = max( 0, (int) $free_limit_option );
         $login_url = function_exists('wc_get_page_permalink') ? wc_get_page_permalink('myaccount') : wp_login_url();
 
         $msg_count = null;
@@ -122,18 +110,13 @@ class BKJA_Frontend {
             );
 
             if ( $msg_count >= $free_limit ) {
-                wp_send_json_success(
-                    array(
-                        'ok'            => false,
-                        'error'         => 'guest_limit',
-                        'login_url'     => esc_url( $login_url ),
-                        'limit'         => (int) $free_limit,
-                        'count'         => (int) $msg_count,
-                        'guest_session' => $session,
-                        'server_session' => $session,
-                    ),
-                    200
-                );
+                wp_send_json_success(array(
+                    'ok'        => false,
+                    'error'     => 'guest_limit',
+                    'login_url' => esc_url($login_url),
+                    'limit'     => (int) $free_limit,
+                    'server_session' => $session,
+                ), 200);
             }
         }
 
@@ -302,7 +285,7 @@ class BKJA_Frontend {
             wp_send_json_error(array('error'=>'invalid_nonce'),403);
         }
 
-        $raw_session = isset($_POST['session']) ? $_POST['session'] : '';
+        $raw_session = isset($_POST['session']) ? sanitize_text_field( wp_unslash( $_POST['session'] ) ) : '';
         $session = self::canonical_session_id( $raw_session );
         $user_id = get_current_user_id() ?: 0;
 
