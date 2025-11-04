@@ -77,7 +77,7 @@
         }
     }
 
-    function bootstrapSession(){
+    (function syncSession(){
         var sess = readCookie('bkja_session') || '';
         if(!sess && localStorageAvailable){
             try {
@@ -90,19 +90,47 @@
                 guestUsageStorageAvailable = false;
             }
         }
-        if(config && typeof config.server_session === 'string' && config.server_session.length > 10){
+        if(window.BKJA && typeof window.BKJA.server_session === 'string' && window.BKJA.server_session.length > 10){
+            sess = window.BKJA.server_session;
+        } else if(config && typeof config.server_session === 'string' && config.server_session.length > 10){
             sess = config.server_session;
         }
         if(!sess){
             sess = generateSessionId();
         }
+        if(localStorageAvailable){
+            try {
+                localStorage.setItem('bkja_session', sess);
+            } catch(storageError){
+                localStorageAvailable = false;
+                guestUsageStorageAvailable = false;
+            }
+        }
+        writeCookie('bkja_session', sess, 30);
         assignActiveSession(sess);
-        return sessionId;
-    }
+    })();
 
     function ensureSession(){
         if(!sessionId || sessionId.length <= 10){
-            bootstrapSession();
+            var sess = readCookie('bkja_session') || '';
+            if(!sess && localStorageAvailable){
+                try {
+                    var stored = localStorage.getItem('bkja_session');
+                    if(stored){
+                        sess = stored;
+                    }
+                } catch(storageError){
+                    localStorageAvailable = false;
+                    guestUsageStorageAvailable = false;
+                }
+            }
+            if(config && typeof config.server_session === 'string' && config.server_session.length > 10){
+                sess = config.server_session;
+            }
+            if(!sess){
+                sess = generateSessionId();
+            }
+            assignActiveSession(sess);
         }
         return sessionId;
     }
@@ -121,8 +149,6 @@
             assignActiveSession(nextSession);
         }
     }
-
-    bootstrapSession();
 
     function nowMs(){
         if(typeof Date !== 'undefined' && Date.now){
@@ -560,22 +586,23 @@
         function handleGuestLimit(loginUrl, limit){
             var $input = $('#bkja-user-message');
             var $send  = $('#bkja-send');
-            var finalLimit = parseInt(limit, 10);
-            if(isNaN(finalLimit) || finalLimit < 0){
-                var fallbackLimit = parseInt(config.free_limit, 10);
-                if(isNaN(fallbackLimit) || fallbackLimit <= 0){
-                    fallbackLimit = 2;
+            var parsedLimit = typeof limit === 'number' ? limit : parseInt(limit, 10);
+            if(isNaN(parsedLimit)){
+                var fallback = parseInt(config.free_limit, 10);
+                if(isNaN(fallback)){
+                    fallback = 2;
                 }
-                finalLimit = fallbackLimit;
+                parsedLimit = fallback;
             }
+            parsedLimit = Math.max(0, parsedLimit);
             var loginHref = typeof loginUrl === 'string' && loginUrl.length ? loginUrl : defaultLoginUrl();
 
             $input.prop('disabled', true);
             $send.prop('disabled', true);
 
             pushBotHtml(
-                '<div style="color:#d32f2f; font-weight:700; margin-top:8px;">' +
-                'حداکثر ' + esc(String(finalLimit)) + ' پیام رایگان در روز. ' +
+                '<div style="color:#d32f2f;font-weight:700;margin-top:8px;">' +
+                'حداکثر ' + esc(String(parsedLimit)) + ' پیام رایگان در روز. ' +
                 '<a href="' + esc(loginHref) + '" style="text-decoration:underline;">ورود یا ثبت‌نام</a>' +
                 '</div>'
             );
@@ -583,26 +610,36 @@
 
         function handleGuestLimitExceeded(payload){
             if(payload){
+                if(payload.server_session && typeof payload.server_session === 'string' && payload.server_session.length > 10){
+                    assignActiveSession(payload.server_session, { reloadUsage: false });
+                }
                 syncSessionFromPayload(payload);
             }
-            var payloadHasLimit = payload && Object.prototype.hasOwnProperty.call(payload, 'limit');
-            if(payloadHasLimit){
+
+            if(payload && Object.prototype.hasOwnProperty.call(payload, 'limit')){
                 updateGuestLimitFromServer(payload.limit);
             }
-            if(payload && Object.prototype.hasOwnProperty.call(payload, 'count')){
-                var countVal = parseInt(payload.count, 10);
-                if(!isNaN(countVal)){
-                    setGuestUsageCount(countVal);
+
+            var limitValue;
+            if(payload && Object.prototype.hasOwnProperty.call(payload, 'limit')){
+                limitValue = parseInt(payload.limit, 10);
+                if(isNaN(limitValue)){
+                    limitValue = getGuestLimit();
                 }
             } else {
-                var limitVal = getGuestLimit();
-                setGuestUsageCount(limitVal);
+                limitValue = getGuestLimit();
             }
+
+            if(typeof limitValue === 'number' && !isNaN(limitValue)){
+                setGuestUsageCount(Math.max(0, limitValue));
+            }
+
             if(payload && payload.login_url){
                 config.login_url = payload.login_url;
             }
-            var limitForDisplay = payloadHasLimit ? payload.limit : getGuestLimit();
-            handleGuestLimit(payload && payload.login_url ? payload.login_url : config.login_url, limitForDisplay);
+
+            var loginTarget = payload && payload.login_url ? payload.login_url : config.login_url;
+            handleGuestLimit(loginTarget, limitValue);
         }
 
         function maybeAnnounceGuestLimitReached(){
