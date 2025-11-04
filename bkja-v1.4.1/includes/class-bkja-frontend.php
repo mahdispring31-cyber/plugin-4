@@ -34,14 +34,23 @@ class BKJA_Frontend {
     }
 
     public static function enqueue_assets(){
-        wp_enqueue_style('bkja-frontend', BKJA_PLUGIN_URL.'assets/css/bkja-frontend.css', array(), '1.4.2');
-        wp_enqueue_script('bkja-frontend', BKJA_PLUGIN_URL.'assets/js/bkja-frontend.js', array('jquery'), '1.4.2', true);
-        $free_limit_option = get_option( 'bkja_free_limit', null );
-        if ( null === $free_limit_option || '' === $free_limit_option ) {
-            $free_limit_option = get_option( 'bkja_free_messages_per_day', 2 );
-        }
+        $css_path = BKJA_PLUGIN_DIR . 'assets/css/bkja-frontend.css';
+        $js_path  = BKJA_PLUGIN_DIR . 'assets/js/bkja-frontend.js';
+        $css_version = file_exists( $css_path ) ? filemtime( $css_path ) : ( defined( 'BKJA_PLUGIN_VERSION' ) ? BKJA_PLUGIN_VERSION : time() );
+        $js_version  = file_exists( $js_path ) ? filemtime( $js_path ) : ( defined( 'BKJA_PLUGIN_VERSION' ) ? BKJA_PLUGIN_VERSION : time() );
 
-        $free_limit = max( 0, (int) $free_limit_option );
+        wp_enqueue_style('bkja-frontend', BKJA_PLUGIN_URL.'assets/css/bkja-frontend.css', array(), $css_version);
+        wp_enqueue_script('bkja-frontend', BKJA_PLUGIN_URL.'assets/js/bkja-frontend.js', array('jquery'), $js_version, true);
+
+        if ( function_exists( 'bkja_get_free_message_limit' ) ) {
+            $free_limit = bkja_get_free_message_limit();
+        } else {
+            $free_limit_option = get_option( 'bkja_free_messages_per_day', null );
+            if ( null === $free_limit_option || '' === $free_limit_option ) {
+                $free_limit_option = get_option( 'bkja_free_limit', null );
+            }
+            $free_limit = max( 0, (int) $free_limit_option );
+        }
 
         $data = array(
             'ajax_url' => admin_url('admin-ajax.php'),
@@ -85,11 +94,18 @@ class BKJA_Frontend {
         }
 
         $user_id = get_current_user_id() ?: 0;
-        $free_limit_option = get_option( 'bkja_free_limit', null );
-        if ( null === $free_limit_option || '' === $free_limit_option ) {
-            $free_limit_option = get_option( 'bkja_free_messages_per_day', 2 );
+
+        if ( function_exists( 'bkja_get_free_message_limit' ) ) {
+            $free_limit = bkja_get_free_message_limit();
+        } else {
+            $free_limit_option = get_option( 'bkja_free_messages_per_day', null );
+            if ( null === $free_limit_option || '' === $free_limit_option ) {
+                $free_limit_option = get_option( 'bkja_free_limit', null );
+            }
+            $free_limit = max( 0, (int) $free_limit_option );
         }
-        $free_limit = max( 0, (int) $free_limit_option );
+
+        error_log('BKJA limit debug: session=' . $session . ' user_id=' . $user_id . ' free_limit=' . $free_limit);
         $login_url = function_exists('wc_get_page_permalink') ? wc_get_page_permalink('myaccount') : wp_login_url();
 
         $msg_count = null;
@@ -109,6 +125,7 @@ class BKJA_Frontend {
                 )
             );
 
+            error_log('BKJA limit check: msg_count=' . $msg_count . ' free_limit=' . $free_limit);
             if ( $msg_count >= $free_limit ) {
                 $limit_notice = __( 'ظرفیت پیام‌های رایگان امروز شما تکمیل شده است. برای ادامه گفتگو لطفاً وارد شوید یا عضویت خود را ارتقا دهید.', 'bkja-assistant' );
 
