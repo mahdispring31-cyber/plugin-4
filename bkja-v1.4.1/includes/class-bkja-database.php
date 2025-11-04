@@ -182,6 +182,9 @@ class BKJA_Database {
             'disadvantages' => isset($data['disadvantages']) ? sanitize_textarea_field($data['disadvantages']) : '',
             'details'       => isset($data['details']) ? sanitize_textarea_field($data['details']) : '',
         ];
+        $row = array_map( function( $value ) {
+            return is_string( $value ) ? wp_slash( $value ) : $value;
+        }, $row );
         $wpdb->insert($table, $row);
         $insert_id = $wpdb->insert_id;
 
@@ -201,7 +204,7 @@ class BKJA_Database {
             'session_id' => '',
             'user_id'    => 0,
             'message'    => '',
-            'response'   => '',
+            'response'   => null,
             'vote'       => 0,
             'tags'       => '',
             'comment'    => '',
@@ -213,11 +216,15 @@ class BKJA_Database {
         $row['session_id'] = sanitize_text_field( $row['session_id'] );
         $row['user_id']    = (int) $row['user_id'];
         $row['message']    = sanitize_textarea_field( $row['message'] );
-        $row['response']   = wp_kses_post( $row['response'] );
+        $row['response']   = is_null( $row['response'] ) ? null : wp_kses_post( $row['response'] );
         $row['vote']       = (int) $row['vote'];
         $row['tags']       = sanitize_text_field( $row['tags'] );
         $row['comment']    = sanitize_textarea_field( $row['comment'] );
         $row['created_at'] = sanitize_text_field( $row['created_at'] );
+
+        $row = array_map( function( $value ) {
+            return is_string( $value ) ? wp_slash( $value ) : $value;
+        }, $row );
 
         $wpdb->insert( $table, $row );
 

@@ -34,8 +34,8 @@ class BKJA_Frontend {
     }
 
     public static function enqueue_assets(){
-        wp_enqueue_style('bkja-frontend', BKJA_PLUGIN_URL.'assets/css/bkja-frontend.css', array(), '1.3.4');
-        wp_enqueue_script('bkja-frontend', BKJA_PLUGIN_URL.'assets/js/bkja-frontend.js', array('jquery'), '1.3.4', true);
+        wp_enqueue_style('bkja-frontend', BKJA_PLUGIN_URL.'assets/css/bkja-frontend.css', array(), '1.4.2');
+        wp_enqueue_script('bkja-frontend', BKJA_PLUGIN_URL.'assets/js/bkja-frontend.js', array('jquery'), '1.4.2', true);
         $free_limit_option = get_option( 'bkja_free_limit', null );
         if ( null === $free_limit_option || '' === $free_limit_option ) {
             $free_limit_option = get_option( 'bkja_free_messages_per_day', 2 );
@@ -110,12 +110,16 @@ class BKJA_Frontend {
             );
 
             if ( $msg_count >= $free_limit ) {
+                $limit_notice = __( 'ظرفیت پیام‌های رایگان امروز شما تکمیل شده است. برای ادامه گفتگو لطفاً وارد شوید یا عضویت خود را ارتقا دهید.', 'bkja-assistant' );
+
                 wp_send_json_success(array(
-                    'ok'        => false,
-                    'error'     => 'guest_limit',
-                    'login_url' => esc_url($login_url),
-                    'limit'     => (int) $free_limit,
-                    'server_session' => $session,
+                    'ok'            => false,
+                    'error'         => 'guest_limit',
+                    'login_url'     => esc_url($login_url),
+                    'limit'         => (int) $free_limit,
+                    'count'         => (int) $msg_count,
+                    'message'       => $limit_notice,
+                    'server_session'=> $session,
                 ), 200);
             }
         }
