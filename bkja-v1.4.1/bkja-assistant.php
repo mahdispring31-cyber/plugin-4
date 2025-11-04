@@ -6,10 +6,37 @@ require_once plugin_dir_path(__FILE__) . 'admin/github-issue-reporter.php';
 
 /*
 Plugin Name: BKJA Assistant
-Version: 1.5.7
+Version: 1.5.8
 Description: ابزار دستیار شغلی حرفه‌ای برای وردپرس.
 Author: Mahdi Mohammadi
 */
+
+if ( ! defined( 'BKJA_PLUGIN_VERSION' ) ) {
+        define( 'BKJA_PLUGIN_VERSION', '1.5.8' );
+}
+
+if ( ! function_exists( 'bkja_get_free_message_limit' ) ) {
+        function bkja_get_free_message_limit() {
+                $opt = get_option( 'bkja_free_messages_per_day', null );
+                if ( $opt === null || $opt === '' ) {
+                        $opt = get_option( 'bkja_free_limit', null );
+                }
+
+                return max( 0, (int) $opt );
+        }
+}
+
+if ( ! function_exists( 'bkja_cleanup_legacy_free_limit_option' ) ) {
+        function bkja_cleanup_legacy_free_limit_option() {
+                $legacy = get_option( 'bkja_free_limit', null );
+                if ( $legacy !== null && $legacy !== '' ) {
+                        $new = get_option( 'bkja_free_messages_per_day', null );
+                        if ( $new !== null && $new !== '' ) {
+                                delete_option( 'bkja_free_limit' );
+                        }
+                }
+        }
+}
 // Handle CSV import for jobs
 add_action('admin_post_bkja_import_jobs', function() {
 	if (!current_user_can('manage_options')) wp_die('دسترسی غیرمجاز');
@@ -129,6 +156,8 @@ require_once BKJA_PLUGIN_DIR . 'includes/class-bkja-frontend.php';
 require_once BKJA_PLUGIN_DIR . 'includes/class-bkja-user-profile.php';
 require_once BKJA_PLUGIN_DIR . 'admin/settings.php';
 register_activation_hook( __FILE__, array( 'BKJA_Database', 'activate' ) );
+register_activation_hook( __FILE__, 'bkja_cleanup_legacy_free_limit_option' );
+add_action( 'admin_init', 'bkja_cleanup_legacy_free_limit_option' );
 add_action( 'init', function(){ load_plugin_textdomain( 'bkja-assistant', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' ); if ( class_exists('BKJA_Frontend') ) BKJA_Frontend::init(); if ( class_exists('BKJA_User_Profile') ) BKJA_User_Profile::init(); });
 /* BKJA builder v1.4.1 injections */
 if ( file_exists(dirname(__FILE__) . '/includes/class-bkja-jobs.php') ) { require_once dirname(__FILE__) . '/includes/class-bkja-jobs.php'; }
@@ -159,14 +188,7 @@ function bkja_ajax_refresh_nonce(){
                 }
         }
 
-        $free_limit_option = get_option( 'bkja_free_limit', null );
-        if ( null === $free_limit_option || '' === $free_limit_option ) {
-                $free_limit_option = get_option( 'bkja_free_messages_per_day', 2 );
-        }
-        $free_limit = (int) $free_limit_option;
-        if ( $free_limit <= 0 ) {
-                $free_limit = 2;
-        }
+        $free_limit = bkja_get_free_message_limit();
 
         $data = array(
                 'nonce' => wp_create_nonce('bkja_nonce'),
