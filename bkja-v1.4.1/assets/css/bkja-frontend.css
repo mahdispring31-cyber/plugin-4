@@ -690,17 +690,42 @@ body.bkja-body-lock {
   line-height: 1.7;
 }
 
+.bkja-history-container {
+  margin-top: 12px;
+}
+
+.bkja-history-toggle {
+  width: 100%;
+  font-weight: 700;
+  font-size: 15px;
+  color: #1976d2;
+  background: linear-gradient(90deg, #e6f7ff, #dff3ff);
+  border-radius: 10px;
+  border: none;
+  box-shadow: 0 1px 4px rgba(30, 144, 255, 0.08);
+  text-align: right;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.bkja-history-toggle:hover {
+  box-shadow: 0 3px 8px rgba(30, 144, 255, 0.14);
+  transform: translateY(-1px);
+}
+
 .bkja-history-panel {
-  position: absolute;
-  top: 60px;
-  left: 16px;
-  right: 16px;
+  display: none;
+  margin-top: 10px;
   background: rgba(255, 255, 255, 0.96);
   border-radius: var(--bkja-radius-md);
   border: 1px solid rgba(148, 163, 184, 0.2);
-  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.18);
   padding: 18px 16px;
-  z-index: 1300;
+  box-shadow: inset 0 0 0 1px rgba(148, 163, 184, 0.08);
+  direction: rtl;
+  text-align: right;
+  max-height: 260px;
+  overflow-y: auto;
 }
 
 .bkja-history-title {
