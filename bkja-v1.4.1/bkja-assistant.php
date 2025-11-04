@@ -43,10 +43,11 @@ add_action('admin_post_bkja_import_jobs', function() {
 
 // API for jobs - get job records (with advanced filters)
 add_action('rest_api_init', function() {
-	register_rest_route('bkja/v1', '/jobs/', [
-		'methods' => 'GET',
-		'callback' => 'bkja_get_jobs_api',
-	]);
+        register_rest_route('bkja/v1', '/jobs/', [
+                'methods' => 'GET',
+                'callback' => 'bkja_get_jobs_api',
+                'permission_callback' => '__return_true',
+        ]);
 });
 
 function bkja_get_jobs_api(WP_REST_Request $request) {
