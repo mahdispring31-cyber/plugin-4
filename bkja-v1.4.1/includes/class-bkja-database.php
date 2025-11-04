@@ -127,11 +127,11 @@ class BKJA_Database {
         $table = $wpdb->prefix . 'bkja_chats';
 
         $data = array(
-            'response' => wp_kses_post( $response ),
+            'response' => wp_slash( wp_kses_post( $response ) ),
         );
 
         if ( ! empty( $meta_json ) ) {
-            $data['meta'] = $meta_json;
+            $data['meta'] = wp_slash( $meta_json );
         }
 
         $wpdb->update( $table, $data, array( 'id' => (int) $id ) );
