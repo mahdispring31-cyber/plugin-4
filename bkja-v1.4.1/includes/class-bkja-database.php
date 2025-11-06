@@ -180,8 +180,8 @@ class BKJA_Database {
         }
 
         global $wpdb;
-        $table      = $wpdb->prefix . 'bkja_chats';
-        $session_id = sanitize_text_field( $session_id );
+        $table           = $wpdb->prefix . 'bkja_chats';
+        $session_id      = sanitize_text_field( $session_id );
         $max_age_seconds = (int) $max_age_seconds;
 
         $sql    = "SELECT COUNT(*) FROM {$table} WHERE session_id = %s AND message IS NOT NULL AND message <> ''";
@@ -190,11 +190,16 @@ class BKJA_Database {
         if ( $max_age_seconds > 0 ) {
             $timestamp_gmt = current_time( 'timestamp', true );
             $threshold     = gmdate( 'Y-m-d H:i:s', max( 0, $timestamp_gmt - $max_age_seconds ) );
-            $sql          .= ' AND created_at >= %s';
+            $sql          .= " AND (created_at IS NULL OR created_at = '0000-00-00 00:00:00' OR created_at >= %s)";
             $params[]      = $threshold;
         }
 
         $prepared = $wpdb->prepare( $sql, $params );
+
+        if ( false === $prepared ) {
+            return 0;
+        }
+
         return (int) $wpdb->get_var( $prepared );
     }
 
