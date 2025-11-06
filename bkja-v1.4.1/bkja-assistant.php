@@ -211,3 +211,4 @@ function bkja_ajax_refresh_nonce(){
         );
         wp_send_json_success( $data );
 }
+//mahdi
