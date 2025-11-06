@@ -74,6 +74,9 @@ class BKJA_Database {
 
         dbDelta( $sql3 );
 
+        self::ensure_chats_created_at_default();
+        update_option( 'bkja_migrated_chats_created_at_default', 1 );
+
         // مقدار پیش‌فرض برای تعداد پیام رایگان در روز
         if ( false === get_option( 'bkja_free_messages_per_day' ) ) {
             update_option( 'bkja_free_messages_per_day', 5 );
@@ -102,14 +105,15 @@ class BKJA_Database {
         global $wpdb;
         $table = $wpdb->prefix . 'bkja_chats';
         $defaults = array(
-            'user_id'=>null,
-            'session_id'=>'',
-            'job_category'=>'',
-            'message'=>'',
-            'response'=>null,
-            'meta'=>null,
-            'status'=>'active',
-            'feedback'=>'none'
+            'user_id'      => null,
+            'session_id'   => '',
+            'job_category' => '',
+            'message'      => '',
+            'response'     => null,
+            'meta'         => null,
+            'status'       => 'active',
+            'feedback'     => 'none',
+            'created_at'   => current_time( 'mysql', true ),
         );
         $row = wp_parse_args( $data, $defaults );
         $row = array_map( function( $value ) {
@@ -185,6 +189,45 @@ class BKJA_Database {
 
         $prepared = $wpdb->prepare( $sql, $params );
         return (int) $wpdb->get_var( $prepared );
+    }
+
+    /**
+     * Ensure the bkja_chats.created_at column has a default value and backfill empty timestamps.
+     */
+    public static function ensure_chats_created_at_default() {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'bkja_chats';
+
+        $table_exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+        if ( $table_exists !== $table ) {
+            return;
+        }
+
+        $column = $wpdb->get_row( $wpdb->prepare( 'SHOW COLUMNS FROM ' . $table . ' LIKE %s', 'created_at' ) );
+
+        if ( ! $column ) {
+            return;
+        }
+
+        $default = isset( $column->Default ) ? strtoupper( (string) $column->Default ) : '';
+        if ( 'CURRENT_TIMESTAMP' !== $default && 'CURRENT_TIMESTAMP()' !== $default ) {
+            $wpdb->query( "ALTER TABLE {$table} MODIFY created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP" );
+        }
+
+        $wpdb->query( "UPDATE {$table} SET created_at = IF(created_at IS NULL OR created_at = '0000-00-00 00:00:00', NOW(), created_at)" );
+    }
+
+    /**
+     * Run the created_at migration once after updates when activation hook is not triggered.
+     */
+    public static function maybe_migrate_chat_created_at_default() {
+        if ( get_option( 'bkja_migrated_chats_created_at_default' ) ) {
+            return;
+        }
+
+        self::ensure_chats_created_at_default();
+        update_option( 'bkja_migrated_chats_created_at_default', 1 );
     }
 
     /**

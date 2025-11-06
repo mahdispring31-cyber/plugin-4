@@ -118,18 +118,7 @@ class BKJA_Frontend {
         $guest_message_count = null;
 
         if ( ! $user_id ) {
-            global $wpdb;
-            $table = $wpdb->prefix . 'bkja_chats';
-
-            $msg_count = (int) $wpdb->get_var(
-                $wpdb->prepare(
-                    "SELECT COUNT(*) FROM {$table}
-                     WHERE session_id = %s
-                       AND message IS NOT NULL AND message <> ''
-                       AND created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)",
-                    $session
-                )
-            );
+            $msg_count = BKJA_Database::count_guest_messages( $session, DAY_IN_SECONDS );
 
             error_log('BKJA limit check: msg_count=' . $msg_count . ' free_limit=' . $free_limit);
             if ( $msg_count >= $free_limit ) {
@@ -230,7 +219,7 @@ class BKJA_Frontend {
         }
 
         if(!$user_id){
-            $guest_message_count = BKJA_Database::count_guest_messages($session);
+            $guest_message_count = BKJA_Database::count_guest_messages($session, DAY_IN_SECONDS);
         }
 
         $response_payload = array(
