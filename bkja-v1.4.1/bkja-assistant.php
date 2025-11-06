@@ -6,13 +6,13 @@ require_once plugin_dir_path(__FILE__) . 'admin/github-issue-reporter.php';
 
 /*
 Plugin Name: BKJA Assistant
-Version: 1.5.8
+Version: 1.5.9
 Description: ابزار دستیار شغلی حرفه‌ای برای وردپرس.
 Author: Mahdi Mohammadi
 */
 
 if ( ! defined( 'BKJA_PLUGIN_VERSION' ) ) {
-        define( 'BKJA_PLUGIN_VERSION', '1.5.8' );
+        define( 'BKJA_PLUGIN_VERSION', '1.5.9' );
 }
 
 if ( ! function_exists( 'bkja_get_free_message_limit' ) ) {
@@ -160,8 +160,14 @@ require_once BKJA_PLUGIN_DIR . 'includes/class-bkja-chat.php';
 require_once BKJA_PLUGIN_DIR . 'includes/class-bkja-frontend.php';
 require_once BKJA_PLUGIN_DIR . 'includes/class-bkja-user-profile.php';
 require_once BKJA_PLUGIN_DIR . 'admin/settings.php';
+add_action( 'plugins_loaded', array( 'BKJA_Database', 'maybe_migrate_chat_created_at_default' ) );
 register_activation_hook( __FILE__, array( 'BKJA_Database', 'activate' ) );
 register_activation_hook( __FILE__, 'bkja_cleanup_legacy_free_limit_option' );
+add_action('plugins_loaded', function(){
+        if ( function_exists('bkja_cleanup_legacy_free_limit_option') ) {
+                bkja_cleanup_legacy_free_limit_option();
+        }
+});
 add_action( 'admin_init', 'bkja_cleanup_legacy_free_limit_option' );
 add_action( 'init', function(){ load_plugin_textdomain( 'bkja-assistant', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' ); if ( class_exists('BKJA_Frontend') ) BKJA_Frontend::init(); if ( class_exists('BKJA_User_Profile') ) BKJA_User_Profile::init(); });
 /* BKJA builder v1.4.1 injections */
