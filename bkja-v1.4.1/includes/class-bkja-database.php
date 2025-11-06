@@ -126,15 +126,38 @@ class BKJA_Database {
         global $wpdb;
         $table = $wpdb->prefix . 'bkja_chats';
 
-        $data = array(
-            'response' => wp_slash( wp_kses_post( $response ) ),
-        );
+        $set_clauses = array();
+        $params      = array();
 
-        if ( ! empty( $meta_json ) ) {
-            $data['meta'] = wp_slash( $meta_json );
+        if ( is_null( $response ) ) {
+            $set_clauses[] = 'response = NULL';
+        } else {
+            $sanitized_response = wp_kses_post( $response );
+            $set_clauses[]      = 'response = %s';
+            $params[]           = wp_slash( $sanitized_response );
         }
 
-        $wpdb->update( $table, $data, array( 'id' => (int) $id ) );
+        if ( null !== $meta_json ) {
+            if ( '' === $meta_json ) {
+                $set_clauses[] = 'meta = NULL';
+            } else {
+                $set_clauses[] = 'meta = %s';
+                $params[]      = wp_slash( $meta_json );
+            }
+        }
+
+        if ( empty( $set_clauses ) ) {
+            return;
+        }
+
+        $params[] = (int) $id;
+
+        $sql = 'UPDATE ' . $table . ' SET ' . implode( ', ', $set_clauses ) . ' WHERE id = %d';
+        $prepared = $wpdb->prepare( $sql, $params );
+
+        if ( $prepared ) {
+            $wpdb->query( $prepared );
+        }
     }
 
     /**

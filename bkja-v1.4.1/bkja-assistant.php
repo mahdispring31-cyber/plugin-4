@@ -17,12 +17,17 @@ if ( ! defined( 'BKJA_PLUGIN_VERSION' ) ) {
 
 if ( ! function_exists( 'bkja_get_free_message_limit' ) ) {
         function bkja_get_free_message_limit() {
-                $opt = get_option( 'bkja_free_messages_per_day', null );
+                $opt = get_option( 'bkja_free_limit', null );
                 if ( $opt === null || $opt === '' ) {
-                        $opt = get_option( 'bkja_free_limit', null );
+                        $opt = get_option( 'bkja_free_messages_per_day', 2 );
                 }
 
-                return max( 0, (int) $opt );
+                $limit = (int) $opt;
+                if ( $limit < 0 ) {
+                        $limit = 0;
+                }
+
+                return $limit;
         }
 }
 
