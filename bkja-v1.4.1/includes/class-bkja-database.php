@@ -116,6 +116,13 @@ class BKJA_Database {
             'created_at'   => current_time( 'mysql', true ),
         );
         $row = wp_parse_args( $data, $defaults );
+
+        if ( empty( $row['created_at'] ) || '0000-00-00 00:00:00' === $row['created_at'] ) {
+            $row['created_at'] = current_time( 'mysql', true );
+        } else {
+            $row['created_at'] = sanitize_text_field( $row['created_at'] );
+        }
+
         $row = array_map( function( $value ) {
             return is_string( $value ) ? wp_slash( $value ) : $value;
         }, $row ); // محافظت از داده‌ها

@@ -6,13 +6,13 @@ require_once plugin_dir_path(__FILE__) . 'admin/github-issue-reporter.php';
 
 /*
 Plugin Name: BKJA Assistant
-Version: 1.5.9
+Version: 1.5.10
 Description: ابزار دستیار شغلی حرفه‌ای برای وردپرس.
 Author: Mahdi Mohammadi
 */
 
 if ( ! defined( 'BKJA_PLUGIN_VERSION' ) ) {
-        define( 'BKJA_PLUGIN_VERSION', '1.5.9' );
+        define( 'BKJA_PLUGIN_VERSION', '1.5.10' );
 }
 
 if ( ! function_exists( 'bkja_get_free_message_limit' ) ) {
