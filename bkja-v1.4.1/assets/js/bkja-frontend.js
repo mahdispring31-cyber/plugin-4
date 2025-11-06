@@ -64,6 +64,7 @@
         if(!trimmed || trimmed.length <= 10){
             return;
         }
+        var sameSession = sessionId === trimmed;
         sessionId = trimmed;
         config.session = trimmed;
         config.server_session = trimmed;
@@ -74,7 +75,11 @@
         persistSessionValue(trimmed);
         guestUsageKey = 'bkja_guest_usage_v2_' + trimmed;
         if(!options || options.reloadUsage !== false){
-            guestUsage = loadGuestUsage();
+            if(guestUsageStorageAvailable){
+                guestUsage = loadGuestUsage();
+            } else if(!sameSession){
+                guestUsage = { count: 0, updated: nowMs() };
+            }
         }
     }
 
