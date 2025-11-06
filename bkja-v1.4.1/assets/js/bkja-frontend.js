@@ -619,7 +619,7 @@
             if(isNaN(parsedLimit)){
                 var fallback = parseInt(config.free_limit, 10);
                 if(isNaN(fallback)){
-                    fallback = 2;
+                    fallback = 0;
                 }
                 parsedLimit = fallback;
             }
@@ -1593,6 +1593,7 @@
             }).done(function(res){
                 var limitPayload = extractGuestLimitPayload(res);
                 if(limitPayload){
+                    handleGuestLimitExceeded(limitPayload);
                     var limitNotice = '';
                     if(limitPayload && limitPayload.message){
                         limitNotice = $.trim(String(limitPayload.message));
@@ -1639,6 +1640,7 @@
             }).done(function(res){
                 var limitPayload = extractGuestLimitPayload(res);
                 if(limitPayload){
+                    handleGuestLimitExceeded(limitPayload);
                     var message = limitPayload && limitPayload.message ? $.trim(String(limitPayload.message)) : '';
                     if(!message){
                         message = 'برای مشاهده دسته‌بندی‌ها لطفاً وارد شوید.';
@@ -1712,6 +1714,7 @@
                 var $sub = $cat.next('.bkja-jobs-sublist').empty();
                 var limitPayload = extractGuestLimitPayload(res);
                 if(limitPayload){
+                    handleGuestLimitExceeded(limitPayload);
                     var limitNotice = limitPayload && limitPayload.message ? $.trim(String(limitPayload.message)) : '';
                     if(!limitNotice){
                         limitNotice = 'برای مشاهده فهرست مشاغل لطفاً وارد شوید.';
@@ -1765,6 +1768,7 @@
                 var recordsPayload = recordsRes && recordsRes[0] ? extractGuestLimitPayload(recordsRes[0]) : null;
                 var limitPayload = summaryPayload || recordsPayload;
                 if(limitPayload){
+                    handleGuestLimitExceeded(limitPayload);
                     var limitNotice = limitPayload && limitPayload.message ? $.trim(String(limitPayload.message)) : '';
                     if(!limitNotice){
                         limitNotice = 'برای مشاهده جزئیات شغل لطفاً وارد شوید.';
@@ -1842,6 +1846,7 @@
             }).done(function(res) {
                 var limitPayload = extractGuestLimitPayload(res);
                 if(limitPayload){
+                    handleGuestLimitExceeded(limitPayload);
                     var limitNotice = limitPayload && limitPayload.message ? $.trim(String(limitPayload.message)) : '';
                     if(!limitNotice){
                         limitNotice = 'برای مشاهده تجربه کاربران لطفاً وارد شوید.';
