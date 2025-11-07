@@ -15,7 +15,7 @@ class BKJA_Frontend {
     private static function canonical_session_id( $posted ){
         $posted = is_string($posted) ? trim($posted) : '';
         $cookie = isset($_COOKIE['bkja_session']) ? sanitize_text_field( wp_unslash( $_COOKIE['bkja_session'] ) ) : '';
-        $sid = $cookie ?: $posted;
+        $sid = $posted ?: $cookie; // سشن ارسالی از JS اولویت دارد
         if ( strlen($sid) < 12 ) {
             $sid = 'bkja_' . wp_generate_password(20, false, false);
             $cookie_domain = defined( 'COOKIE_DOMAIN' ) ? COOKIE_DOMAIN : '';
@@ -88,6 +88,9 @@ class BKJA_Frontend {
         $message         = isset($_POST['message']) ? sanitize_textarea_field( wp_unslash( $_POST['message'] ) ) : '';
         $category        = isset($_POST['category']) ? sanitize_text_field( wp_unslash( $_POST['category'] ) ) : '';
         $raw_session     = isset($_POST['session']) ? sanitize_text_field( wp_unslash( $_POST['session'] ) ) : '';
+        if ( empty( $raw_session ) && isset( $_SERVER['HTTP_X_BKJA_SESSION'] ) ) {
+            $raw_session = sanitize_text_field( wp_unslash( $_SERVER['HTTP_X_BKJA_SESSION'] ) );
+        }
         $session         = self::canonical_session_id( $raw_session );
         $job_title_hint  = isset($_POST['job_title']) ? sanitize_text_field(wp_unslash($_POST['job_title'])) : '';
         $job_slug        = isset($_POST['job_slug']) ? sanitize_text_field(wp_unslash($_POST['job_slug'])) : '';
@@ -111,17 +114,15 @@ class BKJA_Frontend {
             }
         }
 
-        error_log('BKJA limit debug: session=' . $session . ' user_id=' . $user_id . ' free_limit=' . $free_limit);
+        error_log("BKJA limit debug: session={$session} user_id={$user_id} free_limit={$free_limit}");
         $login_url = function_exists('wc_get_page_permalink') ? wc_get_page_permalink('myaccount') : wp_login_url();
 
         $msg_count = null;
-        $guest_message_count = null;
-        $expected_guest_count = null;
 
         if ( ! $user_id ) {
             $msg_count = BKJA_Database::count_guest_messages( $session, DAY_IN_SECONDS );
 
-            error_log('BKJA limit check: msg_count=' . $msg_count . ' free_limit=' . $free_limit);
+            error_log("BKJA limit check: msg_count={$msg_count} free_limit={$free_limit}");
             if ( $msg_count >= $free_limit ) {
                 $limit_notice = __( 'ظرفیت پیام‌های رایگان امروز شما تکمیل شده است. برای ادامه گفتگو لطفاً وارد شوید یا عضویت خود را ارتقا دهید.', 'bkja-assistant' );
 
@@ -139,9 +140,6 @@ class BKJA_Frontend {
                 ), 200);
             }
 
-            if ( null !== $msg_count ) {
-                $expected_guest_count = max( 0, (int) $msg_count ) + 1;
-            }
         }
 
         $_bkja_user_row_id = BKJA_Database::insert_chat(
@@ -226,18 +224,6 @@ class BKJA_Frontend {
             BKJA_Database::update_chat_response( (int) $_bkja_user_row_id, $reply, $reply_meta_json );
         }
 
-        if(!$user_id){
-            $guest_message_count = BKJA_Database::count_guest_messages($session, DAY_IN_SECONDS);
-
-            if ( null === $guest_message_count ) {
-                $guest_message_count = 0;
-            }
-
-            if ( null !== $expected_guest_count && $guest_message_count < $expected_guest_count ) {
-                $guest_message_count = $expected_guest_count;
-            }
-        }
-
         $response_payload = array(
             'ok'          => true,
             'reply'       => $reply,
@@ -246,13 +232,14 @@ class BKJA_Frontend {
             'meta'        => $meta_payload,
         );
 
-        $response_payload['server_session'] = $session;
-
-        if(!$user_id){
-            $response_payload['guest_message_count'] = $guest_message_count !== null ? (int) $guest_message_count : 0;
+        if ( ! $user_id ) {
+            $guest_message_count = BKJA_Database::count_guest_messages( $session, DAY_IN_SECONDS );
+            $response_payload['guest_message_count'] = (int) $guest_message_count;
             $response_payload['guest_message_limit'] = (int) $free_limit;
             $response_payload['guest_session']       = $session;
         }
+
+        $response_payload['server_session'] = $session;
 
         wp_send_json_success($response_payload);
     }
