@@ -334,6 +334,9 @@
             url: config.ajax_url,
             method: 'POST',
             dataType: options.dataType || 'json',
+            headers: {
+                'X-BKJA-Session': sessionId
+            },
             data: payload
         }).done(function(res, textStatus, jqXHR){
             if(res && res.data){
@@ -1075,7 +1078,8 @@
                 fetch(config.ajax_url, {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+                        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                        'X-BKJA-Session': sessionId
                     },
                     body: requestBody
                 }).then(function(response){
@@ -1426,7 +1430,8 @@
                 fetch(config.ajax_url, {
                     method: 'POST',
                     headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+                        'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                        'X-BKJA-Session': sessionId
                     },
                     body: payload.toString()
                 }).then(function(response){
