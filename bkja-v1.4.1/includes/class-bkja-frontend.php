@@ -116,6 +116,7 @@ class BKJA_Frontend {
 
         $msg_count = null;
         $guest_message_count = null;
+        $expected_guest_count = null;
 
         if ( ! $user_id ) {
             $msg_count = BKJA_Database::count_guest_messages( $session, DAY_IN_SECONDS );
@@ -125,14 +126,21 @@ class BKJA_Frontend {
                 $limit_notice = __( 'ظرفیت پیام‌های رایگان امروز شما تکمیل شده است. برای ادامه گفتگو لطفاً وارد شوید یا عضویت خود را ارتقا دهید.', 'bkja-assistant' );
 
                 wp_send_json_success(array(
-                    'ok'            => false,
-                    'error'         => 'guest_limit',
-                    'login_url'     => esc_url($login_url),
-                    'limit'         => (int) $free_limit,
-                    'count'         => (int) $msg_count,
-                    'message'       => $limit_notice,
-                    'server_session'=> $session,
+                    'ok'                    => false,
+                    'error'                 => 'guest_limit',
+                    'login_url'             => esc_url($login_url),
+                    'limit'                 => (int) $free_limit,
+                    'count'                 => (int) $msg_count,
+                    'guest_message_limit'   => (int) $free_limit,
+                    'guest_message_count'   => (int) $msg_count,
+                    'message'               => $limit_notice,
+                    'server_session'        => $session,
+                    'guest_session'         => $session,
                 ), 200);
+            }
+
+            if ( null !== $msg_count ) {
+                $expected_guest_count = max( 0, (int) $msg_count ) + 1;
             }
         }
 
@@ -220,6 +228,14 @@ class BKJA_Frontend {
 
         if(!$user_id){
             $guest_message_count = BKJA_Database::count_guest_messages($session, DAY_IN_SECONDS);
+
+            if ( null === $guest_message_count ) {
+                $guest_message_count = 0;
+            }
+
+            if ( null !== $expected_guest_count && $guest_message_count < $expected_guest_count ) {
+                $guest_message_count = $expected_guest_count;
+            }
         }
 
         $response_payload = array(
