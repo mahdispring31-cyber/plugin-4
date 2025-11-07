@@ -17,9 +17,14 @@ if ( ! defined( 'BKJA_PLUGIN_VERSION' ) ) {
 
 if ( ! function_exists( 'bkja_get_free_message_limit' ) ) {
         function bkja_get_free_message_limit() {
-                $opt = get_option( 'bkja_free_limit', null );
-                if ( $opt === null || $opt === '' ) {
-                        $opt = get_option( 'bkja_free_messages_per_day', 2 );
+                $opt = get_option( 'bkja_free_messages_per_day', null );
+
+                if ( false === $opt || $opt === null || $opt === '' ) {
+                        $opt = get_option( 'bkja_free_limit', null );
+                }
+
+                if ( false === $opt || $opt === null || $opt === '' ) {
+                        $opt = 2;
                 }
 
                 $limit = (int) $opt;
@@ -34,9 +39,9 @@ if ( ! function_exists( 'bkja_get_free_message_limit' ) ) {
 if ( ! function_exists( 'bkja_cleanup_legacy_free_limit_option' ) ) {
         function bkja_cleanup_legacy_free_limit_option() {
                 $legacy = get_option( 'bkja_free_limit', null );
-                if ( $legacy !== null && $legacy !== '' ) {
+                if ( false !== $legacy && $legacy !== null && $legacy !== '' ) {
                         $new = get_option( 'bkja_free_messages_per_day', null );
-                        if ( $new !== null && $new !== '' ) {
+                        if ( false !== $new && $new !== null && $new !== '' ) {
                                 delete_option( 'bkja_free_limit' );
                         }
                 }
