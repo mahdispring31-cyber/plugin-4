@@ -45,9 +45,9 @@ class BKJA_Frontend {
         if ( function_exists( 'bkja_get_free_message_limit' ) ) {
             $free_limit = bkja_get_free_message_limit();
         } else {
-            $free_limit_option = get_option( 'bkja_free_limit', null );
-            if ( null === $free_limit_option || '' === $free_limit_option ) {
-                $free_limit_option = get_option( 'bkja_free_messages_per_day', 2 );
+            $free_limit_option = get_option( 'bkja_free_messages_per_day', null );
+            if ( false === $free_limit_option || null === $free_limit_option || '' === $free_limit_option ) {
+                $free_limit_option = get_option( 'bkja_free_limit', 2 );
             }
             $free_limit = (int) $free_limit_option;
             if ( $free_limit < 0 ) {
@@ -104,9 +104,9 @@ class BKJA_Frontend {
         if ( function_exists( 'bkja_get_free_message_limit' ) ) {
             $free_limit = bkja_get_free_message_limit();
         } else {
-            $free_limit_option = get_option( 'bkja_free_limit', null );
-            if ( null === $free_limit_option || '' === $free_limit_option ) {
-                $free_limit_option = get_option( 'bkja_free_messages_per_day', 2 );
+            $free_limit_option = get_option( 'bkja_free_messages_per_day', null );
+            if ( false === $free_limit_option || null === $free_limit_option || '' === $free_limit_option ) {
+                $free_limit_option = get_option( 'bkja_free_limit', 2 );
             }
             $free_limit = (int) $free_limit_option;
             if ( $free_limit < 0 ) {
