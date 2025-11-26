@@ -170,7 +170,7 @@ function bkja_admin_page(){
                                 </div>
                                 <div class="bkja-form-row">
                                         <label>تعداد پیام رایگان در روز</label>
-                                           <input type="number" name="bkja_free_messages_per_day" value="<?php echo intval(get_option('bkja_free_messages_per_day',5)); ?>" />
+                                           <input type="number" min="0" step="1" name="bkja_free_messages_per_day" value="<?php echo intval(get_option('bkja_free_messages_per_day',5)); ?>" />
                                 </div>
 				<?php submit_button('ذخیره تنظیمات'); ?>
 			</form>
@@ -436,9 +436,16 @@ function bkja_admin_page(){
  */
 if ( is_admin() ) {
 	add_action('admin_init', function(){
-		register_setting('bkja_settings_group', 'bkja_openai_api_key');
-		register_setting('bkja_settings_group', 'bkja_model');
-		register_setting('bkja_settings_group', 'bkja_free_messages_per_day');
+                register_setting('bkja_settings_group', 'bkja_openai_api_key');
+                register_setting('bkja_settings_group', 'bkja_model');
+                register_setting('bkja_settings_group', 'bkja_free_messages_per_day', array(
+                        'type'              => 'integer',
+                        'sanitize_callback' => function( $value ) {
+                                $value = is_numeric( $value ) ? (int) $value : 0;
+                                return max( 0, $value );
+                        },
+                        'default'           => 2,
+                ));
                 register_setting('bkja_settings_group', 'bkja_enable_cache');
                 register_setting('bkja_settings_group', 'bkja_enable_quick_actions', array(
                         'type' => 'string',
