@@ -17,22 +17,19 @@ if ( ! defined( 'BKJA_PLUGIN_VERSION' ) ) {
 
 if ( ! function_exists( 'bkja_get_free_message_limit' ) ) {
         function bkja_get_free_message_limit() {
-                $opt = get_option( 'bkja_free_messages_per_day', null );
+                $raw = get_option( 'bkja_free_messages_per_day', null );
 
-                if ( false === $opt || $opt === null || $opt === '' ) {
-                        $opt = get_option( 'bkja_free_limit', null );
+                // Backward compatibility: fall back to legacy option only if the new one is missing.
+                if ( false === $raw || null === $raw || '' === $raw ) {
+                        $raw = get_option( 'bkja_free_limit', null );
                 }
 
-                if ( false === $opt || $opt === null || $opt === '' ) {
-                        $opt = 2;
+                if ( false === $raw || null === $raw || '' === $raw ) {
+                        $raw = 2;
                 }
 
-                $limit = (int) $opt;
-                if ( $limit < 0 ) {
-                        $limit = 0;
-                }
-
-                return $limit;
+                // Always enforce a non-negative integer to avoid silently ignoring admin changes.
+                return max( 0, absint( $raw ) );
         }
 }
 

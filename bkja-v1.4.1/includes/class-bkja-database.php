@@ -95,6 +95,44 @@ class BKJA_Database {
         }
     }
 
+    /**
+     * Ensure chat table exists so guest message counting/enforcement works.
+     */
+    public static function ensure_chats_table_exists() {
+        global $wpdb;
+
+        $table   = $wpdb->prefix . 'bkja_chats';
+        $charset = $wpdb->get_charset_collate();
+
+        $exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+        if ( $exists === $table ) {
+            return true;
+        }
+
+        $sql = "CREATE TABLE IF NOT EXISTS {$table} (
+            id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+            user_id BIGINT(20) UNSIGNED NULL,
+            session_id VARCHAR(191) NULL,
+            job_category VARCHAR(120) NULL,
+            message LONGTEXT NULL,
+            response LONGTEXT NULL,
+            meta LONGTEXT NULL,
+            status ENUM('active','closed') DEFAULT 'active',
+            feedback ENUM('like','dislike','none') DEFAULT 'none',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY user_idx (user_id),
+            KEY session_idx (session_id)
+        ) {$charset};";
+
+        require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+        dbDelta( $sql );
+
+        $exists_after = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+
+        return $exists_after === $table;
+    }
+
     public static function deactivate(){}
 
     /**
@@ -104,6 +142,11 @@ class BKJA_Database {
     public static function insert_chat( $data = array() ){
         global $wpdb;
         $table = $wpdb->prefix . 'bkja_chats';
+
+        if ( ! self::ensure_chats_table_exists() ) {
+            return 0;
+        }
+
         $defaults = array(
             'user_id'      => null,
             'session_id'   => '',
@@ -177,6 +220,11 @@ class BKJA_Database {
     public static function count_guest_messages( $session_id, $max_age_seconds = DAY_IN_SECONDS ) {
         if ( empty( $session_id ) ) {
             return 0;
+        }
+
+        if ( ! self::ensure_chats_table_exists() ) {
+            // Without the table we cannot reliably count, so treat as over-limit to avoid unlimited usage.
+            return PHP_INT_MAX;
         }
 
         global $wpdb;
