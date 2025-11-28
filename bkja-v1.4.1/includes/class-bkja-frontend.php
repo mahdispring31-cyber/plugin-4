@@ -103,29 +103,53 @@ class BKJA_Frontend {
         error_log("BKJA limit debug: session={$session} user_id={$user_id} free_limit={$free_limit}");
         $login_url = function_exists('wc_get_page_permalink') ? wc_get_page_permalink('myaccount') : wp_login_url();
 
-        $msg_count = null;
+        $usage_count = 0;
+        $cookie_name = 'bkja_guest_daily_usage';
+        $today       = gmdate( 'Y-m-d', current_time( 'timestamp', true ) );
 
         if ( ! $user_id ) {
-            $msg_count = BKJA_Database::count_guest_messages( $session, DAY_IN_SECONDS );
-
-            error_log("BKJA limit check: msg_count={$msg_count} free_limit={$free_limit}");
-            if ( $msg_count >= $free_limit ) {
+            if ( 0 === (int) $free_limit ) {
                 $limit_notice = __( 'ظرفیت پیام‌های رایگان امروز شما تمام شده است. لطفاً وارد شوید یا عضویت خود را ارتقا دهید.', 'bkja-assistant' );
 
-                wp_send_json_success(array(
+                wp_send_json_success( array(
                     'ok'                    => false,
                     'error'                 => 'guest_limit',
-                    'login_url'             => esc_url($login_url),
+                    'login_url'             => esc_url( $login_url ),
                     'limit'                 => (int) $free_limit,
-                    'count'                 => (int) $msg_count,
+                    'count'                 => (int) $usage_count,
                     'guest_message_limit'   => (int) $free_limit,
-                    'guest_message_count'   => (int) $msg_count,
+                    'guest_message_count'   => (int) $usage_count,
                     'message'               => $limit_notice,
                     'server_session'        => $session,
                     'guest_session'         => $session,
-                ), 200);
+                ), 200 );
             }
 
+            if ( isset( $_COOKIE[ $cookie_name ] ) ) {
+                $decoded_cookie = json_decode( rawurldecode( wp_unslash( $_COOKIE[ $cookie_name ] ) ), true );
+                if ( is_array( $decoded_cookie ) && isset( $decoded_cookie['date'], $decoded_cookie['count'] ) ) {
+                    if ( $decoded_cookie['date'] === $today ) {
+                        $usage_count = (int) $decoded_cookie['count'];
+                    }
+                }
+            }
+
+            if ( $usage_count >= $free_limit ) {
+                $limit_notice = __( 'ظرفیت پیام‌های رایگان امروز شما تمام شده است. لطفاً وارد شوید یا عضویت خود را ارتقا دهید.', 'bkja-assistant' );
+
+                wp_send_json_success( array(
+                    'ok'                    => false,
+                    'error'                 => 'guest_limit',
+                    'login_url'             => esc_url( $login_url ),
+                    'limit'                 => (int) $free_limit,
+                    'count'                 => (int) $usage_count,
+                    'guest_message_limit'   => (int) $free_limit,
+                    'guest_message_count'   => (int) $usage_count,
+                    'message'               => $limit_notice,
+                    'server_session'        => $session,
+                    'guest_session'         => $session,
+                ), 200 );
+            }
         }
 
         $_bkja_user_row_id = BKJA_Database::insert_chat(
@@ -210,6 +234,20 @@ class BKJA_Frontend {
             BKJA_Database::update_chat_response( (int) $_bkja_user_row_id, $reply, $reply_meta_json );
         }
 
+        if ( ! $user_id ) {
+            $usage_count++;
+            $cookie_payload = array(
+                'date'  => $today,
+                'count' => $usage_count,
+            );
+            $cookie_value  = rawurlencode( wp_json_encode( $cookie_payload ) );
+            $cookie_domain = defined( 'COOKIE_DOMAIN' ) ? COOKIE_DOMAIN : '';
+            $cookie_path   = ( defined( 'COOKIEPATH' ) && COOKIEPATH ) ? COOKIEPATH : '/';
+
+            setcookie( $cookie_name, $cookie_value, time() + DAY_IN_SECONDS, $cookie_path, $cookie_domain, is_ssl(), true );
+            $_COOKIE[ $cookie_name ] = $cookie_value;
+        }
+
         $response_payload = array(
             'ok'          => true,
             'reply'       => $reply,
@@ -219,8 +257,7 @@ class BKJA_Frontend {
         );
 
         if ( ! $user_id ) {
-            $guest_message_count = BKJA_Database::count_guest_messages( $session, DAY_IN_SECONDS );
-            $response_payload['guest_message_count'] = (int) $guest_message_count;
+            $response_payload['guest_message_count'] = (int) $usage_count;
             $response_payload['guest_message_limit'] = (int) $free_limit;
             $response_payload['guest_session']       = $session;
         }
