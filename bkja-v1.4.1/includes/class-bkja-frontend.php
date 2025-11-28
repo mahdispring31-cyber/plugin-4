@@ -45,14 +45,7 @@ class BKJA_Frontend {
         if ( function_exists( 'bkja_get_free_message_limit' ) ) {
             $free_limit = bkja_get_free_message_limit();
         } else {
-            $free_limit_option = get_option( 'bkja_free_messages_per_day', null );
-            if ( false === $free_limit_option || null === $free_limit_option || '' === $free_limit_option ) {
-                $free_limit_option = get_option( 'bkja_free_limit', 2 );
-            }
-            $free_limit = (int) $free_limit_option;
-            if ( $free_limit < 0 ) {
-                $free_limit = 0;
-            }
+            $free_limit = 2;
         }
 
         $data = array(
@@ -104,14 +97,7 @@ class BKJA_Frontend {
         if ( function_exists( 'bkja_get_free_message_limit' ) ) {
             $free_limit = bkja_get_free_message_limit();
         } else {
-            $free_limit_option = get_option( 'bkja_free_messages_per_day', null );
-            if ( false === $free_limit_option || null === $free_limit_option || '' === $free_limit_option ) {
-                $free_limit_option = get_option( 'bkja_free_limit', 2 );
-            }
-            $free_limit = (int) $free_limit_option;
-            if ( $free_limit < 0 ) {
-                $free_limit = 0;
-            }
+            $free_limit = 2;
         }
 
         error_log("BKJA limit debug: session={$session} user_id={$user_id} free_limit={$free_limit}");
@@ -124,7 +110,7 @@ class BKJA_Frontend {
 
             error_log("BKJA limit check: msg_count={$msg_count} free_limit={$free_limit}");
             if ( $msg_count >= $free_limit ) {
-                $limit_notice = __( 'ظرفیت پیام‌های رایگان امروز شما تکمیل شده است. برای ادامه گفتگو لطفاً وارد شوید یا عضویت خود را ارتقا دهید.', 'bkja-assistant' );
+                $limit_notice = __( 'ظرفیت پیام‌های رایگان امروز شما تمام شده است. لطفاً وارد شوید یا عضویت خود را ارتقا دهید.', 'bkja-assistant' );
 
                 wp_send_json_success(array(
                     'ok'                    => false,

@@ -667,21 +667,32 @@
                 syncSessionFromPayload(payload);
             }
 
-            if(payload && Object.prototype.hasOwnProperty.call(payload, 'limit')){
-                updateGuestLimitFromServer(payload.limit);
+            var payloadLimit = payload && Object.prototype.hasOwnProperty.call(payload, 'guest_message_limit')
+                ? payload.guest_message_limit
+                : (payload && Object.prototype.hasOwnProperty.call(payload, 'limit') ? payload.limit : undefined);
+
+            if(typeof payloadLimit !== 'undefined'){
+                updateGuestLimitFromServer(payloadLimit);
             }
 
             var limitValue;
-            if(payload && Object.prototype.hasOwnProperty.call(payload, 'limit')){
-                limitValue = parseInt(payload.limit, 10);
-                if(isNaN(limitValue)){
-                    limitValue = getGuestLimit();
-                }
-            } else {
+            if(typeof payloadLimit !== 'undefined'){
+                limitValue = parseInt(payloadLimit, 10);
+            }
+            if(isNaN(limitValue)){
                 limitValue = getGuestLimit();
             }
 
-            if(typeof limitValue === 'number' && !isNaN(limitValue)){
+            var payloadCount = payload && Object.prototype.hasOwnProperty.call(payload, 'guest_message_count')
+                ? payload.guest_message_count
+                : (payload && Object.prototype.hasOwnProperty.call(payload, 'count') ? payload.count : undefined);
+
+            if(typeof payloadCount !== 'undefined'){
+                var parsedCount = parseInt(payloadCount, 10);
+                if(!isNaN(parsedCount)){
+                    setGuestUsageCount(Math.max(0, parsedCount));
+                }
+            } else if(typeof limitValue === 'number' && !isNaN(limitValue)){
                 setGuestUsageCount(Math.max(0, limitValue));
             }
 

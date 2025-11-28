@@ -444,7 +444,6 @@ if ( is_admin() ) {
                                 $value = is_numeric( $value ) ? (int) $value : 0;
                                 return max( 0, $value );
                         },
-                        'default'           => 2,
                 ));
                 register_setting('bkja_settings_group', 'bkja_enable_cache');
                 register_setting('bkja_settings_group', 'bkja_enable_quick_actions', array(
