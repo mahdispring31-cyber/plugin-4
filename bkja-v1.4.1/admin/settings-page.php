@@ -4,7 +4,7 @@ if (!defined('ABSPATH')) exit;
 function bkja_register_admin_menu() {
     add_options_page('BKJA Settings', 'BKJA Settings', 'manage_options', 'bkja-settings', 'bkja_render_settings_page');
 }
-add_action('admin_menu', 'bkja_register_admin_menu');
+// add_action('admin_menu', 'bkja_register_admin_menu');
 
 function bkja_register_settings() {
     register_setting('bkja_settings_group', 'bkja_github_token');
