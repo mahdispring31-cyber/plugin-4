@@ -59,7 +59,7 @@ add_action('admin_post_bkja_import_jobs', function() {
 		while (($row = fgetcsv($handle)) !== false) {
 			$data = array_combine($header, $row);
 			if ($data && !empty($data['title'])) {
-				$fields = ['category_id','title','income','investment','city','gender','advantages','disadvantages','details'];
+                                $fields = ['category_id','title','income','income_num','investment','investment_num','experience_years','employment_type','hours_per_day','days_per_week','source','city','gender','advantages','disadvantages','details'];
 				$job = [];
 				foreach ($fields as $f) {
 					$job[$f] = isset($data[$f]) ? $data[$f] : '';
@@ -102,14 +102,15 @@ function bkja_get_jobs_api(WP_REST_Request $request) {
 		$where .= ' AND city LIKE %s';
 		$params[] = '%' . $wpdb->esc_like($city) . '%';
 	}
-	if ($min_income = $request->get_param('min_income')) {
-		$where .= ' AND income >= %f';
-		$params[] = $min_income;
-	}
-	if ($max_income = $request->get_param('max_income')) {
-		$where .= ' AND income <= %f';
-		$params[] = $max_income;
-	}
+        // TODO: migrate these filters to numeric columns (income_num) once data is fully backfilled.
+        if ($min_income = $request->get_param('min_income')) {
+                $where .= ' AND income >= %f';
+                $params[] = $min_income;
+        }
+        if ($max_income = $request->get_param('max_income')) {
+                $where .= ' AND income <= %f';
+                $params[] = $max_income;
+        }
 
 	// صفحه‌بندی
 	$page = $request->get_param('page') ?: 1;

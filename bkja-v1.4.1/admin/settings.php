@@ -273,26 +273,58 @@ function bkja_admin_page(){
 								<label>دسته‌بندی (category_id)</label>
 								<input type="number" name="category_id" value="<?php echo esc_attr($job->category_id); ?>" />
 							</div>
-							<div class="bkja-form-row">
-								<label>درآمد</label>
-								<input type="text" name="income" value="<?php echo esc_attr($job->income); ?>" />
-							</div>
-							<div class="bkja-form-row">
-								<label>سرمایه</label>
-								<input type="text" name="investment" value="<?php echo esc_attr($job->investment); ?>" />
-							</div>
-							<div class="bkja-form-row">
-								<label>تجربه</label>
-								<input type="text" name="experience" value="<?php echo esc_attr($job->experience); ?>" />
-							</div>
-							<div class="bkja-form-row">
-								<label>توضیحات</label>
-								<textarea name="description" rows="5"><?php echo esc_textarea($job->description); ?></textarea>
-							</div>
-							<div class="bkja-form-row">
-								<label>تاریخ ایجاد (created_at)</label>
-								<input type="text" name="created_at" value="<?php echo esc_attr($job->created_at); ?>" placeholder="YYYY-MM-DD HH:MM:SS" />
-							</div>
+                                                        <div class="bkja-form-row">
+                                                                <label>درآمد (متنی)</label>
+                                                                <input type="text" name="income" value="<?php echo esc_attr($job->income); ?>" />
+                                                        </div>
+                                                        <div class="bkja-form-row">
+                                                                <label>درآمد عددی (میلیون تومان)</label>
+                                                                <input type="number" name="income_num" value="<?php echo esc_attr(isset($job->income_num) ? $job->income_num : ''); ?>" />
+                                                        </div>
+                                                        <div class="bkja-form-row">
+                                                                <label>سرمایه (متنی)</label>
+                                                                <input type="text" name="investment" value="<?php echo esc_attr($job->investment); ?>" />
+                                                        </div>
+                                                        <div class="bkja-form-row">
+                                                                <label>سرمایه عددی (میلیون تومان)</label>
+                                                                <input type="number" name="investment_num" value="<?php echo esc_attr(isset($job->investment_num) ? $job->investment_num : ''); ?>" />
+                                                        </div>
+                                                        <div class="bkja-form-row">
+                                                                <label>سابقه (سال)</label>
+                                                                <input type="number" name="experience_years" value="<?php echo esc_attr(isset($job->experience_years) ? $job->experience_years : ''); ?>" />
+                                                        </div>
+                                                        <div class="bkja-form-row">
+                                                                <label>نوع اشتغال</label>
+                                                                <input type="text" name="employment_type" value="<?php echo esc_attr($job->employment_type); ?>" placeholder="official / freelance / self_employed ..." />
+                                                        </div>
+                                                        <div class="bkja-form-row">
+                                                                <label>ساعت کار در روز</label>
+                                                                <input type="number" name="hours_per_day" value="<?php echo esc_attr(isset($job->hours_per_day) ? $job->hours_per_day : ''); ?>" />
+                                                        </div>
+                                                        <div class="bkja-form-row">
+                                                                <label>روز کاری در هفته</label>
+                                                                <input type="number" name="days_per_week" value="<?php echo esc_attr(isset($job->days_per_week) ? $job->days_per_week : ''); ?>" />
+                                                        </div>
+                                                        <div class="bkja-form-row">
+                                                                <label>مزایا</label>
+                                                                <textarea name="advantages" rows="3"><?php echo esc_textarea($job->advantages); ?></textarea>
+                                                        </div>
+                                                        <div class="bkja-form-row">
+                                                                <label>معایب</label>
+                                                                <textarea name="disadvantages" rows="3"><?php echo esc_textarea($job->disadvantages); ?></textarea>
+                                                        </div>
+                                                        <div class="bkja-form-row">
+                                                                <label>توضیحات</label>
+                                                                <textarea name="details" rows="5"><?php echo esc_textarea($job->details); ?></textarea>
+                                                        </div>
+                                                        <div class="bkja-form-row">
+                                                                <label>منبع گزارش</label>
+                                                                <input type="text" name="source" value="<?php echo esc_attr($job->source); ?>" placeholder="instagram / site_form / import_csv" />
+                                                        </div>
+                                                        <div class="bkja-form-row">
+                                                                <label>تاریخ ایجاد (created_at)</label>
+                                                                <input type="text" name="created_at" value="<?php echo esc_attr($job->created_at); ?>" placeholder="YYYY-MM-DD HH:MM:SS" />
+                                                        </div>
 
 							<button class="bkja-button" type="submit">ذخیره تغییرات</button>
 							<a class="bkja-button secondary" href="<?php echo esc_url( admin_url('admin.php?page=bkja-assistant#manage') ); ?>">انصراف</a>
@@ -352,18 +384,24 @@ function bkja_admin_page(){
 					echo '<div class="bkja-muted">تعداد کل: '.esc_html($count).'</div>';
 					echo '<div class="bkja-table-wrap"><table class="bkja-table">
 						<thead>
-							<tr>
-								<th>عنوان</th>
-								<th>شهر</th>
-								<th>جنسیت</th>
-								<th>دسته‌بندی</th>
-								<th>درآمد</th>
-								<th>سرمایه</th>
-								<th>تجربه</th>
-								<th>توضیحات</th>
-								<th>تاریخ ایجاد</th>
-								<th>عملیات</th>
-							</tr>
+                                                        <tr>
+                                                                <th>عنوان</th>
+                                                                <th>شهر</th>
+                                                                <th>جنسیت</th>
+                                                                <th>دسته‌بندی</th>
+                                                                <th>درآمد متنی</th>
+                                                                <th>درآمد عددی</th>
+                                                                <th>سرمایه متنی</th>
+                                                                <th>سرمایه عددی</th>
+                                                                <th>سابقه (سال)</th>
+                                                                <th>نوع اشتغال</th>
+                                                                <th>ساعت/روز</th>
+                                                                <th>روز/هفته</th>
+                                                                <th>منبع</th>
+                                                                <th>توضیحات</th>
+                                                                <th>تاریخ ایجاد</th>
+                                                                <th>عملیات</th>
+                                                        </tr>
 						</thead><tbody>';
 
 					foreach ($jobs as $job) {
@@ -387,11 +425,17 @@ function bkja_admin_page(){
 						echo '<td>'.esc_html($job->city).'</td>';
 						echo '<td>'.esc_html($job->gender).'</td>';
 						echo '<td>'.esc_html($job->category_id).'</td>';
-						echo '<td>'.esc_html($job->income).'</td>';
-						echo '<td>'.esc_html($job->investment).'</td>';
-						echo '<td>'.esc_html($job->experience).'</td>';
-						echo '<td>'.esc_html(wp_trim_words($job->description, 18, '…')).'</td>';
-						echo '<td>'.esc_html($job->created_at).'</td>';
+                                                echo '<td>'.esc_html($job->income).'</td>';
+                                                echo '<td>'.esc_html(isset($job->income_num) ? $job->income_num : '').'</td>';
+                                                echo '<td>'.esc_html($job->investment).'</td>';
+                                                echo '<td>'.esc_html(isset($job->investment_num) ? $job->investment_num : '').'</td>';
+                                                echo '<td>'.esc_html(isset($job->experience_years) ? $job->experience_years : '').'</td>';
+                                                echo '<td>'.esc_html($job->employment_type).'</td>';
+                                                echo '<td>'.esc_html(isset($job->hours_per_day) ? $job->hours_per_day : '').'</td>';
+                                                echo '<td>'.esc_html(isset($job->days_per_week) ? $job->days_per_week : '').'</td>';
+                                                echo '<td>'.esc_html($job->source).'</td>';
+                                                echo '<td>'.esc_html(wp_trim_words($job->details, 18, '…')).'</td>';
+                                                echo '<td>'.esc_html($job->created_at).'</td>';
 						echo '<td>
 							<a href="'.esc_url($edit_link).'" class="bkja-button secondary">ویرایش</a>
 							<a href="'.esc_url($delete_url).'" class="bkja-button secondary bkja-danger" onclick="return confirm(\'حذف این رکورد قطعی است. ادامه می‌دهید؟\');">حذف</a>
@@ -536,17 +580,25 @@ if ( ! function_exists('bkja_header_index_map') ) {
 			$k = str_replace(['‌',' '], ['','_'], $k); // normalize space/zero-width
 			$norm[$i] = $k;
 		}
-		$aliases = [
-			'title'        => ['title','job','نام_شغل','عنوان','شغل'],
-			'city'         => ['city','شهر'],
-			'gender'       => ['gender','جنس','جنسیت'],
-			'category_id'  => ['category_id','دسته','دسته_بندی','id_دسته'],
-			'income'       => ['income','salary','درآمد'],
-			'investment'   => ['investment','سرمایه','هزینه_اولیه'],
-			'experience'   => ['experience','تجربه','years','سابقه','سابقه_کار'],
-			'description'  => ['description','توضیحات','شرح'],
-			'created_at'   => ['created_at','date','تاریخ'],
-		];
+                $aliases = [
+                        'title'            => ['title','job','نام_شغل','عنوان','شغل'],
+                        'city'             => ['city','شهر'],
+                        'gender'           => ['gender','جنس','جنسیت'],
+                        'category_id'      => ['category_id','دسته','دسته_بندی','id_دسته'],
+                        'income'           => ['income','salary','درآمد'],
+                        'income_num'       => ['income_num','salary_num','درآمد_عددی'],
+                        'investment'       => ['investment','سرمایه','هزینه_اولیه'],
+                        'investment_num'   => ['investment_num','capital_num','سرمایه_عددی'],
+                        'experience_years' => ['experience_years','years','سابقه','سابقه_کار','experience'],
+                        'employment_type'  => ['employment_type','employment','نوع_اشتغال'],
+                        'hours_per_day'    => ['hours_per_day','hours','ساعت_کار'],
+                        'days_per_week'    => ['days_per_week','days','روز_در_هفته'],
+                        'advantages'       => ['advantages','مزایا'],
+                        'disadvantages'    => ['disadvantages','معایب'],
+                        'details'          => ['details','description','توضیحات','شرح'],
+                        'source'           => ['source','منبع'],
+                        'created_at'       => ['created_at','date','تاریخ'],
+                ];
 		foreach($aliases as $col=>$keys){
 			foreach($norm as $i=>$nk){
 				if(in_array($nk, $keys, true)){ $map[$col] = $i; break; }
@@ -652,43 +704,47 @@ if ( ! function_exists('bkja_import_confirm_handler') ) {
 				if ($handled === true) { $imported++; continue; }
 				if ($handled instanceof WP_Error) { $skipped++; continue; }
 
-				$data = []; $formats = [];
+                                $data = [];
 
 				// Title (required)
-				if ( isset($map['title']) && isset($row[$map['title']]) && strlen(trim($row[$map['title']])) ) {
-					$data['title'] = sanitize_text_field( $row[$map['title']] );
-					$formats[] = '%s';
-				} else { $skipped++; continue; }
+                                if ( isset($map['title']) && isset($row[$map['title']]) && strlen(trim($row[$map['title']])) ) {
+                                        $data['title'] = sanitize_text_field( $row[$map['title']] );
+                                } else { $skipped++; continue; }
 
-				// Optional fields
-				if ( isset($map['city']) && isset($row[$map['city']]) )               { $data['city'] = sanitize_text_field($row[$map['city']]); $formats[]='%s'; }
-				if ( isset($map['gender']) && isset($row[$map['gender']]) )           { $data['gender'] = sanitize_text_field($row[$map['gender']]); $formats[]='%s'; }
-				if ( isset($map['category_id']) && isset($row[$map['category_id']]) ) { $data['category_id'] = intval($row[$map['category_id']]); $formats[]='%d'; }
-				if ( isset($map['income']) && isset($row[$map['income']]) )           { $data['income'] = sanitize_text_field($row[$map['income']]); $formats[]='%s'; }
-				if ( isset($map['investment']) && isset($row[$map['investment']]) )   { $data['investment'] = sanitize_text_field($row[$map['investment']]); $formats[]='%s'; }
-				if ( isset($map['experience']) && isset($row[$map['experience']]) )   { $data['experience'] = sanitize_text_field($row[$map['experience']]); $formats[]='%s'; }
-				if ( isset($map['description']) && isset($row[$map['description']]) ) { $data['description'] = wp_kses_post($row[$map['description']]); $formats[]='%s'; }
+                                // Optional fields
+                                if ( isset($map['city']) && isset($row[$map['city']]) )               { $data['city'] = sanitize_text_field($row[$map['city']]); }
+                                if ( isset($map['gender']) && isset($row[$map['gender']]) )           { $data['gender'] = sanitize_text_field($row[$map['gender']]); }
+                                if ( isset($map['category_id']) && isset($row[$map['category_id']]) ) { $data['category_id'] = intval($row[$map['category_id']]); }
+                                if ( isset($map['income']) && isset($row[$map['income']]) )           { $data['income'] = sanitize_text_field($row[$map['income']]); }
+                                if ( isset($map['income_num']) && isset($row[$map['income_num']]) )   { $data['income_num'] = intval($row[$map['income_num']]); }
+                                if ( isset($map['investment']) && isset($row[$map['investment']]) )   { $data['investment'] = sanitize_text_field($row[$map['investment']]); }
+                                if ( isset($map['investment_num']) && isset($row[$map['investment_num']]) ) { $data['investment_num'] = intval($row[$map['investment_num']]); }
+                                if ( isset($map['experience_years']) && isset($row[$map['experience_years']]) ) { $data['experience_years'] = intval($row[$map['experience_years']]); }
+                                if ( isset($map['employment_type']) && isset($row[$map['employment_type']]) ) { $data['employment_type'] = sanitize_text_field($row[$map['employment_type']]); }
+                                if ( isset($map['hours_per_day']) && isset($row[$map['hours_per_day']]) ) { $data['hours_per_day'] = intval($row[$map['hours_per_day']]); }
+                                if ( isset($map['days_per_week']) && isset($row[$map['days_per_week']]) ) { $data['days_per_week'] = intval($row[$map['days_per_week']]); }
+                                if ( isset($map['advantages']) && isset($row[$map['advantages']]) )   { $data['advantages'] = sanitize_textarea_field($row[$map['advantages']]); }
+                                if ( isset($map['disadvantages']) && isset($row[$map['disadvantages']]) ) { $data['disadvantages'] = sanitize_textarea_field($row[$map['disadvantages']]); }
+                                if ( isset($map['details']) && isset($row[$map['details']]) ) { $data['details'] = wp_kses_post($row[$map['details']]); }
+                                if ( isset($map['source']) && isset($row[$map['source']]) ) { $data['source'] = sanitize_text_field($row[$map['source']]); }
 
-				// created_at default
-				if ( isset($map['created_at']) && isset($row[$map['created_at']]) ) {
-					$data['created_at'] = sanitize_text_field($row[$map['created_at']]);
-					$formats[] = '%s';
-				} else {
-					$data['created_at'] = current_time('mysql');
-					$formats[] = '%s';
-				}
+                                // created_at default
+                                if ( isset($map['created_at']) && isset($row[$map['created_at']]) ) {
+                                        $data['created_at'] = sanitize_text_field($row[$map['created_at']]);
+                                } else {
+                                        $data['created_at'] = current_time('mysql');
+                                }
 
-				$exists = $wpdb->get_var( $wpdb->prepare("SHOW TABLES LIKE %s", $table) );
-				if ( $exists === $table ) {
-					$ok = $wpdb->insert( $table, $data, $formats );
-					if ( $ok ) $imported++; else $skipped++;
-				} else {
-					do_action('bkja_import_confirm_process_row', $row, $headers, $data);
-					$imported++;
-				}
-			}
-			fclose($h);
-		} else {
+                                if ( class_exists( 'BKJA_Database' ) ) {
+                                        $ok = BKJA_Database::insert_job( $data );
+                                        if ( $ok ) { $imported++; } else { $skipped++; }
+                                } else {
+                                        do_action('bkja_import_confirm_process_row', $row, $headers, $data);
+                                        $imported++;
+                                }
+                        }
+                        fclose($h);
+                } else {
 			wp_redirect( admin_url('admin.php?page=bkja-assistant&bkja_import_success=0#import') );
 			exit;
 		}
@@ -754,21 +810,50 @@ if ( ! function_exists('bkja_update_job_handler') ) {
 			$formats[] = '%s';
 		}
 
-		// Optional fields
-		if (isset($_POST['city']))        { $data['city']        = sanitize_text_field( wp_unslash($_POST['city']) ); $formats[]='%s'; }
-		if (isset($_POST['gender']))      { $data['gender']      = sanitize_text_field( wp_unslash($_POST['gender']) ); $formats[]='%s'; }
-		if (isset($_POST['category_id'])) { $data['category_id'] = intval($_POST['category_id']); $formats[]='%d'; }
-		if (isset($_POST['income']))      { $data['income']      = sanitize_text_field( wp_unslash($_POST['income']) ); $formats[]='%s'; }
-		if (isset($_POST['investment']))  { $data['investment']  = sanitize_text_field( wp_unslash($_POST['investment']) ); $formats[]='%s'; }
-		if (isset($_POST['experience']))  { $data['experience']  = sanitize_text_field( wp_unslash($_POST['experience']) ); $formats[]='%s'; }
-		if (isset($_POST['description'])) { $data['description'] = wp_kses_post( wp_unslash($_POST['description']) ); $formats[]='%s'; }
-		if (isset($_POST['created_at']) && $_POST['created_at'] !== '') { $data['created_at'] = sanitize_text_field( wp_unslash($_POST['created_at']) ); $formats[]='%s'; }
+                // Optional fields
+                if (isset($_POST['city']))        { $data['city']        = sanitize_text_field( wp_unslash($_POST['city']) ); $formats[]='%s'; }
+                if (isset($_POST['gender']))      { $data['gender']      = sanitize_text_field( wp_unslash($_POST['gender']) ); $formats[]='%s'; }
+                if (isset($_POST['category_id'])) { $data['category_id'] = intval($_POST['category_id']); $formats[]='%d'; }
+                if (isset($_POST['income']))      { $data['income']      = sanitize_text_field( wp_unslash($_POST['income']) ); $formats[]='%s'; }
+                if (isset($_POST['investment']))  { $data['investment']  = sanitize_text_field( wp_unslash($_POST['investment']) ); $formats[]='%s'; }
+                if (isset($_POST['income_num']))  { $data['income_num']  = intval($_POST['income_num']); $formats[] = '%d'; }
+                if (isset($_POST['investment_num'])) { $data['investment_num'] = intval($_POST['investment_num']); $formats[] = '%d'; }
+                if (isset($_POST['experience_years'])) { $data['experience_years'] = intval($_POST['experience_years']); $formats[]='%d'; }
+                if (isset($_POST['employment_type'])) { $data['employment_type'] = sanitize_text_field( wp_unslash($_POST['employment_type']) ); $formats[]='%s'; }
+                if (isset($_POST['hours_per_day'])) { $data['hours_per_day'] = intval($_POST['hours_per_day']); $formats[]='%d'; }
+                if (isset($_POST['days_per_week'])) { $data['days_per_week'] = intval($_POST['days_per_week']); $formats[]='%d'; }
+                if (isset($_POST['advantages']))   { $data['advantages']   = sanitize_textarea_field( wp_unslash($_POST['advantages']) ); $formats[]='%s'; }
+                if (isset($_POST['disadvantages'])) { $data['disadvantages'] = sanitize_textarea_field( wp_unslash($_POST['disadvantages']) ); $formats[]='%s'; }
+                if (isset($_POST['details']))      { $data['details']      = sanitize_textarea_field( wp_unslash($_POST['details']) ); $formats[]='%s'; }
+                if (isset($_POST['source']))       { $data['source']       = sanitize_text_field( wp_unslash($_POST['source']) ); $formats[]='%s'; }
+                if (isset($_POST['created_at']) && $_POST['created_at'] !== '') { $data['created_at'] = sanitize_text_field( wp_unslash($_POST['created_at']) ); $formats[]='%s'; }
 
-		if (!empty($data)) {
-			global $wpdb;
-			$table = $wpdb->prefix . 'bkja_jobs';
-			$wpdb->update($table, $data, ['id'=>$id], $formats, ['%d']);
-		}
+                // Ensure numeric fallbacks from textual values
+                if ( isset( $data['income'] ) ) {
+                        if ( ! isset( $data['income_num'] ) ) {
+                                $data['income_num'] = bkja_parse_numeric_amount( $data['income'] );
+                                $formats[] = '%d';
+                        } elseif ( $data['income_num'] <= 0 ) {
+                                $data['income_num'] = bkja_parse_numeric_amount( $data['income'] );
+                        }
+                }
+                if ( isset( $data['investment'] ) ) {
+                        if ( ! isset( $data['investment_num'] ) ) {
+                                $data['investment_num'] = bkja_parse_numeric_amount( $data['investment'] );
+                                $formats[] = '%d';
+                        } elseif ( $data['investment_num'] <= 0 ) {
+                                $data['investment_num'] = bkja_parse_numeric_amount( $data['investment'] );
+                        }
+                }
+
+                if (!empty($data)) {
+                        global $wpdb;
+                        if ( class_exists( 'BKJA_Database' ) ) {
+                                BKJA_Database::ensure_numeric_job_columns();
+                        }
+                        $table = $wpdb->prefix . 'bkja_jobs';
+                        $wpdb->update($table, $data, ['id'=>$id], $formats, ['%d']);
+                }
 
 		$url = add_query_arg(['page'=>'bkja-assistant','bkja_manage_msg'=>'edited'], admin_url('admin.php'));
 		$url .= '#manage';

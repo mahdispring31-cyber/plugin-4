@@ -21,6 +21,7 @@ if ( ! function_exists( 'bkja_parse_numeric_amount' ) ) {
 
         $normalized = str_replace( $english_digits, $latin_digits, wp_strip_all_tags( $text ) );
         $normalized = str_replace( array( ',', '٬' ), '', $normalized );
+        $normalized = str_replace( array( 'تا', '-' ), ' ', $normalized );
 
         if ( '' === $normalized ) {
             return 0;
@@ -95,6 +96,11 @@ class BKJA_Database {
             `investment` VARCHAR(255) DEFAULT NULL,
             `income_num` BIGINT NULL,
             `investment_num` BIGINT NULL,
+            `experience_years` TINYINT NULL,
+            `employment_type` VARCHAR(50) NULL,
+            `hours_per_day` TINYINT NULL,
+            `days_per_week` TINYINT NULL,
+            `source` VARCHAR(50) NULL,
             `city` VARCHAR(255) DEFAULT NULL,
             `gender` ENUM('male','female','both') DEFAULT 'both',
             `advantages` TEXT DEFAULT NULL,
@@ -135,6 +141,7 @@ class BKJA_Database {
         self::ensure_numeric_job_columns();
         self::backfill_numeric_fields();
         update_option( 'bkja_jobs_numeric_fields_migrated', 1 );
+        update_option( 'bkja_jobs_extended_fields_migrated', 1 );
 
         // مقدار پیش‌فرض برای تعداد پیام رایگان در روز
         if ( false === get_option( 'bkja_free_messages_per_day' ) ) {
@@ -353,17 +360,25 @@ class BKJA_Database {
      * Ensure numeric income/investment columns exist on bkja_jobs and backfill once.
      */
     public static function maybe_migrate_numeric_job_fields() {
-        if ( get_option( 'bkja_jobs_numeric_fields_migrated' ) ) {
-            return;
+        self::ensure_numeric_job_columns();
+
+        $needs_backfill = false;
+        if ( ! get_option( 'bkja_jobs_numeric_fields_migrated' ) ) {
+            $needs_backfill = true;
+        }
+        if ( ! get_option( 'bkja_jobs_extended_fields_migrated' ) ) {
+            $needs_backfill = true;
         }
 
-        self::ensure_numeric_job_columns();
-        self::backfill_numeric_fields();
-        update_option( 'bkja_jobs_numeric_fields_migrated', 1 );
+        if ( $needs_backfill ) {
+            self::backfill_numeric_fields();
+            update_option( 'bkja_jobs_numeric_fields_migrated', 1 );
+            update_option( 'bkja_jobs_extended_fields_migrated', 1 );
+        }
     }
 
     /**
-     * Add numeric columns for income/investment if missing (idempotent for older installs).
+     * Add numeric columns for income/investment and extended job metadata if missing (idempotent for older installs).
      */
     public static function ensure_numeric_job_columns() {
         global $wpdb;
@@ -375,12 +390,22 @@ class BKJA_Database {
         }
 
         $columns = $wpdb->get_col( "DESC {$table}", 0 );
-        if ( ! in_array( 'income_num', $columns, true ) ) {
-            $wpdb->query( "ALTER TABLE {$table} ADD COLUMN income_num BIGINT NULL AFTER investment" );
-        }
-        if ( ! in_array( 'investment_num', $columns, true ) ) {
-            $wpdb->query( "ALTER TABLE {$table} ADD COLUMN investment_num BIGINT NULL AFTER income_num" );
-        }
+        $add_column = function( $column, $definition, $after = null ) use ( $wpdb, $table, $columns ) {
+            if ( in_array( $column, $columns, true ) ) {
+                return;
+            }
+
+            $after_clause = $after ? " AFTER {$after}" : '';
+            $wpdb->query( "ALTER TABLE {$table} ADD COLUMN {$column} {$definition}{$after_clause}" );
+        };
+
+        $add_column( 'income_num', 'BIGINT NULL', 'investment' );
+        $add_column( 'investment_num', 'BIGINT NULL', 'income_num' );
+        $add_column( 'experience_years', 'TINYINT NULL', 'investment_num' );
+        $add_column( 'employment_type', 'VARCHAR(50) NULL', 'experience_years' );
+        $add_column( 'hours_per_day', 'TINYINT NULL', 'employment_type' );
+        $add_column( 'days_per_week', 'TINYINT NULL', 'hours_per_day' );
+        $add_column( 'source', 'VARCHAR(50) NULL', 'days_per_week' );
     }
 
     /**
@@ -405,7 +430,7 @@ class BKJA_Database {
         do {
             $rows = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT id, income, investment FROM {$table} WHERE income_num IS NULL OR investment_num IS NULL ORDER BY id ASC LIMIT %d",
+                    "SELECT id, income, investment FROM {$table} WHERE income_num IS NULL OR income_num = 0 OR investment_num IS NULL OR investment_num = 0 ORDER BY id ASC LIMIT %d",
                     $limit
                 )
             );
@@ -440,22 +465,41 @@ class BKJA_Database {
         $table = $wpdb->prefix . 'bkja_jobs';
         self::ensure_numeric_job_columns();
 
+        $income_num_input     = isset( $data['income_num'] ) ? intval( $data['income_num'] ) : null;
+        $investment_num_input = isset( $data['investment_num'] ) ? intval( $data['investment_num'] ) : null;
+        $experience_years     = isset( $data['experience_years'] ) ? intval( $data['experience_years'] ) : null;
+        $hours_per_day        = isset( $data['hours_per_day'] ) ? intval( $data['hours_per_day'] ) : null;
+        $days_per_week        = isset( $data['days_per_week'] ) ? intval( $data['days_per_week'] ) : null;
+
+        $experience_years = ( $experience_years && $experience_years > 0 ) ? $experience_years : null;
+        $hours_per_day    = ( $hours_per_day && $hours_per_day > 0 ) ? $hours_per_day : null;
+        $days_per_week    = ( $days_per_week && $days_per_week > 0 ) ? $days_per_week : null;
+
         $row = [
-            'category_id'    => isset( $data['category_id'] ) ? sanitize_text_field( $data['category_id'] ) : 0,
-            'title'          => isset( $data['title'] ) ? sanitize_text_field( $data['title'] ) : '',
-            'income'         => isset( $data['income'] ) ? sanitize_text_field( $data['income'] ) : '',
-            'investment'     => isset( $data['investment'] ) ? sanitize_text_field( $data['investment'] ) : '',
-            'income_num'     => 0,
-            'investment_num' => 0,
-            'city'           => isset( $data['city'] ) ? sanitize_text_field( $data['city'] ) : '',
-            'gender'         => isset( $data['gender'] ) ? sanitize_text_field( $data['gender'] ) : 'both',
-            'advantages'     => isset( $data['advantages'] ) ? sanitize_textarea_field( $data['advantages'] ) : '',
-            'disadvantages'  => isset( $data['disadvantages'] ) ? sanitize_textarea_field( $data['disadvantages'] ) : '',
-            'details'        => isset( $data['details'] ) ? sanitize_textarea_field( $data['details'] ) : '',
+            'category_id'      => isset( $data['category_id'] ) ? sanitize_text_field( $data['category_id'] ) : 0,
+            'title'            => isset( $data['title'] ) ? sanitize_text_field( $data['title'] ) : '',
+            'income'           => isset( $data['income'] ) ? sanitize_text_field( $data['income'] ) : '',
+            'investment'       => isset( $data['investment'] ) ? sanitize_text_field( $data['investment'] ) : '',
+            'income_num'       => 0,
+            'investment_num'   => 0,
+            'experience_years' => $experience_years,
+            'employment_type'  => isset( $data['employment_type'] ) ? sanitize_text_field( $data['employment_type'] ) : null,
+            'hours_per_day'    => $hours_per_day,
+            'days_per_week'    => $days_per_week,
+            'source'           => isset( $data['source'] ) ? sanitize_text_field( $data['source'] ) : null,
+            'city'             => isset( $data['city'] ) ? sanitize_text_field( $data['city'] ) : '',
+            'gender'           => isset( $data['gender'] ) ? sanitize_text_field( $data['gender'] ) : 'both',
+            'advantages'       => isset( $data['advantages'] ) ? sanitize_textarea_field( $data['advantages'] ) : '',
+            'disadvantages'    => isset( $data['disadvantages'] ) ? sanitize_textarea_field( $data['disadvantages'] ) : '',
+            'details'          => isset( $data['details'] ) ? sanitize_textarea_field( $data['details'] ) : '',
         ];
 
-        $row['income_num']     = bkja_parse_numeric_amount( $row['income'] );
-        $row['investment_num'] = bkja_parse_numeric_amount( $row['investment'] );
+        $row['income_num']     = ( $income_num_input && $income_num_input > 0 ) ? $income_num_input : bkja_parse_numeric_amount( $row['income'] );
+        $row['investment_num'] = ( $investment_num_input && $investment_num_input > 0 ) ? $investment_num_input : bkja_parse_numeric_amount( $row['investment'] );
+
+        if ( isset( $data['created_at'] ) && ! empty( $data['created_at'] ) ) {
+            $row['created_at'] = sanitize_text_field( $data['created_at'] );
+        }
 
         $row = array_map( function( $value ) {
             return is_string( $value ) ? wp_slash( $value ) : $value;
@@ -766,7 +810,7 @@ class BKJA_Database {
 
         $results = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT id, title, income, investment, income_num, investment_num, city, gender, advantages, disadvantages, details, created_at
+                "SELECT id, title, income, investment, income_num, investment_num, experience_years, employment_type, hours_per_day, days_per_week, source, city, gender, advantages, disadvantages, details, created_at
                  FROM {$table}
                  WHERE title = %s
                  ORDER BY created_at DESC
@@ -784,6 +828,11 @@ class BKJA_Database {
                     'income_num'    => isset( $row->income_num ) ? (int) $row->income_num : 0,
                     'investment'    => $row->investment,
                     'investment_num'=> isset( $row->investment_num ) ? (int) $row->investment_num : 0,
+                    'experience_years' => isset( $row->experience_years ) ? (int) $row->experience_years : null,
+                    'employment_type'  => isset( $row->employment_type ) ? $row->employment_type : null,
+                    'hours_per_day'    => isset( $row->hours_per_day ) ? (int) $row->hours_per_day : null,
+                    'days_per_week'    => isset( $row->days_per_week ) ? (int) $row->days_per_week : null,
+                    'source'           => isset( $row->source ) ? $row->source : null,
                     'city'          => $row->city,
                     'gender'        => $row->gender,
                     'advantages'    => $row->advantages,
