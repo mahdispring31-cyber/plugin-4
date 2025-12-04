@@ -69,7 +69,7 @@ class BKJA_Jobs {
         $table = $wpdb->prefix . 'bkja_jobs';
         $row = $wpdb->get_row(
             $wpdb->prepare(
-                "SELECT id, title, income, investment, city, gender, advantages, disadvantages, details, created_at, category_id
+                "SELECT id, title, income, investment, income_num, investment_num, experience_years, employment_type, hours_per_day, days_per_week, source, city, gender, advantages, disadvantages, details, created_at, category_id
                  FROM {$table}
                  WHERE id = %d LIMIT 1",
                 $job_id
@@ -81,7 +81,14 @@ class BKJA_Jobs {
             'id'            => (int)$row->id,
             'job_title'     => $row->title,
             'income'        => $row->income,
+            'income_num'    => isset( $row->income_num ) ? (int) $row->income_num : null,
             'investment'    => $row->investment,
+            'investment_num'=> isset( $row->investment_num ) ? (int) $row->investment_num : null,
+            'experience_years' => isset( $row->experience_years ) ? (int) $row->experience_years : null,
+            'employment_type'  => $row->employment_type,
+            'hours_per_day'    => isset( $row->hours_per_day ) ? (int) $row->hours_per_day : null,
+            'days_per_week'    => isset( $row->days_per_week ) ? (int) $row->days_per_week : null,
+            'source'           => $row->source,
             'city'          => $row->city,
             'gender'        => $row->gender,
             'advantages'    => $row->advantages,
