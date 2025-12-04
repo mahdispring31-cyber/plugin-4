@@ -163,6 +163,7 @@ require_once BKJA_PLUGIN_DIR . 'includes/class-bkja-frontend.php';
 require_once BKJA_PLUGIN_DIR . 'includes/class-bkja-user-profile.php';
 require_once BKJA_PLUGIN_DIR . 'admin/settings.php';
 add_action( 'plugins_loaded', array( 'BKJA_Database', 'maybe_migrate_chat_created_at_default' ) );
+add_action( 'plugins_loaded', array( 'BKJA_Database', 'maybe_migrate_numeric_job_fields' ) );
 register_activation_hook( __FILE__, array( 'BKJA_Database', 'activate' ) );
 register_activation_hook( __FILE__, 'bkja_cleanup_legacy_free_limit_option' );
 add_action('plugins_loaded', function(){

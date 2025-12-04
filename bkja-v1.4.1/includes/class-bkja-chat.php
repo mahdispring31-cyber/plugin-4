@@ -388,6 +388,48 @@ class BKJA_Chat {
         ];
     }
 
+    protected static function format_amount_label( $value ) {
+        if ( ! is_numeric( $value ) || $value <= 0 ) {
+            return 'نامشخص';
+        }
+
+        $number    = (float) $value;
+        $rounded   = abs( $number - round( $number ) ) < 0.1 ? round( $number ) : round( $number, 1 );
+        $formatted = is_float( $rounded ) ? rtrim( rtrim( number_format( $rounded, 1, '.', '' ), '0' ), '.' ) : $rounded;
+
+        return $formatted . ' میلیون تومان';
+    }
+
+    protected static function format_range_label( $min, $max ) {
+        if ( ! is_numeric( $min ) || ! is_numeric( $max ) || $min <= 0 || $max <= 0 ) {
+            return '';
+        }
+
+        if ( $min > $max ) {
+            $tmp = $min;
+            $min = $max;
+            $max = $tmp;
+        }
+
+        return self::format_amount_label( $min ) . ' تا ' . self::format_amount_label( $max );
+    }
+
+    protected static function trim_snippet( $text, $length = 140 ) {
+        $text = wp_strip_all_tags( (string) $text );
+        if ( function_exists( 'mb_strlen' ) && function_exists( 'mb_substr' ) ) {
+            if ( mb_strlen( $text, 'UTF-8' ) <= $length ) {
+                return $text;
+            }
+            return rtrim( mb_substr( $text, 0, $length - 1, 'UTF-8' ) ) . '…';
+        }
+
+        if ( strlen( $text ) <= $length ) {
+            return $text;
+        }
+
+        return rtrim( substr( $text, 0, max( 0, $length - 1 ) ) ) . '…';
+    }
+
     protected static function build_context_prompt( $context ) {
         if ( empty( $context['job_title'] ) ) {
             return '';
@@ -395,51 +437,86 @@ class BKJA_Chat {
 
         $title = $context['job_title'];
         $lines = array();
-        $lines[] = "داده‌های داخلی ساخت‌یافته درباره شغل «{$title}»:";
+        $lines[] = "داده‌های ساخت‌یافته درباره شغل «{$title}»:";
 
         if ( ! empty( $context['summary'] ) && is_array( $context['summary'] ) ) {
-            $summary = $context['summary'];
-            $lines[] = 'میانگین درآمد اعلام‌شده: ' . ( ! empty( $summary['income'] ) ? $summary['income'] : 'نامشخص/تقریبی' );
-            $lines[] = 'میانگین سرمایه لازم: ' . ( ! empty( $summary['investment'] ) ? $summary['investment'] : 'نامشخص/تقریبی' );
-            if ( ! empty( $summary['cities'] ) ) {
-                $lines[] = 'شهرهای پرتکرار تجربه‌شده: ' . $summary['cities'];
+            $summary       = $context['summary'];
+            $count_reports = isset( $summary['count_reports'] ) ? (int) $summary['count_reports'] : 0;
+            $window_months = isset( $summary['window_months'] ) ? (int) $summary['window_months'] : null;
+
+            $count_line = 'تعداد گزارش‌های معتبر';
+            if ( $window_months ) {
+                $count_line .= " در {$window_months} ماه اخیر";
             }
+            $count_line .= ': ' . $count_reports;
+            $lines[] = $count_line;
+
+            $avg_income  = isset( $summary['avg_income'] ) ? $summary['avg_income'] : null;
+            $min_income  = isset( $summary['min_income'] ) ? $summary['min_income'] : null;
+            $max_income  = isset( $summary['max_income'] ) ? $summary['max_income'] : null;
+            $avg_invest  = isset( $summary['avg_investment'] ) ? $summary['avg_investment'] : null;
+            $min_invest  = isset( $summary['min_investment'] ) ? $summary['min_investment'] : null;
+            $max_invest  = isset( $summary['max_investment'] ) ? $summary['max_investment'] : null;
+
+            if ( $avg_income || $min_income || $max_income ) {
+                $income_line = 'میانگین درآمد ماهانه: ' . self::format_amount_label( $avg_income );
+                $range       = self::format_range_label( $min_income, $max_income );
+                if ( $range ) {
+                    $income_line .= ' | بازه رایج: ' . $range;
+                }
+                $lines[] = $income_line;
+            }
+
+            if ( $avg_invest || $min_invest || $max_invest ) {
+                $invest_line = 'میانگین سرمایه لازم: ' . self::format_amount_label( $avg_invest );
+                $range       = self::format_range_label( $min_invest, $max_invest );
+                if ( $range ) {
+                    $invest_line .= ' | بازه رایج: ' . $range;
+                }
+                $lines[] = $invest_line;
+            }
+
+            if ( ! empty( $summary['cities'] ) && is_array( $summary['cities'] ) ) {
+                $lines[] = 'شهرهای پرتکرار: ' . implode( '، ', array_slice( $summary['cities'], 0, 5 ) );
+            }
+
             if ( ! empty( $summary['advantages'] ) ) {
-                $lines[] = 'مزایای پرتکرار: ' . $summary['advantages'];
+                $lines[] = 'مزایای پرتکرار: ' . implode( '، ', array_slice( (array) $summary['advantages'], 0, 5 ) );
             }
             if ( ! empty( $summary['disadvantages'] ) ) {
-                $lines[] = 'چالش‌های پرتکرار: ' . $summary['disadvantages'];
+                $lines[] = 'چالش‌های پرتکرار: ' . implode( '، ', array_slice( (array) $summary['disadvantages'], 0, 5 ) );
             }
         }
 
         if ( ! empty( $context['records'] ) && is_array( $context['records'] ) ) {
-            $records = array_slice( $context['records'], 0, 3 );
+            $records = array_slice( $context['records'], 0, 2 );
             $index   = 1;
             foreach ( $records as $record ) {
                 if ( ! is_array( $record ) ) {
                     continue;
                 }
                 $parts = array();
-                $parts[] = 'درآمد: ' . ( ! empty( $record['income'] ) ? $record['income'] : 'نامشخص' );
-                $parts[] = 'سرمایه: ' . ( ! empty( $record['investment'] ) ? $record['investment'] : 'نامشخص' );
+                $income_value = isset( $record['income_num'] ) && $record['income_num'] > 0
+                    ? self::format_amount_label( $record['income_num'] )
+                    : ( ! empty( $record['income'] ) ? $record['income'] : 'نامشخص' );
+                $investment_value = isset( $record['investment_num'] ) && $record['investment_num'] > 0
+                    ? self::format_amount_label( $record['investment_num'] )
+                    : ( ! empty( $record['investment'] ) ? $record['investment'] : 'نامشخص' );
+
+                $parts[] = 'درآمد: ' . $income_value;
+                $parts[] = 'سرمایه: ' . $investment_value;
                 if ( ! empty( $record['city'] ) ) {
                     $parts[] = 'شهر: ' . $record['city'];
                 }
-                if ( ! empty( $record['advantages'] ) ) {
-                    $parts[] = 'مزایا: ' . $record['advantages'];
-                }
-                if ( ! empty( $record['disadvantages'] ) ) {
-                    $parts[] = 'معایب: ' . $record['disadvantages'];
+                if ( ! empty( $record['details'] ) ) {
+                    $parts[] = 'خلاصه: ' . self::trim_snippet( $record['details'], 120 );
                 }
                 $lines[] = 'نمونه تجربه ' . $index . ': ' . implode( ' | ', array_filter( array_map( 'trim', $parts ) ) );
-                if ( ! empty( $record['details'] ) ) {
-                    $lines[] = 'خلاصه تجربه: ' . $record['details'];
-                }
                 $index++;
             }
         }
 
-        $lines[] = 'پاسخ نهایی باید مرحله‌به‌مرحله، عدد-محور و بر اساس این داده‌ها باشد و اگر داده‌ای وجود ندارد حتماً «نامشخص/تقریبی» اعلام شود. موضوع گفتگو را تغییر نده.';
+        $lines[] = 'این آمار و اعداد بر اساس گزارش کاربران این سیستم است و منبع رسمی نیست. پاسخ نهایی باید عدد-محور، موجز و فقط بر مبنای همین داده‌ها باشد. اگر داده کافی نیست، «نامشخص» یا «تقریبی» اعلام شود.';
 
         return implode( "\n", array_filter( array_map( 'trim', $lines ) ) );
     }
@@ -455,98 +532,79 @@ class BKJA_Chat {
 
         $sections = array();
 
-        $sections[] = "📌 خلاصه سریع درباره «{$title}»:";
-        if ( ! empty( $summary ) ) {
-            $sections[] = '• داده‌های داخلی کاربران BKJA برای این شغل در دسترس است و اعداد زیر از همان داده‌ها استخراج شده است.';
-            if ( ! empty( $summary['cities'] ) ) {
-                $sections[] = '• شهرهای پرتکرار: ' . $summary['cities'];
-            }
-            if ( ! empty( $summary['genders'] ) ) {
-                $sections[] = '• مناسب برای: ' . $summary['genders'];
-            }
+        $sections[] = "📌 خلاصه داده‌های واقعی درباره «{$title}»:";
+        $count_reports = isset( $summary['count_reports'] ) ? (int) $summary['count_reports'] : 0;
+        $window_months = isset( $summary['window_months'] ) ? (int) $summary['window_months'] : null;
+
+        if ( $count_reports > 0 ) {
+            $sections[] = '• ' . ( $window_months ? $window_months . ' ماه اخیر - ' : '' ) . $count_reports . ' گزارش کاربری ثبت شده است.';
         } else {
-            $sections[] = '• هنوز داده‌ای در پایگاه ما ثبت نشده؛ بنابراین برآوردها باید با احتیاط بررسی شوند.';
+            $sections[] = '• هنوز گزارش عددی معنادار نداریم؛ برآوردها تقریبی است.';
         }
+        $sections[] = '• اعداد زیر بر اساس گزارش‌های کاربران این سیستم است و آمار رسمی نیست.';
 
         $sections[] = '';
-        $sections[] = '💵 درآمد تقریبی:';
-        $income_lines = array();
-        if ( ! empty( $summary['income'] ) ) {
-            $income_lines[] = '• حدود درآمد اعلام‌شده: ' . $summary['income'];
+        $sections[] = '💵 درآمد ماهانه (میلیون تومان):';
+        $income_line = '• میانگین: ' . self::format_amount_label( isset( $summary['avg_income'] ) ? $summary['avg_income'] : null );
+        $income_range = self::format_range_label( $summary['min_income'] ?? null, $summary['max_income'] ?? null );
+        if ( $income_range ) {
+            $income_line .= ' | بازه رایج: ' . $income_range;
         }
-        $income_samples = array();
-        foreach ( array_slice( $records, 0, 3 ) as $record ) {
-            if ( empty( $record['income'] ) ) {
-                continue;
-            }
-            $value = trim( (string) $record['income'] );
-            if ( '' !== $value && ! in_array( $value, $income_samples, true ) ) {
-                $income_samples[] = $value;
-            }
+        if ( $count_reports > 0 && $count_reports < 3 ) {
+            $income_line .= ' (دقت پایین به دلیل گزارش‌های محدود)';
         }
-        if ( ! empty( $income_samples ) ) {
-            $income_lines[] = '• نمونه گزارش کاربران: ' . implode( '، ', $income_samples );
-        }
-        if ( empty( $income_lines ) ) {
-            $income_lines[] = '• نامشخص (داده‌ی معتبری ثبت نشده است).';
-        }
-        $sections = array_merge( $sections, $income_lines );
+        $sections[] = $income_line;
 
         $sections[] = '';
-        $sections[] = '💰 سرمایه و ملزومات راه‌اندازی:';
-        $investment_lines = array();
-        if ( ! empty( $summary['investment'] ) ) {
-            $investment_lines[] = '• حدود سرمایه اولیه: ' . $summary['investment'];
+        $sections[] = '💰 سرمایه لازم (میلیون تومان):';
+        $invest_line = '• میانگین: ' . self::format_amount_label( isset( $summary['avg_investment'] ) ? $summary['avg_investment'] : null );
+        $invest_range = self::format_range_label( $summary['min_investment'] ?? null, $summary['max_investment'] ?? null );
+        if ( $invest_range ) {
+            $invest_line .= ' | بازه رایج: ' . $invest_range;
         }
-        $investment_samples = array();
-        foreach ( array_slice( $records, 0, 3 ) as $record ) {
-            if ( empty( $record['investment'] ) ) {
-                continue;
-            }
-            $value = trim( (string) $record['investment'] );
-            if ( '' !== $value && ! in_array( $value, $investment_samples, true ) ) {
-                $investment_samples[] = $value;
-            }
+        if ( $count_reports > 0 && $count_reports < 3 ) {
+            $invest_line .= ' (دقت پایین به دلیل گزارش‌های محدود)';
         }
-        if ( ! empty( $investment_samples ) ) {
-            $investment_lines[] = '• سرمایه‌های گزارش‌شده: ' . implode( '، ', $investment_samples );
-        }
-        if ( empty( $investment_lines ) ) {
-            $investment_lines[] = '• نامشخص (کاربران هنوز سرمایه لازم را ثبت نکرده‌اند).';
-        }
-        $sections = array_merge( $sections, $investment_lines );
+        $sections[] = $invest_line;
 
-        $sections[] = '';
-        $sections[] = '🛠 مهارت‌های کلیدی و شرایط کاری:';
-        if ( ! empty( $summary['advantages'] ) ) {
-            $sections[] = '• مزایا: ' . $summary['advantages'];
+        if ( ! empty( $summary['cities'] ) ) {
+            $sections[] = '';
+            $sections[] = '📍 شهرهای پرتکرار: ' . implode( '، ', array_slice( (array) $summary['cities'], 0, 5 ) );
         }
-        if ( ! empty( $summary['disadvantages'] ) ) {
-            $sections[] = '• چالش‌های رایج: ' . $summary['disadvantages'];
-        }
-        if ( empty( $summary['advantages'] ) && empty( $summary['disadvantages'] ) ) {
-            $sections[] = '• برای شناخت مهارت‌های ضروری با فعالان این حوزه گفتگو کن یا به دوره‌های تخصصی مراجعه کن.';
+
+        if ( ! empty( $summary['advantages'] ) || ! empty( $summary['disadvantages'] ) ) {
+            $sections[] = '';
+            if ( ! empty( $summary['advantages'] ) ) {
+                $sections[] = '✅ مزایای پرتکرار: ' . implode( '، ', array_slice( (array) $summary['advantages'], 0, 5 ) );
+            }
+            if ( ! empty( $summary['disadvantages'] ) ) {
+                $sections[] = '⚠️ چالش‌های پرتکرار: ' . implode( '، ', array_slice( (array) $summary['disadvantages'], 0, 5 ) );
+            }
         }
 
         if ( ! empty( $records ) ) {
             $sections[] = '';
-            $sections[] = '🧪 چند تجربه واقعی کاربران:';
+            $sections[] = '🧪 نمونه‌های واقعی کاربران:';
             foreach ( array_slice( $records, 0, 2 ) as $record ) {
                 if ( ! is_array( $record ) ) {
                     continue;
                 }
                 $parts = array();
-                if ( ! empty( $record['income'] ) ) {
+                if ( ! empty( $record['income_num'] ) ) {
+                    $parts[] = 'درآمد: ' . self::format_amount_label( $record['income_num'] );
+                } elseif ( ! empty( $record['income'] ) ) {
                     $parts[] = 'درآمد: ' . $record['income'];
                 }
-                if ( ! empty( $record['investment'] ) ) {
+                if ( ! empty( $record['investment_num'] ) ) {
+                    $parts[] = 'سرمایه: ' . self::format_amount_label( $record['investment_num'] );
+                } elseif ( ! empty( $record['investment'] ) ) {
                     $parts[] = 'سرمایه: ' . $record['investment'];
                 }
                 if ( ! empty( $record['city'] ) ) {
                     $parts[] = 'شهر: ' . $record['city'];
                 }
                 if ( ! empty( $record['details'] ) ) {
-                    $parts[] = 'تجربه: ' . $record['details'];
+                    $parts[] = 'تجربه: ' . self::trim_snippet( $record['details'], 120 );
                 }
                 if ( ! empty( $parts ) ) {
                     $sections[] = '• ' . implode( ' | ', $parts );
@@ -555,10 +613,14 @@ class BKJA_Chat {
         }
 
         $sections[] = '';
-        $sections[] = '🚀 قدم بعدی پیشنهادی:';
-        $sections[] = '• یک فهرست کوتاه از مهارت‌ها و ابزار لازم تهیه کن و هزینه‌ی واقعی هر کدام را برآورد کن.';
-        $sections[] = '• با دو نفر از فعالان «' . $title . '» مصاحبه کوتاه انجام بده تا برآورد درآمد و سرمایه را تأیید یا اصلاح کنی.';
-        $sections[] = '• اگر رقم سرمایه مشخصی در ذهن داری (مثلاً ۵۰۰ میلیون یا یک میلیارد تومان)، بگو تا سناریوهای مناسب همان بودجه را ارائه کنم.';
+        $sections[] = '🚀 جمع‌بندی و اقدام بعدی:';
+        $sections[] = '• اعداد بالا تنها از گزارش‌های کاربران سایت استخراج شده است؛ پیش از تصمیم نهایی با دو فعال حوزه ' . $title . ' مشورت کن.';
+        $sections[] = '• مهارت‌ها و هزینه‌های ضروری را در یک لیست کوتاه یادداشت کن و با شرایط شخصی و بودجه خود تطبیق بده.';
+
+        if ( empty( $summary ) ) {
+            $sections[] = '';
+            $sections[] = 'اگر مایل بودی اطلاعات دقیق‌تری بدهی (شهر، سطح تجربه، بودجه) تا جمع‌بندی بهتری ارائه شود.';
+        }
 
         return implode( "\n", array_filter( array_map( 'trim', $sections ), function ( $line ) {
             return $line !== '' || $line === '0';
@@ -758,6 +820,18 @@ class BKJA_Chat {
             'job_slug'     => isset( $context['job_slug'] ) ? $context['job_slug'] : '',
         );
 
+        $summary               = ( ! empty( $context['summary'] ) && is_array( $context['summary'] ) ) ? $context['summary'] : array();
+        $job_report_count      = isset( $summary['count_reports'] ) ? (int) $summary['count_reports'] : null;
+        $job_avg_income        = isset( $summary['avg_income'] ) ? (float) $summary['avg_income'] : null;
+        $job_income_range      = array( $summary['min_income'] ?? null, $summary['max_income'] ?? null );
+        $job_avg_investment    = isset( $summary['avg_investment'] ) ? (float) $summary['avg_investment'] : null;
+        $job_investment_range  = array( $summary['min_investment'] ?? null, $summary['max_investment'] ?? null );
+        $payload['job_report_count']     = $job_report_count;
+        $payload['job_avg_income']       = $job_avg_income;
+        $payload['job_income_range']     = $job_income_range;
+        $payload['job_avg_investment']   = $job_avg_investment;
+        $payload['job_investment_range'] = $job_investment_range;
+
         if ( ! empty( $extra ) && is_array( $extra ) ) {
             $payload = array_merge( $payload, $extra );
         }
@@ -790,6 +864,11 @@ class BKJA_Chat {
             'category'     => $resolved_category,
             'job_title'    => $resolved_job_title,
             'job_slug'     => $resolved_job_slug,
+            'job_report_count'     => $job_report_count,
+            'job_avg_income'       => $job_avg_income,
+            'job_income_range'     => $job_income_range,
+            'job_avg_investment'   => $job_avg_investment,
+            'job_investment_range' => $job_investment_range,
         );
 
         return $payload;
@@ -857,7 +936,7 @@ class BKJA_Chat {
         }
 
         $defaults = array(
-            'system'         => 'شما یک دستیار شغلی عدد-محور هستید. پاسخ را همیشه در پنج بخش تیتر‌دار ارائه کن: «خلاصه سریع»، «درآمد تقریبی»، «سرمایه و ملزومات»، «مهارت‌ها و مسیر رشد»، «قدم بعدی و پیشنهادهای جایگزین». در هر بخش اعداد تقریبی یا وضعیت «نامشخص/تقریبی» را شفاف بگو، تفاوت سطوح تجربه را توضیح بده و اگر کاربر سرمایه مشخصی مطرح کرده سناریوهای متناسب با همان مبلغ پیشنهاد کن. پاسخ باید موجز ولی کاربردی باشد (حداکثر شش بولت در هر بخش)، از داده‌های داخلی با ذکر منبع استفاده کن و موضوع گفتگو را تغییر نده. در پایان حتماً حداقل یک اقدام عملی برای ادامه تحقیق ارائه بده.',
+            'system'         => 'تو یک دستیار شغلی داده‌محور هستی. اعداد درآمد و سرمایه که می‌بینی فقط از گزارش کاربران این سایت استخراج شده و آمار رسمی نیست. پاسخ را در بخش‌های بولت‌دار کوتاه مثل «خلاصه آماری»، «درآمد»، «سرمایه»، «نکات مثبت/چالش‌ها»، «قدم بعدی» ارائه کن. فقط از اعداد موجود در کانتکست استفاده کن؛ اگر داده عددی نداریم یا تعداد گزارش‌ها کم است صریحاً بگو «نامشخص» یا «دقت پایین» و عدد نساز. موضوع گفتگو را تغییر نده و در پایان یک اقدام عملی کوتاه پیشنهاد بده.',
             'model'          => '',
             'session_id'     => '',
             'user_id'        => 0,
