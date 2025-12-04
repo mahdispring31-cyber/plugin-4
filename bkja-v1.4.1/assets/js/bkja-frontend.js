@@ -818,6 +818,22 @@
             var jobTitleValue = data.job_title ? String(data.job_title) : '';
             var jobSlugValue = data.job_slug ? String(data.job_slug) : '';
 
+            function appendJobMetaNote(){
+                $message.find('.bkja-job-meta-note').remove();
+                var count = parseInt(data.job_report_count, 10);
+                if(isNaN(count) || count <= 0){
+                    return;
+                }
+                var title = jobTitleValue || data.jobTitle || '';
+                if(!title){
+                    return;
+                }
+                var noteText = 'این پاسخ بر اساس ' + count + ' گزارش واقعی کاربران دربارهٔ «' + esc(title) + '» است.';
+                var $note = $('<div class="bkja-job-meta-note"></div>').text(noteText);
+                $note.css({ fontSize: '12px', color: '#555', marginTop: '6px' });
+                $message.append($note);
+            }
+
             if(el.dataset){
                 el.dataset.category = categoryValue;
                 el.dataset.jobTitle = jobTitleValue;
@@ -832,6 +848,8 @@
             if(actions && actions.childNodes && actions.childNodes.length){
                 $message.append(actions);
             }
+
+            appendJobMetaNote();
         }
 
         function removeFollowups(){
@@ -1800,27 +1818,67 @@
                 var s = summaryRes[0] && summaryRes[0].success && summaryRes[0].data && summaryRes[0].data.summary ? summaryRes[0].data.summary : null;
                 var records = recordsRes[0] && recordsRes[0].success && recordsRes[0].data && recordsRes[0].data.records ? recordsRes[0].data.records : [];
                 var totalCount = recordsRes[0] && recordsRes[0].success && recordsRes[0].data && typeof recordsRes[0].data.total_count !== 'undefined' ? recordsRes[0].data.total_count : records.length;
+                function fmtMillion(val){
+                    var num = parseFloat(val);
+                    if(isNaN(num) || num <= 0){
+                        return '';
+                    }
+                    var rounded = Math.round(num * 10) / 10;
+                    if(Math.abs(rounded - Math.round(rounded)) < 0.1){
+                        rounded = Math.round(rounded);
+                    }
+                    return rounded + ' میلیون تومان';
+                }
+
                 var html = '<div class="bkja-job-summary-card">';
                 html += '<div class="bkja-job-summary-header">';
                 if (s) {
                     html += '<h4>💼 ' + esc(s.job_title) + '</h4>';
                     html += '<div class="bkja-job-summary-meta">';
-                    html += '<span>🔢 تعداد تجربه‌های ثبت‌شده: ' + esc(records.length) + '</span>';
+                    var reportCount = s.count_reports ? parseInt(s.count_reports, 10) : 0;
+                    html += '<span>🔢 تعداد تجربه‌های ثبت‌شده: ' + esc(reportCount || records.length) + '</span>';
                     html += '</div>';
                 } else {
                     html += '<div>❌ خلاصه‌ای برای این شغل یافت نشد.</div>';
                 }
                 html += '</div>';
-                // توضیح را بعد از هدر و متا نمایش بده
                 if (s) {
-                    html += '<div class="bkja-job-summary-note">این اطلاعات میانگین و جمع‌بندی تجربه‌های واقعی کاربران این شغل است و شهرها، مزایا و معایب بر اساس تجربه‌های ارسالی کاربران نمایش داده می‌شود.</div>';
+                    var windowMonths = s.window_months ? parseInt(s.window_months, 10) : 0;
+                    var noteText = 'این آمار از گزارش‌های کاربران این شغل جمع‌آوری شده است' + (windowMonths ? ' (حدود ' + windowMonths + ' ماه اخیر)' : '') + ' و منبع رسمی نیست.';
+                    html += '<div class="bkja-job-summary-note">' + esc(noteText) + '</div>';
+
+                    var incomeText = '';
+                    if(s.avg_income){
+                        incomeText += 'میانگین: ' + esc(fmtMillion(s.avg_income));
+                    }
+                    if(s.min_income && s.max_income){
+                        incomeText += (incomeText ? ' | ' : '') + 'بازه: ' + esc(fmtMillion(s.min_income)) + ' تا ' + esc(fmtMillion(s.max_income));
+                    }
+                    if(incomeText){
+                        html += '<p>💵 درآمد کاربران: ' + incomeText + '</p>';
+                    }
+
+                    var investText = '';
+                    if(s.avg_investment){
+                        investText += 'میانگین: ' + esc(fmtMillion(s.avg_investment));
+                    }
+                    if(s.min_investment && s.max_investment){
+                        investText += (investText ? ' | ' : '') + 'بازه: ' + esc(fmtMillion(s.min_investment)) + ' تا ' + esc(fmtMillion(s.max_investment));
+                    }
+                    if(investText){
+                        html += '<p>💰 سرمایه لازم: ' + investText + '</p>';
+                    }
+
+                    if (s.cities && s.cities.length){
+                        html += '<p>📍 شهرهای پرتکرار: ' + esc(s.cities.join('، ')) + '</p>';
+                    }
+                    if (s.advantages && s.advantages.length){
+                        html += '<p>⭐ مزایا: ' + esc(s.advantages.join('، ')) + '</p>';
+                    }
+                    if (s.disadvantages && s.disadvantages.length){
+                        html += '<p>⚠️ معایب: ' + esc(s.disadvantages.join('، ')) + '</p>';
+                    }
                 }
-                if (s && s.income) html += '<p>💵 میانگین درآمد اعلام‌شده توسط کاربران: ' + esc(s.income) + '</p>';
-                if (s && s.investment) html += '<p>💰 میانگین سرمایه موردنیاز از دید کاربران: ' + esc(s.investment) + '</p>';
-                if (s && s.cities) html += '<p>📍 شهرها (بر اساس تجربه کاربران): ' + esc(s.cities) + '</p>';
-                if (s && s.genders) html += '<p>👤 مناسب برای: ' + esc(s.genders) + '</p>';
-                if (s && s.advantages) html += '<p>⭐ مزایا (بر اساس گفته‌های کاربران): ' + esc(s.advantages) + '</p>';
-                if (s && s.disadvantages) html += '<p>⚠️ معایب (بر اساس گفته‌های کاربران): ' + esc(s.disadvantages) + '</p>';
                 html += '</div>';
                 pushBotHtml(html);
                 // نمایش رکوردهای کاربران

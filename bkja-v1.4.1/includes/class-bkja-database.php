@@ -1,6 +1,59 @@
 <?php
 if ( ! defined( 'ABSPATH' ) ) exit;
 
+if ( ! function_exists( 'bkja_parse_numeric_amount' ) ) {
+    /**
+     * Parse a numeric value from a free-form income/investment string.
+     *
+     * - Converts Persian digits to English.
+     * - Extracts all numeric parts; if a range is present (two numbers), returns their average.
+     * - Returns 0 when no numeric value is found.
+     *
+     * Assumes the unit is «میلیون تومان» and only stores the numeric part.
+     */
+    function bkja_parse_numeric_amount( $text ) {
+        if ( ! is_string( $text ) || '' === trim( $text ) ) {
+            return 0;
+        }
+
+        $english_digits = array( '۰','۱','۲','۳','۴','۵','۶','۷','۸','۹' );
+        $latin_digits   = array( '0','1','2','3','4','5','6','7','8','9' );
+
+        $normalized = str_replace( $english_digits, $latin_digits, wp_strip_all_tags( $text ) );
+        $normalized = str_replace( array( ',', '٬' ), '', $normalized );
+
+        if ( '' === $normalized ) {
+            return 0;
+        }
+
+        preg_match_all( '/([0-9]+(?:[\.\/][0-9]+)?)/', $normalized, $matches );
+
+        if ( empty( $matches[1] ) ) {
+            return 0;
+        }
+
+        $numbers = array();
+        foreach ( $matches[1] as $match ) {
+            $num = floatval( str_replace( array( '/', '\\' ), '.', $match ) );
+            if ( $num > 0 ) {
+                $numbers[] = $num;
+            }
+        }
+
+        if ( empty( $numbers ) ) {
+            return 0;
+        }
+
+        if ( count( $numbers ) >= 2 ) {
+            $value = ( $numbers[0] + $numbers[1] ) / 2;
+        } else {
+            $value = $numbers[0];
+        }
+
+        return (int) round( $value );
+    }
+}
+
 /**
  * BKJA_Database
  * - مدیریت جداول (activate)
@@ -40,6 +93,8 @@ class BKJA_Database {
             `title` VARCHAR(255) NOT NULL,
             `income` VARCHAR(255) DEFAULT NULL,
             `investment` VARCHAR(255) DEFAULT NULL,
+            `income_num` BIGINT NULL,
+            `investment_num` BIGINT NULL,
             `city` VARCHAR(255) DEFAULT NULL,
             `gender` ENUM('male','female','both') DEFAULT 'both',
             `advantages` TEXT DEFAULT NULL,
@@ -76,6 +131,10 @@ class BKJA_Database {
 
         self::ensure_chats_created_at_default();
         update_option( 'bkja_migrated_chats_created_at_default', 1 );
+
+        self::ensure_numeric_job_columns();
+        self::backfill_numeric_fields();
+        update_option( 'bkja_jobs_numeric_fields_migrated', 1 );
 
         // مقدار پیش‌فرض برای تعداد پیام رایگان در روز
         if ( false === get_option( 'bkja_free_messages_per_day' ) ) {
@@ -291,27 +350,118 @@ class BKJA_Database {
     }
 
     /**
+     * Ensure numeric income/investment columns exist on bkja_jobs and backfill once.
+     */
+    public static function maybe_migrate_numeric_job_fields() {
+        if ( get_option( 'bkja_jobs_numeric_fields_migrated' ) ) {
+            return;
+        }
+
+        self::ensure_numeric_job_columns();
+        self::backfill_numeric_fields();
+        update_option( 'bkja_jobs_numeric_fields_migrated', 1 );
+    }
+
+    /**
+     * Add numeric columns for income/investment if missing (idempotent for older installs).
+     */
+    public static function ensure_numeric_job_columns() {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'bkja_jobs';
+        $exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+        if ( $exists !== $table ) {
+            return;
+        }
+
+        $columns = $wpdb->get_col( "DESC {$table}", 0 );
+        if ( ! in_array( 'income_num', $columns, true ) ) {
+            $wpdb->query( "ALTER TABLE {$table} ADD COLUMN income_num BIGINT NULL AFTER investment" );
+        }
+        if ( ! in_array( 'investment_num', $columns, true ) ) {
+            $wpdb->query( "ALTER TABLE {$table} ADD COLUMN investment_num BIGINT NULL AFTER income_num" );
+        }
+    }
+
+    /**
+     * Backfill numeric columns from existing textual income/investment values.
+     */
+    public static function backfill_numeric_fields( $limit = 500 ) {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'bkja_jobs';
+        $exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+        if ( $exists !== $table ) {
+            return;
+        }
+
+        $limit = absint( $limit );
+        if ( $limit <= 0 ) {
+            $limit = 500;
+        }
+
+        $max_batches = 20;
+
+        do {
+            $rows = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT id, income, investment FROM {$table} WHERE income_num IS NULL OR investment_num IS NULL ORDER BY id ASC LIMIT %d",
+                    $limit
+                )
+            );
+
+            if ( empty( $rows ) ) {
+                break;
+            }
+
+            foreach ( $rows as $row ) {
+                $income_num     = bkja_parse_numeric_amount( $row->income );
+                $investment_num = bkja_parse_numeric_amount( $row->investment );
+
+                $data  = array(
+                    'income_num'     => $income_num,
+                    'investment_num' => $investment_num,
+                );
+                $where = array( 'id' => (int) $row->id );
+
+                $wpdb->update( $table, $data, $where );
+            }
+
+            $max_batches--;
+        } while ( $max_batches > 0 );
+    }
+
+    /**
      * insert_job
      * درج یک رکورد شغلی (هر رکورد متعلق به یک کاربر/مشاهده است)
      */
     public static function insert_job( $data = array() ) {
         global $wpdb;
         $table = $wpdb->prefix . 'bkja_jobs';
+        self::ensure_numeric_job_columns();
+
         $row = [
-            'category_id'   => isset($data['category_id']) ? sanitize_text_field($data['category_id']) : 0,
-            'title'         => isset($data['title']) ? sanitize_text_field($data['title']) : '',
-            'income'        => isset($data['income']) ? sanitize_text_field($data['income']) : '',
-            'investment'    => isset($data['investment']) ? sanitize_text_field($data['investment']) : '',
-            'city'          => isset($data['city']) ? sanitize_text_field($data['city']) : '',
-            'gender'        => isset($data['gender']) ? sanitize_text_field($data['gender']) : 'both',
-            'advantages'    => isset($data['advantages']) ? sanitize_textarea_field($data['advantages']) : '',
-            'disadvantages' => isset($data['disadvantages']) ? sanitize_textarea_field($data['disadvantages']) : '',
-            'details'       => isset($data['details']) ? sanitize_textarea_field($data['details']) : '',
+            'category_id'    => isset( $data['category_id'] ) ? sanitize_text_field( $data['category_id'] ) : 0,
+            'title'          => isset( $data['title'] ) ? sanitize_text_field( $data['title'] ) : '',
+            'income'         => isset( $data['income'] ) ? sanitize_text_field( $data['income'] ) : '',
+            'investment'     => isset( $data['investment'] ) ? sanitize_text_field( $data['investment'] ) : '',
+            'income_num'     => 0,
+            'investment_num' => 0,
+            'city'           => isset( $data['city'] ) ? sanitize_text_field( $data['city'] ) : '',
+            'gender'         => isset( $data['gender'] ) ? sanitize_text_field( $data['gender'] ) : 'both',
+            'advantages'     => isset( $data['advantages'] ) ? sanitize_textarea_field( $data['advantages'] ) : '',
+            'disadvantages'  => isset( $data['disadvantages'] ) ? sanitize_textarea_field( $data['disadvantages'] ) : '',
+            'details'        => isset( $data['details'] ) ? sanitize_textarea_field( $data['details'] ) : '',
         ];
+
+        $row['income_num']     = bkja_parse_numeric_amount( $row['income'] );
+        $row['investment_num'] = bkja_parse_numeric_amount( $row['investment'] );
+
         $row = array_map( function( $value ) {
             return is_string( $value ) ? wp_slash( $value ) : $value;
         }, $row );
-        $wpdb->insert($table, $row);
+
+        $wpdb->insert( $table, $row );
         $insert_id = $wpdb->insert_id;
 
         if ( class_exists( 'BKJA_Chat' ) ) {
@@ -514,31 +664,96 @@ class BKJA_Database {
         global $wpdb;
         $table = $wpdb->prefix . 'bkja_jobs';
 
+        self::ensure_numeric_job_columns();
+
+        $window_months = 24;
+        $where_clause  = "title = %s AND created_at >= DATE_SUB(NOW(), INTERVAL {$window_months} MONTH)";
+
         $row = $wpdb->get_row(
             $wpdb->prepare(
-                "SELECT 
-                    AVG(NULLIF(income, '')) AS avg_income,
-                    AVG(NULLIF(investment, '')) AS avg_investment,
-                    GROUP_CONCAT(DISTINCT city ORDER BY city SEPARATOR ', ') AS cities,
-                    GROUP_CONCAT(DISTINCT gender ORDER BY gender SEPARATOR ', ') AS genders,
-                    GROUP_CONCAT(DISTINCT advantages SEPARATOR ' | ') AS all_advantages,
-                    GROUP_CONCAT(DISTINCT disadvantages SEPARATOR ' | ') AS all_disadvantages
+                "SELECT
+                    COUNT(*) AS total_reports,
+                    MAX(created_at) AS latest_at,
+                    AVG(CASE WHEN income_num > 0 THEN income_num END) AS avg_income,
+                    MIN(CASE WHEN income_num > 0 THEN income_num END) AS min_income,
+                    MAX(CASE WHEN income_num > 0 THEN income_num END) AS max_income,
+                    SUM(CASE WHEN income_num > 0 THEN 1 ELSE 0 END) AS income_count,
+                    AVG(CASE WHEN investment_num > 0 THEN investment_num END) AS avg_investment,
+                    MIN(CASE WHEN investment_num > 0 THEN investment_num END) AS min_investment,
+                    MAX(CASE WHEN investment_num > 0 THEN investment_num END) AS max_investment,
+                    SUM(CASE WHEN investment_num > 0 THEN 1 ELSE 0 END) AS investment_count
                  FROM {$table}
-                 WHERE title = %s",
+                 WHERE {$where_clause}",
                 $job_title
             )
         );
 
         if ( ! $row ) return null;
 
+        $cities = $wpdb->get_col(
+            $wpdb->prepare(
+                "SELECT city FROM {$table} WHERE {$where_clause} AND city <> '' GROUP BY city ORDER BY COUNT(*) DESC, city ASC LIMIT 5",
+                $job_title
+            )
+        );
+
+        $adv_rows = $wpdb->get_col(
+            $wpdb->prepare(
+                "SELECT advantages FROM {$table} WHERE {$where_clause} AND advantages IS NOT NULL AND advantages <> '' ORDER BY created_at DESC LIMIT 50",
+                $job_title
+            )
+        );
+        $dis_rows = $wpdb->get_col(
+            $wpdb->prepare(
+                "SELECT disadvantages FROM {$table} WHERE {$where_clause} AND disadvantages IS NOT NULL AND disadvantages <> '' ORDER BY created_at DESC LIMIT 50",
+                $job_title
+            )
+        );
+
+        $split_terms = function( $items ) {
+            $counts = array();
+            foreach ( $items as $item ) {
+                $parts = preg_split( '/[,،\n\|]+/u', $item );
+                foreach ( $parts as $part ) {
+                    $term = trim( $part );
+                    if ( '' === $term ) {
+                        continue;
+                    }
+                    if ( ! isset( $counts[ $term ] ) ) {
+                        $counts[ $term ] = 0;
+                    }
+                    $counts[ $term ]++;
+                }
+            }
+
+            if ( empty( $counts ) ) {
+                return array();
+            }
+
+            arsort( $counts );
+            return array_slice( array_keys( $counts ), 0, 5 );
+        };
+
+        $advantages    = $split_terms( $adv_rows );
+        $disadvantages = $split_terms( $dis_rows );
+
         return array(
-            'job_title'     => $job_title,
-            'income'        => $row->avg_income ? round($row->avg_income, 0) . " میلیون (میانگین)" : 'نامشخص',
-            'investment'    => $row->avg_investment ? round($row->avg_investment, 0) . " میلیون (میانگین)" : 'نامشخص',
-            'cities'        => $row->cities,
-            'genders'       => $row->genders,
-            'advantages'    => $row->all_advantages,
-            'disadvantages' => $row->all_disadvantages,
+            'job_title'         => $job_title,
+            'avg_income'        => $row->avg_income ? round( (float) $row->avg_income, 1 ) : null,
+            'min_income'        => $row->min_income ? (float) $row->min_income : null,
+            'max_income'        => $row->max_income ? (float) $row->max_income : null,
+            'income_count'      => (int) $row->income_count,
+            'avg_investment'    => $row->avg_investment ? round( (float) $row->avg_investment, 1 ) : null,
+            'min_investment'    => $row->min_investment ? (float) $row->min_investment : null,
+            'max_investment'    => $row->max_investment ? (float) $row->max_investment : null,
+            'investment_count'  => (int) $row->investment_count,
+            'count_reports'     => (int) $row->total_reports,
+            'latest_at'         => $row->latest_at,
+            'cities'            => $cities,
+            'genders'           => null,
+            'advantages'        => $advantages,
+            'disadvantages'     => $disadvantages,
+            'window_months'     => $window_months,
         );
     }
 
@@ -551,7 +766,7 @@ class BKJA_Database {
 
         $results = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT id, title, income, investment, city, gender, advantages, disadvantages, details, created_at
+                "SELECT id, title, income, investment, income_num, investment_num, city, gender, advantages, disadvantages, details, created_at
                  FROM {$table}
                  WHERE title = %s
                  ORDER BY created_at DESC
@@ -562,14 +777,16 @@ class BKJA_Database {
 
         $records = array();
         foreach ( $results as $row ) {
-            $records[] = array(
-                'id'            => (int)$row->id,
-                'job_title'     => $row->title,
-                'income'        => $row->income,
-                'investment'    => $row->investment,
-                'city'          => $row->city,
-                'gender'        => $row->gender,
-                'advantages'    => $row->advantages,
+                $records[] = array(
+                    'id'            => (int)$row->id,
+                    'job_title'     => $row->title,
+                    'income'        => $row->income,
+                    'income_num'    => isset( $row->income_num ) ? (int) $row->income_num : 0,
+                    'investment'    => $row->investment,
+                    'investment_num'=> isset( $row->investment_num ) ? (int) $row->investment_num : 0,
+                    'city'          => $row->city,
+                    'gender'        => $row->gender,
+                    'advantages'    => $row->advantages,
                 'disadvantages' => $row->disadvantages,
                 'details'       => $row->details,
                 'created_at'    => $row->created_at,

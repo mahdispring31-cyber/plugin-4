@@ -16,23 +16,25 @@ class BKJA_Migrations {
         ) {$charset_collate};";
 
         // جدول مشاغل
-                $table_jobs = $prefix . 'bkja_jobs';
-                $sql2 = "CREATE TABLE IF NOT EXISTS `{$table_jobs}` (
-                    `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-                    `category_id` BIGINT UNSIGNED NOT NULL,
-                    `title` VARCHAR(255) NOT NULL,
-                    `income` VARCHAR(255) DEFAULT NULL,
-                    `investment` VARCHAR(255) DEFAULT NULL,
-                    `city` VARCHAR(255) DEFAULT NULL,
-                    `gender` ENUM('male','female','both') DEFAULT 'both',
-                    `advantages` TEXT DEFAULT NULL,
-                    `disadvantages` TEXT DEFAULT NULL,
-                    `details` TEXT DEFAULT NULL,
-                    `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (`id`),
-                    INDEX (`category_id`),
-                    INDEX (`gender`)
-                ) {$charset_collate};";
+        $table_jobs = $prefix . 'bkja_jobs';
+        $sql2 = "CREATE TABLE IF NOT EXISTS `{$table_jobs}` (
+            `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `category_id` BIGINT UNSIGNED NOT NULL,
+            `title` VARCHAR(255) NOT NULL,
+            `income` VARCHAR(255) DEFAULT NULL,
+            `investment` VARCHAR(255) DEFAULT NULL,
+            `income_num` BIGINT NULL,
+            `investment_num` BIGINT NULL,
+            `city` VARCHAR(255) DEFAULT NULL,
+            `gender` ENUM('male','female','both') DEFAULT 'both',
+            `advantages` TEXT DEFAULT NULL,
+            `disadvantages` TEXT DEFAULT NULL,
+            `details` TEXT DEFAULT NULL,
+            `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            INDEX (`category_id`),
+            INDEX (`gender`)
+        ) {$charset_collate};";
 
                 // --- متدهای جدید هماهنگ با class-bkja-database.php ---
                 // این متدها فقط برای اطلاع توسعه‌دهنده است و در migrations.php اجرا نمی‌شوند، بلکه باید در class-bkja-database.php باشند.
