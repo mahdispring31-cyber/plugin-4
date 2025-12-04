@@ -400,9 +400,7 @@ class BKJA_Database {
             $limit = 500;
         }
 
-        $max_batches = 20;
-
-        do {
+        while ( true ) {
             $rows = $wpdb->get_results(
                 $wpdb->prepare(
                     "SELECT id, income, investment FROM {$table} WHERE income_num IS NULL OR investment_num IS NULL ORDER BY id ASC LIMIT %d",
@@ -427,8 +425,8 @@ class BKJA_Database {
                 $wpdb->update( $table, $data, $where );
             }
 
-            $max_batches--;
-        } while ( $max_batches > 0 );
+            // Continue until there are no more rows to backfill.
+        }
     }
 
     /**
