@@ -50,36 +50,54 @@
 		.bkja-actions .bkja-button + .bkja-button { margin-right:8px; }
 		.bkja-help { font-size:12px; color:#64748b; margin-top:8px; }
 		.bkja-search { margin:10px 0 16px; display:flex; gap:8px; align-items:center; }
-		.bkja-pagination { display:flex; gap:8px; margin-top:12px; align-items:center; }
-		.bkja-pagination a, .bkja-pagination span { padding:6px 10px; border:1px solid #e6eef5; border-radius:6px; text-decoration:none; }
-		.bkja-pagination .current { background:#eef6ff; }
-		.bkja-muted { color:#6b7280; font-size:12px; }
-		.bkja-inline-form { display:inline; }
-		.bkja-danger { color:#b91c1c; }
-		@media (max-width: 782px){
-			.bkja-form-row { flex-direction:column; align-items:stretch; }
-			.bkja-form-row label { width:auto; }
-		}
-	</style>
+                .bkja-pagination { display:flex; gap:8px; margin-top:12px; align-items:center; }
+                .bkja-pagination a, .bkja-pagination span { padding:6px 10px; border:1px solid #e6eef5; border-radius:6px; text-decoration:none; }
+                .bkja-pagination .current { background:#eef6ff; }
+                .bkja-muted { color:#6b7280; font-size:12px; }
+                .bkja-inline-form { display:inline; }
+                .bkja-danger { color:#b91c1c; }
+                @media (max-width: 782px){
+                        .bkja-form-row,
+                        .bkja-job-form .bkja-form-row,
+                        .bkja-search { flex-direction:column; align-items:stretch; width:100%; }
+                        .bkja-form-row label,
+                        .bkja-job-form .bkja-form-row label { width:auto; margin-bottom:4px; }
+                        .bkja-job-form .bkja-form-row input[type="text"],
+                        .bkja-job-form .bkja-form-row input[type="number"],
+                        .bkja-job-form .bkja-form-row select,
+                        .bkja-job-form .bkja-form-row textarea,
+                        .bkja-search input[type="text"],
+                        .bkja-search input[type="number"] { width:100%; max-width:100%; box-sizing:border-box; }
+                        .bkja-table-wrap,
+                        .bkja-jobs-table-wrapper { width:100%; overflow-x:auto; box-sizing:border-box; }
+                }
+        </style>
 
 	<script>
-	document.addEventListener('DOMContentLoaded', function(){
-		const tabs = document.querySelectorAll('.bkja-tab');
-		const panels = document.querySelectorAll('.bkja-panel');
-		function activate(i){
-			tabs.forEach((t,idx)=> t.classList.toggle('active', idx===i));
-			panels.forEach((p,idx)=> p.classList.toggle('active', idx===i));
-		}
-		tabs.forEach((t,idx)=> t.addEventListener('click', ()=> activate(idx)));
-		let active = 0;
-		if(location.hash){
-			const h = location.hash.replace('#','');
-			if(h==='import') active = 1;
-			if(h==='manage') active = 2;
-		}
-		activate(active);
-	});
-	</script>
+        document.addEventListener('DOMContentLoaded', function(){
+                const tabs = document.querySelectorAll('.bkja-tab');
+                const panels = document.querySelectorAll('.bkja-panel');
+                function activate(i){
+                        tabs.forEach((t,idx)=> t.classList.toggle('active', idx===i));
+                        panels.forEach((p,idx)=> p.classList.toggle('active', idx===i));
+                }
+                tabs.forEach((t,idx)=> t.addEventListener('click', ()=> activate(idx)));
+                let active = 0;
+                const params = new URLSearchParams(window.location.search);
+                const tabParam = params.get('tab');
+
+                if (tabParam === 'import') {
+                        active = 1;
+                } else if (tabParam === 'jobs') {
+                        active = 2;
+                } else if (location.hash) {
+                        const h = location.hash.replace('#','');
+                        if(h==='import') active = 1;
+                        if(h==='manage') active = 2;
+                }
+                activate(active);
+        });
+        </script>
 
 	<div class="wrap">
 	<h1><?php esc_html_e('تنظیمات BKJA Assistant','bkja-assistant'); ?></h1>
@@ -200,7 +218,7 @@
 					} else {
 						?>
 						<h3>ویرایش شغل (ID: <?php echo esc_html($job->id); ?>)</h3>
-						<form method="post" action="<?php echo esc_url( admin_url('admin-post.php') ); ?>">
+                                                <form method="post" class="bkja-job-form" action="<?php echo esc_url( admin_url('admin-post.php') ); ?>">
 							<?php wp_nonce_field('bkja_update_job','bkja_update_job_nonce'); ?>
 							<input type="hidden" name="action" value="bkja_update_job" />
 							<input type="hidden" name="id" value="<?php echo esc_attr($job->id); ?>" />
@@ -275,23 +293,24 @@
 	                                                        </div>
 
 							<button class="bkja-button" type="submit">ذخیره تغییرات</button>
-							<a class="bkja-button secondary" href="<?php echo esc_url( admin_url('admin.php?page=bkja-assistant#manage') ); ?>">انصراف</a>
+                                                        <a class="bkja-button secondary" href="<?php echo esc_url( admin_url('admin.php?page=bkja-assistant&tab=jobs#manage') ); ?>">انصراف</a>
 						</form>
 						<hr/>
 						<?php
 					}
 				}
 
-				// Search form
-				?>
-				<form method="get" class="bkja-search" action="<?php echo esc_url( admin_url('admin.php') ); ?>">
-					   <input type="hidden" name="page" value="bkja-assistant" />
-					   <input type="text" name="bkja_q" value="<?php echo esc_attr($bkja_q); ?>" placeholder="جستجو: عنوان یا شهر..." />
-					   <input type="text" name="city_filter" value="<?php echo esc_attr($_GET['city_filter'] ?? ''); ?>" placeholder="شهر" style="width:90px;" />
-					   <input type="number" name="income_min" value="<?php echo esc_attr($_GET['income_min'] ?? ''); ?>" placeholder="حداقل درآمد" style="width:110px;" />
-					   <input type="number" name="income_max" value="<?php echo esc_attr($_GET['income_max'] ?? ''); ?>" placeholder="حداکثر درآمد" style="width:110px;" />
-					   <button class="bkja-button secondary" type="submit">جستجو</button>
-					   <a class="bkja-button secondary" href="<?php echo esc_url( admin_url('admin.php?page=bkja-assistant#manage') ); ?>">ریست</a>
+                                // Search form
+                                ?>
+                                <form method="get" class="bkja-search" action="<?php echo esc_url( admin_url('admin.php') ); ?>">
+                                           <input type="hidden" name="page" value="bkja-assistant" />
+                                           <input type="hidden" name="tab" value="jobs" />
+                                           <input type="text" name="bkja_q" value="<?php echo esc_attr($bkja_q); ?>" placeholder="جستجو: عنوان یا شهر..." />
+                                           <input type="text" name="city_filter" value="<?php echo esc_attr($_GET['city_filter'] ?? ''); ?>" placeholder="شهر" style="width:90px;" />
+                                           <input type="number" name="income_min" value="<?php echo esc_attr($_GET['income_min'] ?? ''); ?>" placeholder="حداقل درآمد" style="width:110px;" />
+                                           <input type="number" name="income_max" value="<?php echo esc_attr($_GET['income_max'] ?? ''); ?>" placeholder="حداکثر درآمد" style="width:110px;" />
+                                           <button class="bkja-button secondary" type="submit">جستجو</button>
+                                           <a class="bkja-button secondary" href="<?php echo esc_url( admin_url('admin.php?page=bkja-assistant&tab=jobs#manage') ); ?>">ریست</a>
 				</form>
 				<?php
 
@@ -329,13 +348,13 @@
 				$jobs = $wpdb->get_results( $wpdb->prepare($sql, $q_args) );
 
 				if ($jobs) {
-					echo '<div class="bkja-muted">تعداد کل: '.esc_html($count).'</div>';
-					echo '<div class="bkja-table-wrap"><table class="bkja-table">
-						<thead>
-	                                                        <tr>
-	                                                                <th>عنوان</th>
-	                                                                <th>شهر</th>
-	                                                                <th>جنسیت</th>
+                                        echo '<div class="bkja-muted">تعداد کل: '.esc_html($count).'</div>';
+                                        echo '<div class="bkja-table-wrap bkja-jobs-table-wrapper"><table class="bkja-table">
+                                                <thead>
+                                                                <tr>
+                                                                        <th>عنوان</th>
+                                                                        <th>شهر</th>
+                                                                        <th>جنسیت</th>
 	                                                                <th>دسته‌بندی</th>
 	                                                                <th>درآمد متنی</th>
 	                                                                <th>درآمد عددی</th>
@@ -350,44 +369,48 @@
 	                                                                <th>تاریخ ایجاد</th>
 	                                                                <th>عملیات</th>
 	                                                        </tr>
-						</thead><tbody>';
+                                                </thead><tbody>';
 
-					foreach ($jobs as $job) {
-						$edit_link = add_query_arg([
-							'page'        => 'bkja-assistant',
-							'bkja_action' => 'edit_job',
-							'id'          => $job->id,
-						], admin_url('admin.php')) . '#manage';
+                                        foreach ($jobs as $job) {
+                                                $edit_link = add_query_arg([
+                                                        'page'        => 'bkja-assistant',
+                                                        'bkja_action' => 'edit_job',
+                                                        'id'          => $job->id,
+                                                ], admin_url('admin.php')) . '#manage';
 
-						$delete_url = wp_nonce_url(
-							add_query_arg([
-								'action' => 'bkja_delete_job',
-								'id'     => $job->id,
-							], admin_url('admin-post.php')),
-							'bkja_delete_job_'.$job->id,
-							'_wpnonce'
-						);
+                                                $delete_url = wp_nonce_url(
+                                                        add_query_arg([
+                                                                'action' => 'bkja_delete_job',
+                                                                'id'     => $job->id,
+                                                        ], admin_url('admin-post.php')),
+                                                        'bkja_delete_job_'.$job->id,
+                                                        '_wpnonce'
+                                                );
 
-						echo '<tr>';
-						echo '<td>'.esc_html($job->title).'</td>';
-						echo '<td>'.esc_html($job->city).'</td>';
-						echo '<td>'.esc_html($job->gender).'</td>';
-						echo '<td>'.esc_html($job->category_id).'</td>';
-	                                                echo '<td>'.esc_html($job->income).'</td>';
-	                                                echo '<td>'.esc_html(isset($job->income_num) ? $job->income_num : '').'</td>';
-	                                                echo '<td>'.esc_html($job->investment).'</td>';
-	                                                echo '<td>'.esc_html(isset($job->investment_num) ? $job->investment_num : '').'</td>';
-	                                                echo '<td>'.esc_html(isset($job->experience_years) ? $job->experience_years : '').'</td>';
-	                                                echo '<td>'.esc_html($job->employment_type).'</td>';
-	                                                echo '<td>'.esc_html(isset($job->hours_per_day) ? $job->hours_per_day : '').'</td>';
-	                                                echo '<td>'.esc_html(isset($job->days_per_week) ? $job->days_per_week : '').'</td>';
-	                                                echo '<td>'.esc_html($job->source).'</td>';
-	                                                echo '<td>'.esc_html(wp_trim_words($job->details, 18, '…')).'</td>';
-	                                                echo '<td>'.esc_html($job->created_at).'</td>';
-						echo '<td>
-							<a href="'.esc_url($edit_link).'" class="bkja-button secondary">ویرایش</a>
-							<a href="'.esc_url($delete_url).'" class="bkja-button secondary bkja-danger" onclick="return confirm(\'حذف این رکورد قطعی است. ادامه می‌دهید؟\');">حذف</a>
-						</td>';
+                                                $gender_label      = bkja_get_gender_label( $job->gender );
+                                                $employment_label  = bkja_get_employment_label( $job->employment_type );
+                                                $created_at_output = bkja_format_job_date( $job->created_at );
+
+                                                echo '<tr>';
+                                                echo '<td>'.esc_html($job->title).'</td>';
+                                                echo '<td>'.esc_html($job->city).'</td>';
+                                                echo '<td>'.esc_html($gender_label).'</td>';
+                                                echo '<td>'.esc_html($job->category_id).'</td>';
+                                                        echo '<td>'.esc_html($job->income).'</td>';
+                                                        echo '<td>'.esc_html(isset($job->income_num) ? $job->income_num : '').'</td>';
+                                                        echo '<td>'.esc_html($job->investment).'</td>';
+                                                        echo '<td>'.esc_html(isset($job->investment_num) ? $job->investment_num : '').'</td>';
+                                                        echo '<td>'.esc_html(isset($job->experience_years) ? $job->experience_years : '').'</td>';
+                                                        echo '<td>'.esc_html($employment_label).'</td>';
+                                                        echo '<td>'.esc_html(isset($job->hours_per_day) ? $job->hours_per_day : '').'</td>';
+                                                        echo '<td>'.esc_html(isset($job->days_per_week) ? $job->days_per_week : '').'</td>';
+                                                        echo '<td>'.esc_html($job->source).'</td>';
+                                                        echo '<td>'.esc_html(wp_trim_words($job->details, 18, '…')).'</td>';
+                                                        echo '<td>'.esc_html($created_at_output).'</td>';
+                                                echo '<td>
+                                                        <a href="'.esc_url($edit_link).'" class="bkja-button secondary">ویرایش</a>
+                                                        <a href="'.esc_url($delete_url).'" class="bkja-button secondary bkja-danger" onclick="return confirm(\'حذف این رکورد قطعی است. ادامه می‌دهید؟\');">حذف</a>
+                                                </td>';
 						echo '</tr>';
 					}
 
@@ -398,11 +421,12 @@
 					if ($total_pages > 1) {
 						echo '<div class="bkja-pagination">';
 						for ($i=1; $i <= $total_pages; $i++) {
-							$link = add_query_arg(array_filter([
-								'page'   => 'bkja-assistant',
-								'bkja_q' => $bkja_q !== '' ? $bkja_q : null,
-								'bkja_p' => $i,
-							]), admin_url('admin.php'));
+                                                        $link = add_query_arg(array_filter([
+                                                                'page'   => 'bkja-assistant',
+                                                                'tab'    => 'jobs',
+                                                                'bkja_q' => $bkja_q !== '' ? $bkja_q : null,
+                                                                'bkja_p' => $i,
+                                                        ]), admin_url('admin.php'));
 							$link .= '#manage';
 							if ($i == $bkja_p) {
 								echo '<span class="current">'.esc_html($i).'</span>';

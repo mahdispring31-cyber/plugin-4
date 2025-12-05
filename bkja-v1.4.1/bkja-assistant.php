@@ -1,6 +1,7 @@
 <?php
 // BKJA enhanced includes
 require_once plugin_dir_path(__FILE__) . 'includes/logging.php';
+require_once plugin_dir_path(__FILE__) . 'includes/helpers.php';
 require_once plugin_dir_path(__FILE__) . 'admin/settings-page.php';
 require_once plugin_dir_path(__FILE__) . 'admin/github-issue-reporter.php';
 

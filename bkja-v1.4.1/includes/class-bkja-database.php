@@ -822,24 +822,27 @@ class BKJA_Database {
         $records = array();
         foreach ( $results as $row ) {
                 $records[] = array(
-                    'id'            => (int)$row->id,
-                    'job_title'     => $row->title,
-                    'income'        => $row->income,
-                    'income_num'    => isset( $row->income_num ) ? (int) $row->income_num : 0,
-                    'investment'    => $row->investment,
-                    'investment_num'=> isset( $row->investment_num ) ? (int) $row->investment_num : 0,
-                    'experience_years' => isset( $row->experience_years ) ? (int) $row->experience_years : null,
-                    'employment_type'  => isset( $row->employment_type ) ? $row->employment_type : null,
-                    'hours_per_day'    => isset( $row->hours_per_day ) ? (int) $row->hours_per_day : null,
-                    'days_per_week'    => isset( $row->days_per_week ) ? (int) $row->days_per_week : null,
-                    'source'           => isset( $row->source ) ? $row->source : null,
-                    'city'          => $row->city,
-                    'gender'        => $row->gender,
-                    'advantages'    => $row->advantages,
-                'disadvantages' => $row->disadvantages,
-                'details'       => $row->details,
-                'created_at'    => $row->created_at,
-            );
+                    'id'                     => (int) $row->id,
+                    'job_title'              => $row->title,
+                    'income'                 => $row->income,
+                    'income_num'             => isset( $row->income_num ) ? (int) $row->income_num : 0,
+                    'investment'             => $row->investment,
+                    'investment_num'         => isset( $row->investment_num ) ? (int) $row->investment_num : 0,
+                    'experience_years'       => isset( $row->experience_years ) ? (int) $row->experience_years : null,
+                    'employment_type'        => isset( $row->employment_type ) ? $row->employment_type : null,
+                    'employment_type_label'  => isset( $row->employment_type ) ? bkja_get_employment_label( $row->employment_type ) : null,
+                    'hours_per_day'          => isset( $row->hours_per_day ) ? (int) $row->hours_per_day : null,
+                    'days_per_week'          => isset( $row->days_per_week ) ? (int) $row->days_per_week : null,
+                    'source'                 => isset( $row->source ) ? $row->source : null,
+                    'city'                   => $row->city,
+                    'gender'                 => $row->gender,
+                    'gender_label'           => bkja_get_gender_label( $row->gender ),
+                    'advantages'             => $row->advantages,
+                    'disadvantages'          => $row->disadvantages,
+                    'details'                => $row->details,
+                    'created_at'             => $row->created_at,
+                    'created_at_display'     => bkja_format_job_date( $row->created_at ),
+                );
         }
         return $records;
     }

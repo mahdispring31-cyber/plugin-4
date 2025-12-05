@@ -1885,15 +1885,19 @@
                 if(records && records.length){
                     records.forEach(function(r){
                         var recHtml = '<div class="bkja-job-record-card">';
+                        var genderLabel = r.gender_label || r.gender;
+                        var employmentLabel = r.employment_type_label || r.employment_type;
+                        var createdAtLabel = r.created_at_display || r.created_at;
                         recHtml += '<h5>🧑‍💼 تجربه کاربر</h5>';
                         if (r.income) recHtml += '<p>💵 درآمد: ' + esc(r.income) + '</p>';
                         if (r.investment) recHtml += '<p>💰 سرمایه: ' + esc(r.investment) + '</p>';
                         if (r.city) recHtml += '<p>📍 شهر: ' + esc(r.city) + '</p>';
-                        if (r.gender) recHtml += '<p>👤 جنسیت: ' + esc(r.gender) + '</p>';
+                        if (employmentLabel) recHtml += '<p>💼 نوع اشتغال: ' + esc(employmentLabel) + '</p>';
+                        if (genderLabel) recHtml += '<p>👤 جنسیت: ' + esc(genderLabel) + '</p>';
                         if (r.advantages) recHtml += '<p>⭐ مزایا: ' + esc(r.advantages) + '</p>';
                         if (r.disadvantages) recHtml += '<p>⚠️ معایب: ' + esc(r.disadvantages) + '</p>';
                         if (r.details) recHtml += '<p>📝 توضیحات: ' + esc(r.details) + '</p>';
-                        if (r.created_at) recHtml += '<p class="bkja-job-date">تاریخ ثبت: ' + esc(r.created_at) + '</p>';
+                        if (createdAtLabel) recHtml += '<p class="bkja-job-date">تاریخ ثبت: ' + esc(createdAtLabel) + '</p>';
                         recHtml += '</div>';
                         pushBotHtml(recHtml);
                     });
@@ -1938,15 +1942,19 @@
                 if (res && res.success && res.data && res.data.records && res.data.records.length) {
                     res.data.records.forEach(function(r) {
                         var html = '<div class="bkja-job-record-card">';
+                        var genderLabel = r.gender_label || r.gender;
+                        var employmentLabel = r.employment_type_label || r.employment_type;
+                        var createdAtLabel = r.created_at_display || r.created_at;
                         html += '<h5>🧑‍💼 تجربه کاربر</h5>';
                         if (r.income) html += '<p>💵 درآمد: ' + esc(r.income) + '</p>';
                         if (r.investment) html += '<p>💰 سرمایه: ' + esc(r.investment) + '</p>';
                         if (r.city) html += '<p>📍 شهر: ' + esc(r.city) + '</p>';
-                        if (r.gender) html += '<p>👤 جنسیت: ' + esc(r.gender) + '</p>';
+                        if (employmentLabel) html += '<p>💼 نوع اشتغال: ' + esc(employmentLabel) + '</p>';
+                        if (genderLabel) html += '<p>👤 جنسیت: ' + esc(genderLabel) + '</p>';
                         if (r.advantages) html += '<p>⭐ مزایا: ' + esc(r.advantages) + '</p>';
                         if (r.disadvantages) html += '<p>⚠️ معایب: ' + esc(r.disadvantages) + '</p>';
                         if (r.details) html += '<p>📝 توضیحات: ' + esc(r.details) + '</p>';
-                        if (r.created_at) html += '<p class="bkja-job-date">تاریخ ثبت: ' + esc(r.created_at) + '</p>';
+                        if (createdAtLabel) html += '<p class="bkja-job-date">تاریخ ثبت: ' + esc(createdAtLabel) + '</p>';
                         html += '</div>';
                         pushBotHtml(html);
                     });
