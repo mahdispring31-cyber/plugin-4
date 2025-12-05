@@ -1869,6 +1869,22 @@
                         html += '<p>💰 سرمایه لازم: ' + investText + '</p>';
                     }
 
+                    if (s.avg_experience_years) {
+                        html += '<p>⏳ میانگین سابقه: حدود ' + esc(s.avg_experience_years) + ' سال</p>';
+                    }
+                    if (s.avg_hours_per_day) {
+                        html += '<p>⏱ میانگین ساعت کار: حدود ' + esc(s.avg_hours_per_day) + ' ساعت در روز</p>';
+                    }
+                    if (s.avg_days_per_week) {
+                        html += '<p>📅 میانگین روز کاری: حدود ' + esc(s.avg_days_per_week) + ' روز در هفته</p>';
+                    }
+                    if (s.dominant_employment_label) {
+                        html += '<p>🧩 نوع اشتغال رایج: ' + esc(s.dominant_employment_label) + '</p>';
+                    }
+                    if (s.gender_summary) {
+                        html += '<p>👤 ' + esc(s.gender_summary) + '</p>';
+                    }
+
                     if (s.cities && s.cities.length){
                         html += '<p>📍 شهرهای پرتکرار: ' + esc(s.cities.join('، ')) + '</p>';
                     }

@@ -725,7 +725,10 @@ class BKJA_Database {
                     AVG(CASE WHEN investment_num > 0 THEN investment_num END) AS avg_investment,
                     MIN(CASE WHEN investment_num > 0 THEN investment_num END) AS min_investment,
                     MAX(CASE WHEN investment_num > 0 THEN investment_num END) AS max_investment,
-                    SUM(CASE WHEN investment_num > 0 THEN 1 ELSE 0 END) AS investment_count
+                    SUM(CASE WHEN investment_num > 0 THEN 1 ELSE 0 END) AS investment_count,
+                    AVG(CASE WHEN experience_years > 0 THEN experience_years END) AS avg_experience_years,
+                    AVG(CASE WHEN hours_per_day > 0 THEN hours_per_day END) AS avg_hours_per_day,
+                    AVG(CASE WHEN days_per_week > 0 THEN days_per_week END) AS avg_days_per_week
                  FROM {$table}
                  WHERE {$where_clause}",
                 $job_title
@@ -781,6 +784,62 @@ class BKJA_Database {
         $advantages    = $split_terms( $adv_rows );
         $disadvantages = $split_terms( $dis_rows );
 
+        $dominant_employment_type = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT employment_type
+                 FROM {$table}
+                 WHERE {$where_clause} AND employment_type IS NOT NULL AND employment_type <> ''
+                 GROUP BY employment_type
+                 ORDER BY COUNT(*) DESC
+                 LIMIT 1",
+                $job_title
+            )
+        );
+
+        $gender_rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT gender, COUNT(*) AS c
+                 FROM {$table}
+                 WHERE {$where_clause}
+                 GROUP BY gender",
+                $job_title
+            )
+        );
+
+        $gender_summary = null;
+        if ( $gender_rows ) {
+            $male   = 0;
+            $female = 0;
+            $other  = 0;
+
+            foreach ( $gender_rows as $g_row ) {
+                $gender = $g_row->gender;
+                $count  = isset( $g_row->c ) ? (int) $g_row->c : 0;
+
+                if ( 'male' === $gender ) {
+                    $male += $count;
+                } elseif ( 'female' === $gender ) {
+                    $female += $count;
+                } elseif ( $gender ) {
+                    $other += $count;
+                }
+            }
+
+            $total = $male + $female + $other;
+            if ( $total > 0 ) {
+                $male_ratio   = $male / $total;
+                $female_ratio = $female / $total;
+
+                if ( $male_ratio >= 0.6 ) {
+                    $gender_summary = 'تجربه‌ها بیشتر از سمت مردان ثبت شده';
+                } elseif ( $female_ratio >= 0.6 ) {
+                    $gender_summary = 'تجربه‌ها بیشتر از سمت زنان ثبت شده';
+                } else {
+                    $gender_summary = 'تجربه‌ها از هر دو جنس ثبت شده است';
+                }
+            }
+        }
+
         return array(
             'job_title'         => $job_title,
             'avg_income'        => $row->avg_income ? round( (float) $row->avg_income, 1 ) : null,
@@ -791,12 +850,18 @@ class BKJA_Database {
             'min_investment'    => $row->min_investment ? (float) $row->min_investment : null,
             'max_investment'    => $row->max_investment ? (float) $row->max_investment : null,
             'investment_count'  => (int) $row->investment_count,
+            'avg_experience_years' => $row->avg_experience_years ? round( (float) $row->avg_experience_years, 1 ) : null,
+            'avg_hours_per_day'    => $row->avg_hours_per_day ? round( (float) $row->avg_hours_per_day, 1 ) : null,
+            'avg_days_per_week'    => $row->avg_days_per_week ? round( (float) $row->avg_days_per_week, 1 ) : null,
             'count_reports'     => (int) $row->total_reports,
             'latest_at'         => $row->latest_at,
             'cities'            => $cities,
             'genders'           => null,
             'advantages'        => $advantages,
             'disadvantages'     => $disadvantages,
+            'dominant_employment_type'  => $dominant_employment_type,
+            'dominant_employment_label' => $dominant_employment_type ? bkja_get_employment_label( $dominant_employment_type ) : null,
+            'gender_summary'    => $gender_summary,
             'window_months'     => $window_months,
         );
     }
