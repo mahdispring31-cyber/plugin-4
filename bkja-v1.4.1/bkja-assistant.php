@@ -46,33 +46,33 @@ if ( ! function_exists( 'bkja_cleanup_legacy_free_limit_option' ) ) {
 }
 // Handle CSV import for jobs
 add_action('admin_post_bkja_import_jobs', function() {
-	if (!current_user_can('manage_options')) wp_die('دسترسی غیرمجاز');
-	check_admin_referer('bkja_import_jobs');
-	if (!isset($_FILES['bkja_jobs_csv']) || $_FILES['bkja_jobs_csv']['error'] !== UPLOAD_ERR_OK) {
-		wp_redirect(add_query_arg('bkja_import_success', '0', admin_url('admin.php?page=bkja-assistant')));
-		exit;
-	}
-	$file = $_FILES['bkja_jobs_csv']['tmp_name'];
-	$handle = fopen($file, 'r');
-	if ($handle) {
-		$header = fgetcsv($handle);
-		while (($row = fgetcsv($handle)) !== false) {
-			$data = array_combine($header, $row);
-			if ($data && !empty($data['title'])) {
-                                $fields = ['category_id','title','income','income_num','investment','investment_num','experience_years','employment_type','hours_per_day','days_per_week','source','city','gender','advantages','disadvantages','details'];
-				$job = [];
-				foreach ($fields as $f) {
-					$job[$f] = isset($data[$f]) ? $data[$f] : '';
-				}
-				if (class_exists('BKJA_Database')) {
-					BKJA_Database::insert_job($job);
-				}
-			}
-		}
-		fclose($handle);
-	}
-	wp_redirect(add_query_arg('bkja_import_success', '1', admin_url('admin.php?page=bkja-assistant')));
-	exit;
+if (!current_user_can('manage_options')) wp_die('دسترسی غیرمجاز');
+check_admin_referer('bkja_import_jobs', 'bkja_import_jobs_nonce');
+if (!isset($_FILES['bkja_jobs_csv']) || $_FILES['bkja_jobs_csv']['error'] !== UPLOAD_ERR_OK) {
+wp_redirect(add_query_arg('bkja_import_success', '0', admin_url('admin.php?page=bkja-assistant')));
+exit;
+}
+$file = $_FILES['bkja_jobs_csv']['tmp_name'];
+$handle = fopen($file, 'r');
+if ($handle) {
+$header = fgetcsv($handle);
+while (($row = fgetcsv($handle)) !== false) {
+$data = array_combine($header, $row);
+if ($data && !empty($data['title'])) {
+$fields = ['category_id','title','income','income_num','investment','investment_num','experience_years','employment_type','hours_per_day','days_per_week','source','city','gender','advantages','disadvantages','details'];
+$job = [];
+foreach ($fields as $f) {
+$job[$f] = isset($data[$f]) ? $data[$f] : '';
+}
+if (class_exists('BKJA_Database')) {
+BKJA_Database::insert_job($job);
+}
+}
+}
+fclose($handle);
+}
+wp_redirect(add_query_arg('bkja_import_success', '1', admin_url('admin.php?page=bkja-assistant')));
+exit;
 });
 
 // API for jobs - get job records (with advanced filters)
