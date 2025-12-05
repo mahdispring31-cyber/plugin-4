@@ -302,7 +302,7 @@
 
                                 // Search form
                                 ?>
-                                <form method="get" class="bkja-search" action="<?php echo esc_url( admin_url('admin.php') ); ?>">
+                                <form method="get" class="bkja-search" action="<?php echo esc_url( admin_url('admin.php?page=bkja-assistant#manage') ); ?>">
                                            <input type="hidden" name="page" value="bkja-assistant" />
                                            <input type="hidden" name="tab" value="jobs" />
                                            <input type="text" name="bkja_q" value="<?php echo esc_attr($bkja_q); ?>" placeholder="جستجو: عنوان یا شهر..." />
@@ -387,9 +387,9 @@
                                                         '_wpnonce'
                                                 );
 
-                                                $gender_label      = bkja_get_gender_label( $job->gender );
-                                                $employment_label  = bkja_get_employment_label( $job->employment_type );
-                                                $created_at_output = bkja_format_job_date( $job->created_at );
+                                                $gender_label      = function_exists( 'bkja_get_gender_label' ) ? bkja_get_gender_label( $job->gender ) : $job->gender;
+                                                $employment_label  = function_exists( 'bkja_get_employment_label' ) ? bkja_get_employment_label( $job->employment_type ) : $job->employment_type;
+                                                $created_at_output = function_exists( 'bkja_format_created_at' ) ? bkja_format_created_at( $job->created_at ) : $job->created_at;
 
                                                 echo '<tr>';
                                                 echo '<td>'.esc_html($job->title).'</td>';

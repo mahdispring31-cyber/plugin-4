@@ -40,6 +40,23 @@ if ( ! function_exists( 'bkja_get_employment_label' ) ) {
     }
 }
 
+if ( ! function_exists( 'bkja_format_created_at' ) ) {
+    function bkja_format_created_at( $mysql_datetime ) {
+        if ( empty( $mysql_datetime ) ) {
+            return '';
+        }
+
+        $ts = strtotime( $mysql_datetime );
+
+        if ( ! $ts ) {
+            return $mysql_datetime;
+        }
+
+        // افزونه پارسی‌دیت روی سایت فعال است، بنابراین date_i18n خروجی شمسی می‌دهد
+        return date_i18n( 'Y/m/d', $ts );
+    }
+}
+
 if ( ! function_exists( 'bkja_format_job_date' ) ) {
     function bkja_format_job_date( $datetime, $format = 'Y/m/d' ) {
         if ( empty( $datetime ) ) {
