@@ -65,6 +65,13 @@ if ( ! function_exists( 'bkja_parse_numeric_amount' ) ) {
  */
 class BKJA_Database {
 
+    /**
+     * Stopwords for noisy/irrelevant job titles (Persian common fillers or locations).
+     *
+     * @var array
+     */
+    protected static $job_title_stopwords = array( 'هر', 'ولی', 'تهران', 'درآمد', 'درامد', 'خالص', 'البته' );
+
     // ایجاد جدول‌ها (محافظت‌شده، dbDelta idempotent)
     public static function activate() {
         global $wpdb;
@@ -417,6 +424,8 @@ class BKJA_Database {
         if ( $needs_migration || $null_count > 0 ) {
             self::backfill_job_titles();
         }
+
+        self::backfill_job_title_groups();
     }
 
     /**
@@ -468,11 +477,18 @@ class BKJA_Database {
             slug VARCHAR(191) NOT NULL,
             label VARCHAR(191) NOT NULL,
             description TEXT NULL,
+            base_label VARCHAR(191) NULL,
+            base_slug VARCHAR(191) NULL,
+            group_key VARCHAR(191) NULL,
+            is_primary TINYINT(1) NOT NULL DEFAULT 1,
+            is_visible TINYINT(1) NOT NULL DEFAULT 1,
             created_at DATETIME NOT NULL,
             updated_at DATETIME NOT NULL,
             PRIMARY KEY (id),
             UNIQUE KEY cat_slug_unique (category_id, slug),
-            KEY cat_idx (category_id)
+            KEY cat_idx (category_id),
+            KEY group_idx (group_key),
+            KEY visible_idx (is_visible)
         ) {$charset_collate};";
 
         dbDelta( $sql_titles );
@@ -494,6 +510,33 @@ class BKJA_Database {
         $add_column( 'job_title_id', 'BIGINT UNSIGNED NULL', 'category_id' );
         $add_column( 'variant_title', 'VARCHAR(255) NULL', 'job_title_id' );
 
+        $title_columns = $wpdb->get_col( "DESC {$table_job_titles}", 0 );
+        $add_title_column = function( $column, $definition, $after = null ) use ( $wpdb, $table_job_titles, $title_columns ) {
+            if ( in_array( $column, $title_columns, true ) ) {
+                return;
+            }
+
+            $after_clause = $after ? " AFTER {$after}" : '';
+            $wpdb->query( "ALTER TABLE {$table_job_titles} ADD COLUMN {$column} {$definition}{$after_clause}" );
+        };
+
+        $add_title_column( 'base_label', 'VARCHAR(191) NULL', 'description' );
+        $add_title_column( 'base_slug', 'VARCHAR(191) NULL', 'base_label' );
+        $add_title_column( 'group_key', 'VARCHAR(191) NULL', 'base_slug' );
+        $add_title_column( 'is_primary', 'TINYINT(1) NOT NULL DEFAULT 1', 'group_key' );
+        $add_title_column( 'is_visible', 'TINYINT(1) NOT NULL DEFAULT 1', 'is_primary' );
+
+        $title_indexes     = $wpdb->get_results( "SHOW INDEX FROM {$table_job_titles}" );
+        $title_index_names = wp_list_pluck( $title_indexes, 'Key_name' );
+
+        if ( ! in_array( 'group_idx', $title_index_names, true ) ) {
+            $wpdb->query( "ALTER TABLE {$table_job_titles} ADD INDEX group_idx (group_key)" );
+        }
+
+        if ( ! in_array( 'visible_idx', $title_index_names, true ) ) {
+            $wpdb->query( "ALTER TABLE {$table_job_titles} ADD INDEX visible_idx (is_visible)" );
+        }
+
         $indexes = $wpdb->get_results( "SHOW INDEX FROM {$table_jobs}" );
         $index_names = wp_list_pluck( $indexes, 'Key_name' );
 
@@ -504,6 +547,56 @@ class BKJA_Database {
         if ( ! in_array( 'category_id', $index_names, true ) ) {
             $wpdb->query( "ALTER TABLE {$table_jobs} ADD INDEX category_id (category_id)" );
         }
+    }
+
+    /**
+     * Compute canonical grouping fields for a job title label.
+     */
+    protected static function compute_grouping_from_label( $category_id, $label ) {
+        $normalized = is_string( $label ) ? trim( preg_replace( '/\s+/u', ' ', $label ) ) : '';
+
+        if ( '' === $normalized ) {
+            $normalized = (string) $label;
+        }
+
+        $tokens = preg_split( '/\s+/u', $normalized );
+        $tokens = array_values( array_filter( $tokens, 'strlen' ) );
+
+        $base_label = $normalized;
+
+        if ( ! empty( $tokens ) ) {
+            $prefixes = array( 'نیروی', 'افسر' );
+
+            $starts_with_prefix = false;
+            $label_prefix       = '';
+            if ( function_exists( 'mb_substr' ) ) {
+                $label_prefix = mb_substr( $normalized, 0, 5, 'UTF-8' );
+            } else {
+                $label_prefix = substr( $normalized, 0, 10 );
+            }
+
+            foreach ( $prefixes as $prefix ) {
+                if ( 0 === strpos( $label_prefix, $prefix ) ) {
+                    $starts_with_prefix = true;
+                    break;
+                }
+            }
+
+            if ( $starts_with_prefix && count( $tokens ) >= 2 ) {
+                $base_label = implode( ' ', array_slice( $tokens, 0, 2 ) );
+            } else {
+                $base_label = $tokens[0];
+            }
+        }
+
+        $base_slug = sanitize_title( $base_label );
+        $group_key = absint( $category_id ) . ':' . $base_slug;
+
+        return array(
+            'base_label' => $base_label,
+            'base_slug'  => $base_slug,
+            'group_key'  => $group_key,
+        );
     }
 
     /**
@@ -584,7 +677,8 @@ class BKJA_Database {
             return (int) $existing_id;
         }
 
-        $now = current_time( 'mysql' );
+        $now       = current_time( 'mysql' );
+        $grouping  = self::compute_grouping_from_label( $category_id, $label );
         $wpdb->insert(
             $table,
             array(
@@ -592,6 +686,11 @@ class BKJA_Database {
                 'slug'        => $slug,
                 'label'       => $label,
                 'description' => null,
+                'base_label'  => $grouping['base_label'],
+                'base_slug'   => $grouping['base_slug'],
+                'group_key'   => $grouping['group_key'],
+                'is_primary'  => 1,
+                'is_visible'  => 1,
                 'created_at'  => $now,
                 'updated_at'  => $now,
             )
@@ -621,6 +720,7 @@ class BKJA_Database {
         );
 
         if ( empty( $pairs ) ) {
+            self::backfill_job_title_groups();
             return;
         }
 
@@ -657,6 +757,240 @@ class BKJA_Database {
                 );
             }
         }
+
+        self::backfill_job_title_groups();
+    }
+
+    /**
+     * Populate grouping/visibility metadata for job titles (idempotent).
+     */
+    public static function backfill_job_title_groups() {
+        global $wpdb;
+
+        self::ensure_job_title_schema();
+
+        $table_jobs       = $wpdb->prefix . 'bkja_jobs';
+        $table_job_titles = $wpdb->prefix . 'bkja_job_titles';
+
+        if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_job_titles ) ) !== $table_job_titles ) {
+            return;
+        }
+
+        // Base grouping fill
+        $need_grouping_rows = $wpdb->get_results(
+            "SELECT id, category_id, label FROM {$table_job_titles} WHERE base_label IS NULL OR base_slug IS NULL OR group_key IS NULL"
+        );
+
+        foreach ( $need_grouping_rows as $row ) {
+            $grouping = self::compute_grouping_from_label( $row->category_id, $row->label );
+
+            $wpdb->update(
+                $table_job_titles,
+                array(
+                    'base_label' => $grouping['base_label'],
+                    'base_slug'  => $grouping['base_slug'],
+                    'group_key'  => $grouping['group_key'],
+                    'is_primary' => 1,
+                    'is_visible' => 1,
+                ),
+                array( 'id' => (int) $row->id )
+            );
+        }
+
+        // Jobs count map
+        $counts = array();
+        if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_jobs ) ) === $table_jobs ) {
+            $count_rows = $wpdb->get_results( "SELECT job_title_id, COUNT(*) AS c FROM {$table_jobs} GROUP BY job_title_id" );
+            foreach ( $count_rows as $c_row ) {
+                $counts[ (int) $c_row->job_title_id ] = (int) $c_row->c;
+            }
+        }
+
+        // Hide obvious junk titles
+        $all_titles = $wpdb->get_results( "SELECT id, label, base_label, is_visible FROM {$table_job_titles}" );
+        foreach ( $all_titles as $title_row ) {
+            $check_label = $title_row->base_label ? $title_row->base_label : $title_row->label;
+            $check_label = trim( preg_replace( '/\s+/u', ' ', $check_label ) );
+
+            $jobs_count = isset( $counts[ (int) $title_row->id ] ) ? (int) $counts[ (int) $title_row->id ] : 0;
+
+            $starts_with_digit = preg_match( '/^[0-9۰-۹]/u', $check_label );
+            $length            = function_exists( 'mb_strlen' ) ? mb_strlen( $check_label, 'UTF-8' ) : strlen( $check_label );
+            $is_short          = $length > 0 && $length <= 3;
+
+            $lower_label = function_exists( 'mb_strtolower' ) ? mb_strtolower( $check_label, 'UTF-8' ) : strtolower( $check_label );
+            $is_stopword = in_array( $lower_label, self::$job_title_stopwords, true );
+
+            if ( $starts_with_digit || $is_short || ( $is_stopword && $jobs_count <= 2 ) ) {
+                $wpdb->update(
+                    $table_job_titles,
+                    array(
+                        'is_visible' => 0,
+                        'is_primary' => 0,
+                    ),
+                    array( 'id' => (int) $title_row->id )
+                );
+            }
+        }
+
+        // Ensure one primary per group
+        $group_rows = $wpdb->get_results( "SELECT id, group_key, label, base_label, is_visible FROM {$table_job_titles} WHERE group_key IS NOT NULL" );
+        $groups     = array();
+
+        foreach ( $group_rows as $gr ) {
+            $groups[ $gr->group_key ][] = $gr;
+        }
+
+        foreach ( $groups as $group_key => $rows ) {
+            $candidate_rows = array_values( array_filter( $rows, function ( $r ) {
+                return (int) $r->is_visible === 1;
+            } ) );
+
+            if ( empty( $candidate_rows ) ) {
+                $candidate_rows = $rows;
+            }
+
+            $best_row = null;
+            foreach ( $candidate_rows as $row ) {
+                $row_count = isset( $counts[ (int) $row->id ] ) ? (int) $counts[ (int) $row->id ] : 0;
+                $label     = $row->base_label ? $row->base_label : $row->label;
+                $len       = function_exists( 'mb_strlen' ) ? mb_strlen( $label, 'UTF-8' ) : strlen( $label );
+
+                if ( ! $best_row ) {
+                    $best_row = array( 'row' => $row, 'count' => $row_count, 'len' => $len );
+                    continue;
+                }
+
+                if ( $row_count > $best_row['count'] ) {
+                    $best_row = array( 'row' => $row, 'count' => $row_count, 'len' => $len );
+                    continue;
+                }
+
+                if ( $row_count === $best_row['count'] && $len < $best_row['len'] ) {
+                    $best_row = array( 'row' => $row, 'count' => $row_count, 'len' => $len );
+                }
+            }
+
+            if ( ! $best_row || empty( $best_row['row']->id ) ) {
+                continue;
+            }
+
+            $best_id = (int) $best_row['row']->id;
+
+            foreach ( $rows as $row ) {
+                $is_primary = ( (int) $row->id === $best_id ) ? 1 : 0;
+                $wpdb->update(
+                    $table_job_titles,
+                    array( 'is_primary' => $is_primary ),
+                    array( 'id' => (int) $row->id )
+                );
+            }
+        }
+    }
+
+    /**
+     * Return all job_title IDs that share a group key.
+     */
+    protected static function get_job_title_ids_for_group( $group_key ) {
+        global $wpdb;
+
+        $group_key = is_string( $group_key ) ? trim( $group_key ) : '';
+        if ( '' === $group_key ) {
+            return array();
+        }
+
+        $table_job_titles = $wpdb->prefix . 'bkja_job_titles';
+        $ids              = $wpdb->get_col( $wpdb->prepare( "SELECT id FROM {$table_job_titles} WHERE group_key = %s", $group_key ) );
+
+        return array_map( 'intval', (array) $ids );
+    }
+
+    /**
+     * Resolve a job title/group context from input (id, label, slug or group_key array/object).
+     */
+    protected static function resolve_job_group_context( $job_title ) {
+        global $wpdb;
+
+        self::ensure_job_title_schema();
+
+        $table_job_titles = $wpdb->prefix . 'bkja_job_titles';
+
+        $context = array(
+            'job_title_ids' => array(),
+            'group_key'     => null,
+            'label'         => '',
+            'slug'          => '',
+        );
+
+        $incoming_group_key = null;
+        if ( is_array( $job_title ) && isset( $job_title['group_key'] ) ) {
+            $incoming_group_key = sanitize_text_field( $job_title['group_key'] );
+        } elseif ( is_object( $job_title ) && isset( $job_title->group_key ) ) {
+            $incoming_group_key = sanitize_text_field( $job_title->group_key );
+        }
+
+        if ( $incoming_group_key ) {
+            $ids = self::get_job_title_ids_for_group( $incoming_group_key );
+            if ( $ids ) {
+                $primary = $wpdb->get_row(
+                    $wpdb->prepare(
+                        "SELECT id, COALESCE(base_label, label) AS label, COALESCE(base_slug, slug) AS slug FROM {$table_job_titles} WHERE group_key = %s ORDER BY is_primary DESC, id ASC LIMIT 1",
+                        $incoming_group_key
+                    )
+                );
+
+                $context['job_title_ids'] = $ids;
+                $context['group_key']     = $incoming_group_key;
+                $context['label']         = $primary ? $primary->label : '';
+                $context['slug']          = $primary ? $primary->slug : '';
+
+                return $context;
+            }
+        }
+
+        $job_title_id = self::resolve_job_title_id( $job_title );
+        if ( $job_title_id ) {
+            $row = $wpdb->get_row( $wpdb->prepare( "SELECT id, group_key, COALESCE(base_label, label) AS label, COALESCE(base_slug, slug) AS slug FROM {$table_job_titles} WHERE id = %d", $job_title_id ) );
+            if ( $row ) {
+                $group_key = $row->group_key;
+                if ( $group_key ) {
+                    $ids = self::get_job_title_ids_for_group( $group_key );
+                } else {
+                    $ids = array( (int) $row->id );
+                }
+
+                $context['job_title_ids'] = $ids;
+                $context['group_key']     = $group_key ? $group_key : null;
+                $context['label']         = $row->label;
+                $context['slug']          = $row->slug;
+
+                return $context;
+            }
+        }
+
+        if ( is_string( $job_title ) && '' !== trim( $job_title ) ) {
+            $candidate = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT id, group_key, COALESCE(base_label, label) AS label, COALESCE(base_slug, slug) AS slug FROM {$table_job_titles} WHERE base_label = %s OR base_slug = %s OR label = %s OR slug = %s ORDER BY is_primary DESC, id ASC LIMIT 1",
+                    $job_title,
+                    sanitize_title( $job_title ),
+                    $job_title,
+                    sanitize_title( $job_title )
+                )
+            );
+
+            if ( $candidate ) {
+                $group_key = $candidate->group_key;
+                $ids       = $group_key ? self::get_job_title_ids_for_group( $group_key ) : array( (int) $candidate->id );
+
+                $context['job_title_ids'] = $ids;
+                $context['group_key']     = $group_key ? $group_key : null;
+                $context['label']         = $candidate->label;
+                $context['slug']          = $candidate->slug;
+            }
+        }
+
+        return $context;
     }
 
     /**
@@ -982,28 +1316,33 @@ class BKJA_Database {
 
         $window_months = 24;
 
-        $job_title_id = self::resolve_job_title_id( $job_title );
-        $job_label    = '';
-        $job_slug     = '';
+        $context      = self::resolve_job_group_context( $job_title );
+        $job_title_id = ! empty( $context['job_title_ids'] ) ? (int) $context['job_title_ids'][0] : null;
+        $job_label    = isset( $context['label'] ) ? $context['label'] : '';
+        $job_slug     = isset( $context['slug'] ) ? $context['slug'] : '';
 
-        if ( $job_title_id ) {
-            $title_row = $wpdb->get_row( $wpdb->prepare( "SELECT label, slug FROM {$table_titles} WHERE id = %d", $job_title_id ) );
-            if ( $title_row ) {
-                $job_label = $title_row->label;
-                $job_slug  = $title_row->slug;
-            }
+        if ( empty( $context['job_title_ids'] ) && ! is_string( $job_title ) ) {
+            $job_title = is_array( $job_title ) && isset( $job_title['label'] ) ? $job_title['label'] : '';
         }
 
-        if ( $job_title_id ) {
-            $where_clause = "job_title_id = %d AND created_at >= DATE_SUB(NOW(), INTERVAL {$window_months} MONTH)";
-            $where_param  = $job_title_id;
+        if ( ! empty( $context['job_title_ids'] ) ) {
+            $placeholders = implode( ',', array_fill( 0, count( $context['job_title_ids'] ), '%d' ) );
+            $where_clause = "job_title_id IN ({$placeholders}) AND created_at >= DATE_SUB(NOW(), INTERVAL {$window_months} MONTH)";
+            $where_params = $context['job_title_ids'];
         } else {
             $where_clause = "title = %s AND created_at >= DATE_SUB(NOW(), INTERVAL {$window_months} MONTH)";
-            $where_param  = $job_title;
+            $where_params = array( $job_title );
         }
 
+        $prepare_with_params = function( $sql, $extra_params = array() ) use ( $wpdb, $where_params ) {
+            $params = array_merge( $where_params, (array) $extra_params );
+            array_unshift( $params, $sql );
+
+            return call_user_func_array( array( $wpdb, 'prepare' ), $params );
+        };
+
         $row = $wpdb->get_row(
-            $wpdb->prepare(
+            $prepare_with_params(
                 "SELECT
                     COUNT(*) AS total_reports,
                     MAX(created_at) AS latest_at,
@@ -1019,30 +1358,26 @@ class BKJA_Database {
                     AVG(CASE WHEN hours_per_day > 0 THEN hours_per_day END) AS avg_hours_per_day,
                     AVG(CASE WHEN days_per_week > 0 THEN days_per_week END) AS avg_days_per_week
                  FROM {$table}
-                 WHERE {$where_clause}",
-                $where_param
+                 WHERE {$where_clause}"
             )
         );
 
         if ( ! $row ) return null;
 
         $cities = $wpdb->get_col(
-            $wpdb->prepare(
-                "SELECT city FROM {$table} WHERE {$where_clause} AND city <> '' GROUP BY city ORDER BY COUNT(*) DESC, city ASC LIMIT 5",
-                $where_param
+            $prepare_with_params(
+                "SELECT city FROM {$table} WHERE {$where_clause} AND city <> '' GROUP BY city ORDER BY COUNT(*) DESC, city ASC LIMIT 5"
             )
         );
 
         $adv_rows = $wpdb->get_col(
-            $wpdb->prepare(
-                "SELECT advantages FROM {$table} WHERE {$where_clause} AND advantages IS NOT NULL AND advantages <> '' ORDER BY created_at DESC LIMIT 50",
-                $where_param
+            $prepare_with_params(
+                "SELECT advantages FROM {$table} WHERE {$where_clause} AND advantages IS NOT NULL AND advantages <> '' ORDER BY created_at DESC LIMIT 50"
             )
         );
         $dis_rows = $wpdb->get_col(
-            $wpdb->prepare(
-                "SELECT disadvantages FROM {$table} WHERE {$where_clause} AND disadvantages IS NOT NULL AND disadvantages <> '' ORDER BY created_at DESC LIMIT 50",
-                $where_param
+            $prepare_with_params(
+                "SELECT disadvantages FROM {$table} WHERE {$where_clause} AND disadvantages IS NOT NULL AND disadvantages <> '' ORDER BY created_at DESC LIMIT 50"
             )
         );
 
@@ -1074,24 +1409,22 @@ class BKJA_Database {
         $disadvantages = $split_terms( $dis_rows );
 
         $dominant_employment_type = $wpdb->get_var(
-            $wpdb->prepare(
+            $prepare_with_params(
                 "SELECT employment_type
                  FROM {$table}
                  WHERE {$where_clause} AND employment_type IS NOT NULL AND employment_type <> ''
                  GROUP BY employment_type
                  ORDER BY COUNT(*) DESC
-                 LIMIT 1",
-                $where_param
+                 LIMIT 1"
             )
         );
 
         $gender_rows = $wpdb->get_results(
-            $wpdb->prepare(
+            $prepare_with_params(
                 "SELECT gender, COUNT(*) AS c
                  FROM {$table}
                  WHERE {$where_clause}
-                 GROUP BY gender",
-                $where_param
+                 GROUP BY gender"
             )
         );
 
@@ -1168,25 +1501,37 @@ class BKJA_Database {
 
         self::ensure_job_title_schema();
 
-        $job_title_id = self::resolve_job_title_id( $job_title );
+        $context = self::resolve_job_group_context( $job_title );
 
-        if ( $job_title_id ) {
-            $where_clause = 'j.job_title_id = %d';
-            $where_param  = $job_title_id;
-        } else {
-            $where_clause = 'j.title = %s';
-            $where_param  = $job_title;
+        if ( empty( $context['job_title_ids'] ) && ! is_string( $job_title ) ) {
+            $job_title = is_array( $job_title ) && isset( $job_title['label'] ) ? $job_title['label'] : '';
         }
 
+        if ( ! empty( $context['job_title_ids'] ) ) {
+            $placeholders = implode( ',', array_fill( 0, count( $context['job_title_ids'] ), '%d' ) );
+            $where_clause = "j.job_title_id IN ({$placeholders})";
+            $where_params = $context['job_title_ids'];
+        } else {
+            $where_clause = 'j.title = %s';
+            $where_params = array( $job_title );
+        }
+
+        $prepare_with_params = function( $sql, $extra_params = array() ) use ( $wpdb, $where_params ) {
+            $params = array_merge( $where_params, (array) $extra_params );
+            array_unshift( $params, $sql );
+
+            return call_user_func_array( array( $wpdb, 'prepare' ), $params );
+        };
+
         $results = $wpdb->get_results(
-            $wpdb->prepare(
+            $prepare_with_params(
                 "SELECT j.id, j.title, j.variant_title, j.income, j.investment, j.income_num, j.investment_num, j.experience_years, j.employment_type, j.hours_per_day, j.days_per_week, j.source, j.city, j.gender, j.advantages, j.disadvantages, j.details, j.created_at, jt.label AS job_title_label, jt.slug AS job_title_slug
                  FROM {$table} j
                  LEFT JOIN {$table_titles} jt ON jt.id = j.job_title_id
                  WHERE {$where_clause}
                  ORDER BY j.created_at DESC
                  LIMIT %d OFFSET %d",
-                $where_param, $limit, $offset
+                array( $limit, $offset )
             )
         );
 
@@ -1231,12 +1576,16 @@ class BKJA_Database {
 
         return $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT jt.id, jt.label, jt.slug, COUNT(j.id) AS jobs_count
-                 FROM {$table_titles} jt
-                 LEFT JOIN {$table_jobs} j ON j.job_title_id = jt.id
-                 WHERE jt.category_id = %d
-                 GROUP BY jt.id, jt.label, jt.slug
-                 ORDER BY jt.label ASC",
+                "SELECT primary_rows.id, COALESCE(primary_rows.base_label, primary_rows.label) AS label, COALESCE(primary_rows.base_slug, primary_rows.slug) AS slug, primary_rows.group_key,
+                        SUM(COALESCE(j_counts.cnt, 0)) AS jobs_count
+                 FROM {$table_titles} primary_rows
+                 LEFT JOIN {$table_titles} other_titles ON other_titles.group_key = primary_rows.group_key
+                 LEFT JOIN (
+                    SELECT job_title_id, COUNT(*) AS cnt FROM {$table_jobs} GROUP BY job_title_id
+                 ) j_counts ON j_counts.job_title_id = other_titles.id
+                 WHERE primary_rows.category_id = %d AND primary_rows.is_visible = 1 AND primary_rows.is_primary = 1
+                 GROUP BY primary_rows.id, label, slug, primary_rows.group_key
+                 ORDER BY label ASC",
                 $category_id
             )
         );
@@ -1250,16 +1599,23 @@ class BKJA_Database {
         $table        = $wpdb->prefix . 'bkja_jobs';
         $table_titles = $wpdb->prefix . 'bkja_job_titles';
 
-        $results = $wpdb->get_results(
-            $wpdb->prepare(
-                "SELECT j.id, j.variant_title, j.title, j.income, j.investment, j.city, j.gender, j.created_at, jt.label AS job_title_label, jt.slug AS job_title_slug
+        $context = self::resolve_job_group_context( $job_title_id );
+        $ids     = $context['job_title_ids'];
+
+        if ( empty( $ids ) ) {
+            return array();
+        }
+
+        $placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
+        $params       = $ids;
+
+        $sql = "SELECT j.id, j.variant_title, j.title, j.income, j.investment, j.city, j.gender, j.created_at, jt.label AS job_title_label, jt.slug AS job_title_slug
                  FROM {$table} j
                  LEFT JOIN {$table_titles} jt ON jt.id = j.job_title_id
-                 WHERE j.job_title_id = %d AND j.created_at >= DATE_SUB(NOW(), INTERVAL {$window_months} MONTH)
-                 ORDER BY j.created_at DESC",
-                $job_title_id
-            )
-        );
+                 WHERE j.job_title_id IN ({$placeholders}) AND j.created_at >= DATE_SUB(NOW(), INTERVAL {$window_months} MONTH)
+                 ORDER BY j.created_at DESC";
+
+        $results = $wpdb->get_results( $wpdb->prepare( $sql, $params ) );
 
         $records = array();
         foreach ( $results as $row ) {

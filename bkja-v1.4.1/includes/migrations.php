@@ -51,11 +51,18 @@ class BKJA_Migrations {
             `slug` VARCHAR(191) NOT NULL,
             `label` VARCHAR(191) NOT NULL,
             `description` TEXT NULL,
+            `base_label` VARCHAR(191) NULL,
+            `base_slug` VARCHAR(191) NULL,
+            `group_key` VARCHAR(191) NULL,
+            `is_primary` TINYINT(1) NOT NULL DEFAULT 1,
+            `is_visible` TINYINT(1) NOT NULL DEFAULT 1,
             `created_at` DATETIME NOT NULL,
             `updated_at` DATETIME NOT NULL,
             PRIMARY KEY (`id`),
             UNIQUE KEY `cat_slug_unique` (`category_id`,`slug`),
-            KEY `cat_idx` (`category_id`)
+            KEY `cat_idx` (`category_id`),
+            KEY `group_idx` (`group_key`),
+            KEY `visible_idx` (`is_visible`)
         ) {$charset_collate};";
 
                 // --- متدهای جدید هماهنگ با class-bkja-database.php ---
