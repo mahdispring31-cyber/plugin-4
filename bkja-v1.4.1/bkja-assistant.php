@@ -7,13 +7,13 @@ require_once plugin_dir_path(__FILE__) . 'admin/github-issue-reporter.php';
 
 /*
 Plugin Name: BKJA Assistant
-Version: 1.5.10
+Version: 1.5.11
 Description: ابزار دستیار شغلی حرفه‌ای برای وردپرس.
 Author: Mahdi Mohammadi
 */
 
 if ( ! defined( 'BKJA_PLUGIN_VERSION' ) ) {
-        define( 'BKJA_PLUGIN_VERSION', '1.5.10' );
+        define( 'BKJA_PLUGIN_VERSION', '1.5.11' );
 }
 
 if ( ! function_exists( 'bkja_get_free_message_limit' ) ) {
@@ -166,6 +166,7 @@ require_once BKJA_PLUGIN_DIR . 'includes/class-bkja-user-profile.php';
 require_once BKJA_PLUGIN_DIR . 'admin/settings.php';
 add_action( 'plugins_loaded', array( 'BKJA_Database', 'maybe_migrate_chat_created_at_default' ) );
 add_action( 'plugins_loaded', array( 'BKJA_Database', 'maybe_migrate_numeric_job_fields' ) );
+add_action( 'plugins_loaded', array( 'BKJA_Database', 'maybe_backfill_job_titles' ) );
 register_activation_hook( __FILE__, array( 'BKJA_Database', 'activate' ) );
 register_activation_hook( __FILE__, 'bkja_cleanup_legacy_free_limit_option' );
 add_action('plugins_loaded', function(){
@@ -186,6 +187,23 @@ function bkja_ajax_get_categories(){ $nonce = isset($_POST['nonce']) ? sanitize_
 add_action('wp_ajax_bkja_get_jobs','bkja_ajax_get_jobs');
 add_action('wp_ajax_nopriv_bkja_get_jobs','bkja_ajax_get_jobs');
 function bkja_ajax_get_jobs(){ $nonce = isset($_POST['nonce']) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : ''; if ( ! wp_verify_nonce( $nonce, 'bkja_nonce' ) ) { wp_send_json_error(['error'=>'invalid_nonce'],403); } $cat = isset($_POST['category_id'])? intval($_POST['category_id']):0; $jobs = BKJA_Jobs::get_jobs_by_category($cat); wp_send_json_success(['jobs'=>$jobs]); }
+
+add_action('wp_ajax_bkja_get_job_variants','bkja_ajax_get_job_variants');
+add_action('wp_ajax_nopriv_bkja_get_job_variants','bkja_ajax_get_job_variants');
+function bkja_ajax_get_job_variants(){
+    $nonce = isset($_POST['nonce']) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+    if ( ! wp_verify_nonce( $nonce, 'bkja_nonce' ) ) {
+        wp_send_json_error(['error'=>'invalid_nonce'],403);
+    }
+
+    $job_title_id = isset($_POST['job_title_id']) ? intval($_POST['job_title_id']) : 0;
+    if ( $job_title_id <= 0 ) {
+        wp_send_json_error(['error'=>'invalid_job_title'],400);
+    }
+
+    $variants = BKJA_Jobs::get_job_variants( $job_title_id );
+    wp_send_json_success( [ 'variants' => $variants ] );
+}
 
 add_action('wp_ajax_bkja_get_job_detail','bkja_ajax_get_job_detail');
 add_action('wp_ajax_nopriv_bkja_get_job_detail','bkja_ajax_get_job_detail');

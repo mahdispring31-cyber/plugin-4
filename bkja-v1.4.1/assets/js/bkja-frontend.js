@@ -1719,7 +1719,7 @@
         }
         loadCategories();
 
-        // کلیک روی دسته → گرفتن شغل‌ها
+        // کلیک روی دسته → گرفتن عناوین پایه شغل
         $(document).on("click",".bkja-category-item", function(e){
             e.stopPropagation();
             var $cat = $(this);
@@ -1727,23 +1727,18 @@
 
             if($cat.hasClass("open")){
                 $cat.removeClass("open");
-                // حذف زیر دسته بعد از li
                 $cat.next('.bkja-jobs-sublist').slideUp(200,function(){$(this).remove();});
                 return;
             }
 
-            // فقط زیر همین دسته باز شود
             $cat.siblings(".bkja-category-item.open").removeClass("open");
             $cat.siblings(".bkja-category-item").each(function(){
                 $(this).next('.bkja-jobs-sublist').remove();
             });
 
             $cat.addClass("open");
-            // زیر دسته دقیقا بعد از li دسته قرار گیرد
             var $sublist = $('<div class="bkja-jobs-sublist">⏳ در حال بارگذاری...</div>');
-            // اگر قبلا وجود دارد حذف شود
             $cat.next('.bkja-jobs-sublist').remove();
-            // بعد از li اضافه شود
             $cat.after($sublist);
 
             ajaxWithNonce({
@@ -1763,7 +1758,11 @@
                 }
                 if(res && res.success && res.data.jobs && res.data.jobs.length){
                     res.data.jobs.forEach(function(job){
-                        var $j = $('<div class="bkja-job-item" data-id="'+job.id+'">💼 '+esc(job.job_title || job.title)+'</div>');
+                        var titleLabel = job.label || job.job_title || job.title || '';
+                        var $j = $('<div class="bkja-job-title-item" data-id="'+job.id+'" data-slug="'+esc(job.slug||'')+'">🧭 '+esc(titleLabel)+'</div>');
+                        if(typeof job.jobs_count !== 'undefined'){
+                            $j.append(' <span class="bkja-job-count">('+esc(job.jobs_count)+')</span>');
+                        }
                         $sub.append($j);
                     });
                 } else {
@@ -1775,21 +1774,77 @@
             });
         });
 
-        // کلیک روی شغل → نمایش خلاصه و رکوردهای شغل
+        // کلیک روی عنوان پایه → گرفتن واریانت‌ها
+        $(document).on("click", ".bkja-job-title-item", function(e){
+            e.stopPropagation();
+            var $titleItem = $(this);
+            var jobTitleId = parseInt($titleItem.data('id'),10) || 0;
+            var baseLabel = $.trim($titleItem.text().replace('🧭',''));
+
+            if($titleItem.hasClass('open')){
+                $titleItem.removeClass('open');
+                $titleItem.next('.bkja-job-variants').slideUp(200,function(){$(this).remove();});
+                return;
+            }
+
+            $titleItem.siblings('.bkja-job-title-item.open').removeClass('open').each(function(){
+                $(this).next('.bkja-job-variants').remove();
+            });
+
+            $titleItem.addClass('open');
+            var $variants = $('<div class="bkja-job-variants">⏳ در حال بارگذاری...</div>');
+            $titleItem.next('.bkja-job-variants').remove();
+            $titleItem.after($variants);
+
+            ajaxWithNonce({
+                action:"bkja_get_job_variants",
+                job_title_id: jobTitleId
+            }).done(function(res){
+                var $wrap = $titleItem.next('.bkja-job-variants').empty();
+                var limitPayload = extractGuestLimitPayload(res);
+                if(limitPayload){
+                    handleGuestLimitExceeded(limitPayload);
+                    var limitNotice = limitPayload && limitPayload.message ? $.trim(String(limitPayload.message)) : '';
+                    if(!limitNotice){
+                        limitNotice = 'برای مشاهده فهرست مشاغل لطفاً وارد شوید.';
+                    }
+                    $wrap.append('<div style="color:#d32f2f;">'+esc(limitNotice)+'</div>');
+                    return;
+                }
+                if(res && res.success && res.data.variants && res.data.variants.length){
+                    res.data.variants.forEach(function(variant){
+                        var variantTitle = variant.variant_title || variant.title || baseLabel;
+                        var $v = $('<div class="bkja-job-item" data-job-title-id="'+jobTitleId+'" data-job-title-slug="'+esc(variant.job_title_slug||'')+'" data-display-title="'+esc(variantTitle)+'">💼 '+esc(variantTitle)+'</div>');
+                        $wrap.append($v);
+                    });
+                } else {
+                    $wrap.append('<div>❌ تجربه‌ای ثبت نشده است.</div>');
+                }
+            }).fail(function(){
+                var $wrap = $titleItem.next('.bkja-job-variants').empty();
+                $wrap.append('<div style="color:#d32f2f;">خطا در دریافت تجربه‌ها.</div>');
+            });
+        });
+
+        // کلیک روی واریانت → نمایش خلاصه و رکوردهای شغل
         $(document).on("click", ".bkja-job-item", function(e){
             e.stopPropagation();
-            var jobTitle = $(this).text().replace('💼','').trim();
-            $messages.append('<div class="bkja-bubble user">ℹ️ درخواست اطلاعات شغل '+esc(jobTitle)+'</div>');
+            var jobTitleId = $(this).data('job-title-id');
+            var jobSlug = $(this).data('job-title-slug');
+            var displayTitle = $(this).data('display-title') || $(this).text().replace('💼','').trim();
+            var identifier = jobSlug ? jobSlug : jobTitleId;
+            $messages.append('<div class="bkja-bubble user">ℹ️ درخواست اطلاعات شغل '+esc(displayTitle)+'</div>');
             $messages.scrollTop($messages.prop("scrollHeight"));
-            showJobSummaryAndRecords(jobTitle);
-            $(".bkja-jobs-sublist").slideUp(200,function(){$(this).remove();});
+            showJobSummaryAndRecords(identifier, displayTitle);
+            $(".bkja-job-variants").slideUp(200,function(){$(this).remove();});
+            $(".bkja-job-title-item.open").removeClass("open");
             $(".bkja-category-item.open").removeClass("open");
             $("#bkja-menu-panel").removeClass("bkja-open");
             $("#bkja-menu-toggle").attr("aria-expanded","false");
         });
 
         // نمایش خلاصه و رکوردهای شغل با دکمه نمایش بیشتر
-        function showJobSummaryAndRecords(job_title) {
+        function showJobSummaryAndRecords(job_title, display_title) {
             // دریافت خلاصه و اولین سری رکوردها با هم
             $.when(
                 ajaxWithNonce({
@@ -1830,15 +1885,17 @@
                     return rounded + ' میلیون تومان';
                 }
 
+                var titleToShow = display_title || (s && (s.job_title_label || s.job_title)) || job_title;
                 var html = '<div class="bkja-job-summary-card">';
                 html += '<div class="bkja-job-summary-header">';
                 if (s) {
-                    html += '<h4>💼 ' + esc(s.job_title) + '</h4>';
+                    html += '<h4>💼 ' + esc(titleToShow) + '</h4>';
                     html += '<div class="bkja-job-summary-meta">';
                     var reportCount = s.count_reports ? parseInt(s.count_reports, 10) : 0;
                     html += '<span>🔢 تعداد تجربه‌های ثبت‌شده: ' + esc(reportCount || records.length) + '</span>';
                     html += '</div>';
                 } else {
+                    html += '<h4>💼 ' + esc(titleToShow) + '</h4>';
                     html += '<div>❌ خلاصه‌ای برای این شغل یافت نشد.</div>';
                 }
                 html += '</div>';

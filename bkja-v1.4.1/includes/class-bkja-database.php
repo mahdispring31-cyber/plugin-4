@@ -91,6 +91,8 @@ class BKJA_Database {
         $sql2 = "CREATE TABLE IF NOT EXISTS `{$table_jobs}` (
             `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             `category_id` BIGINT UNSIGNED NOT NULL,
+            `job_title_id` BIGINT UNSIGNED NULL,
+            `variant_title` VARCHAR(255) NULL,
             `title` VARCHAR(255) NOT NULL,
             `income` VARCHAR(255) DEFAULT NULL,
             `investment` VARCHAR(255) DEFAULT NULL,
@@ -109,12 +111,28 @@ class BKJA_Database {
             `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (`id`),
             INDEX (`category_id`),
+            INDEX (`job_title_id`),
             INDEX (`gender`)
+        ) {$charset_collate};";
+
+        $table_job_titles = $wpdb->prefix . 'bkja_job_titles';
+        $sql_titles = "CREATE TABLE IF NOT EXISTS `{$table_job_titles}` (
+            `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `category_id` BIGINT UNSIGNED NOT NULL,
+            `slug` VARCHAR(191) NOT NULL,
+            `label` VARCHAR(191) NOT NULL,
+            `description` TEXT NULL,
+            `created_at` DATETIME NOT NULL,
+            `updated_at` DATETIME NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `cat_slug_unique` (`category_id`,`slug`),
+            KEY `cat_idx` (`category_id`)
         ) {$charset_collate};";
 
         require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
         dbDelta( $sql1 );
         dbDelta( $sql2 );
+        dbDelta( $sql_titles );
 
         $table_feedback = $wpdb->prefix . 'bkja_feedback';
         $sql3 = "CREATE TABLE IF NOT EXISTS {$table_feedback} (
@@ -142,6 +160,10 @@ class BKJA_Database {
         self::backfill_numeric_fields();
         update_option( 'bkja_jobs_numeric_fields_migrated', 1 );
         update_option( 'bkja_jobs_extended_fields_migrated', 1 );
+
+        self::ensure_job_title_schema();
+        self::maybe_backfill_job_titles();
+        update_option( 'bkja_job_titles_migrated', 1 );
 
         // مقدار پیش‌فرض برای تعداد پیام رایگان در روز
         if ( false === get_option( 'bkja_free_messages_per_day' ) ) {
@@ -378,6 +400,26 @@ class BKJA_Database {
     }
 
     /**
+     * Add job titles table/columns and backfill existing rows.
+     */
+    public static function maybe_backfill_job_titles() {
+        self::ensure_job_title_schema();
+
+        $needs_migration = ! get_option( 'bkja_job_titles_migrated' );
+
+        global $wpdb;
+        $table_jobs = $wpdb->prefix . 'bkja_jobs';
+        $null_count = 0;
+        if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_jobs ) ) === $table_jobs ) {
+            $null_count = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table_jobs} WHERE job_title_id IS NULL" );
+        }
+
+        if ( $needs_migration || $null_count > 0 ) {
+            self::backfill_job_titles();
+        }
+    }
+
+    /**
      * Add numeric columns for income/investment and extended job metadata if missing (idempotent for older installs).
      */
     public static function ensure_numeric_job_columns() {
@@ -406,6 +448,62 @@ class BKJA_Database {
         $add_column( 'hours_per_day', 'TINYINT NULL', 'employment_type' );
         $add_column( 'days_per_week', 'TINYINT NULL', 'hours_per_day' );
         $add_column( 'source', 'VARCHAR(50) NULL', 'days_per_week' );
+    }
+
+    /**
+     * Ensure job titles table and related columns exist.
+     */
+    public static function ensure_job_title_schema() {
+        global $wpdb;
+
+        $charset_collate   = $wpdb->get_charset_collate();
+        $table_job_titles  = $wpdb->prefix . 'bkja_job_titles';
+        $table_jobs        = $wpdb->prefix . 'bkja_jobs';
+
+        require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+
+        $sql_titles = "CREATE TABLE IF NOT EXISTS {$table_job_titles} (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            category_id BIGINT UNSIGNED NOT NULL,
+            slug VARCHAR(191) NOT NULL,
+            label VARCHAR(191) NOT NULL,
+            description TEXT NULL,
+            created_at DATETIME NOT NULL,
+            updated_at DATETIME NOT NULL,
+            PRIMARY KEY (id),
+            UNIQUE KEY cat_slug_unique (category_id, slug),
+            KEY cat_idx (category_id)
+        ) {$charset_collate};";
+
+        dbDelta( $sql_titles );
+
+        if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_jobs ) ) !== $table_jobs ) {
+            return;
+        }
+
+        $columns = $wpdb->get_col( "DESC {$table_jobs}", 0 );
+        $add_column = function( $column, $definition, $after = null ) use ( $wpdb, $table_jobs, $columns ) {
+            if ( in_array( $column, $columns, true ) ) {
+                return;
+            }
+
+            $after_clause = $after ? " AFTER {$after}" : '';
+            $wpdb->query( "ALTER TABLE {$table_jobs} ADD COLUMN {$column} {$definition}{$after_clause}" );
+        };
+
+        $add_column( 'job_title_id', 'BIGINT UNSIGNED NULL', 'category_id' );
+        $add_column( 'variant_title', 'VARCHAR(255) NULL', 'job_title_id' );
+
+        $indexes = $wpdb->get_results( "SHOW INDEX FROM {$table_jobs}" );
+        $index_names = wp_list_pluck( $indexes, 'Key_name' );
+
+        if ( ! in_array( 'job_title_id', $index_names, true ) ) {
+            $wpdb->query( "ALTER TABLE {$table_jobs} ADD INDEX job_title_id (job_title_id)" );
+        }
+
+        if ( ! in_array( 'category_id', $index_names, true ) ) {
+            $wpdb->query( "ALTER TABLE {$table_jobs} ADD INDEX category_id (category_id)" );
+        }
     }
 
     /**
@@ -457,6 +555,111 @@ class BKJA_Database {
     }
 
     /**
+     * Insert or fetch a job title row.
+     */
+    public static function ensure_job_title_exists( $category_id, $label ) {
+        global $wpdb;
+
+        $category_id = absint( $category_id );
+        $label       = is_string( $label ) ? trim( $label ) : '';
+
+        if ( $category_id <= 0 || '' === $label ) {
+            return null;
+        }
+
+        self::ensure_job_title_schema();
+
+        $slug  = sanitize_title( $label );
+        $table = $wpdb->prefix . 'bkja_job_titles';
+
+        $existing_id = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT id FROM {$table} WHERE category_id = %d AND slug = %s LIMIT 1",
+                $category_id,
+                $slug
+            )
+        );
+
+        if ( $existing_id ) {
+            return (int) $existing_id;
+        }
+
+        $now = current_time( 'mysql' );
+        $wpdb->insert(
+            $table,
+            array(
+                'category_id' => $category_id,
+                'slug'        => $slug,
+                'label'       => $label,
+                'description' => null,
+                'created_at'  => $now,
+                'updated_at'  => $now,
+            )
+        );
+
+        return (int) $wpdb->insert_id;
+    }
+
+    /**
+     * Backfill job_title_id and variant_title for existing jobs.
+     */
+    public static function backfill_job_titles() {
+        global $wpdb;
+
+        self::ensure_job_title_schema();
+
+        $table_jobs       = $wpdb->prefix . 'bkja_jobs';
+        $table_job_titles = $wpdb->prefix . 'bkja_job_titles';
+
+        if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_jobs ) ) !== $table_jobs ) {
+            return;
+        }
+
+        // Process distinct title/category combinations without a mapped job_title_id
+        $pairs = $wpdb->get_results(
+            "SELECT DISTINCT category_id, title FROM {$table_jobs} WHERE job_title_id IS NULL"
+        );
+
+        if ( empty( $pairs ) ) {
+            return;
+        }
+
+        foreach ( $pairs as $pair ) {
+            $base_label = is_string( $pair->title ) ? trim( $pair->title ) : '';
+            if ( '' === $base_label ) {
+                continue;
+            }
+
+            $category_id   = absint( $pair->category_id );
+            $slug          = sanitize_title( $base_label );
+            $job_title_row = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT id FROM {$table_job_titles} WHERE category_id = %d AND slug = %s LIMIT 1",
+                    $category_id,
+                    $slug
+                )
+            );
+
+            if ( $job_title_row && isset( $job_title_row->id ) ) {
+                $job_title_id = (int) $job_title_row->id;
+            } else {
+                $job_title_id = self::ensure_job_title_exists( $category_id, $base_label );
+            }
+
+            if ( $job_title_id ) {
+                $wpdb->query(
+                    $wpdb->prepare(
+                        "UPDATE {$table_jobs} SET job_title_id = %d, variant_title = IFNULL(variant_title, title) WHERE category_id = %d AND title = %s AND job_title_id IS NULL",
+                        $job_title_id,
+                        $category_id,
+                        $pair->title
+                    )
+                );
+            }
+        }
+    }
+
+    /**
      * insert_job
      * درج یک رکورد شغلی (هر رکورد متعلق به یک کاربر/مشاهده است)
      */
@@ -464,6 +667,7 @@ class BKJA_Database {
         global $wpdb;
         $table = $wpdb->prefix . 'bkja_jobs';
         self::ensure_numeric_job_columns();
+        self::ensure_job_title_schema();
 
         $income_num_input     = isset( $data['income_num'] ) ? intval( $data['income_num'] ) : null;
         $investment_num_input = isset( $data['investment_num'] ) ? intval( $data['investment_num'] ) : null;
@@ -475,9 +679,34 @@ class BKJA_Database {
         $hours_per_day    = ( $hours_per_day && $hours_per_day > 0 ) ? $hours_per_day : null;
         $days_per_week    = ( $days_per_week && $days_per_week > 0 ) ? $days_per_week : null;
 
+        $category_id   = isset( $data['category_id'] ) ? intval( $data['category_id'] ) : 0;
+        $base_label    = isset( $data['job_title_label'] ) ? sanitize_text_field( $data['job_title_label'] ) : '';
+        $variant_title = isset( $data['variant_title'] ) ? sanitize_text_field( $data['variant_title'] ) : '';
+        $job_title_id  = isset( $data['job_title_id'] ) ? absint( $data['job_title_id'] ) : 0;
+
+        $incoming_title = isset( $data['title'] ) ? sanitize_text_field( $data['title'] ) : '';
+
+        if ( ! $job_title_id ) {
+            $label_for_base = $base_label ? $base_label : ( $incoming_title ?: $variant_title );
+            if ( $label_for_base && $category_id ) {
+                $job_title_id = self::ensure_job_title_exists( $category_id, $label_for_base );
+                if ( ! $base_label ) {
+                    $base_label = $label_for_base;
+                }
+            }
+        }
+
+        if ( '' === $variant_title ) {
+            $variant_title = $incoming_title ? $incoming_title : $base_label;
+        }
+
+        $title_to_store = $variant_title ? $variant_title : $base_label;
+
         $row = [
-            'category_id'      => isset( $data['category_id'] ) ? sanitize_text_field( $data['category_id'] ) : 0,
-            'title'            => isset( $data['title'] ) ? sanitize_text_field( $data['title'] ) : '',
+            'category_id'      => $category_id,
+            'job_title_id'     => $job_title_id ?: null,
+            'variant_title'    => $variant_title,
+            'title'            => $title_to_store,
             'income'           => isset( $data['income'] ) ? sanitize_text_field( $data['income'] ) : '',
             'investment'       => isset( $data['investment'] ) ? sanitize_text_field( $data['investment'] ) : '',
             'income_num'       => 0,
@@ -702,16 +931,76 @@ class BKJA_Database {
     }
 
     /**
+     * Resolve job_title_id from ID, slug or label.
+     */
+    protected static function resolve_job_title_id( $job_title ) {
+        global $wpdb;
+
+        $table_job_titles = $wpdb->prefix . 'bkja_job_titles';
+
+        if ( is_numeric( $job_title ) ) {
+            return absint( $job_title );
+        }
+
+        $slug = sanitize_title( (string) $job_title );
+
+        $found_id = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT id FROM {$table_job_titles} WHERE slug = %s LIMIT 1",
+                $slug
+            )
+        );
+
+        if ( $found_id ) {
+            return (int) $found_id;
+        }
+
+        $found_label = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT id FROM {$table_job_titles} WHERE label = %s LIMIT 1",
+                $job_title
+            )
+        );
+
+        if ( $found_label ) {
+            return (int) $found_label;
+        }
+
+        return null;
+    }
+
+    /**
      * جدید: خلاصه شغل (میانگین و ترکیب داده‌ها)
      */
     public static function get_job_summary($job_title) {
         global $wpdb;
-        $table = $wpdb->prefix . 'bkja_jobs';
+        $table        = $wpdb->prefix . 'bkja_jobs';
+        $table_titles = $wpdb->prefix . 'bkja_job_titles';
 
         self::ensure_numeric_job_columns();
+        self::ensure_job_title_schema();
 
         $window_months = 24;
-        $where_clause  = "title = %s AND created_at >= DATE_SUB(NOW(), INTERVAL {$window_months} MONTH)";
+
+        $job_title_id = self::resolve_job_title_id( $job_title );
+        $job_label    = '';
+        $job_slug     = '';
+
+        if ( $job_title_id ) {
+            $title_row = $wpdb->get_row( $wpdb->prepare( "SELECT label, slug FROM {$table_titles} WHERE id = %d", $job_title_id ) );
+            if ( $title_row ) {
+                $job_label = $title_row->label;
+                $job_slug  = $title_row->slug;
+            }
+        }
+
+        if ( $job_title_id ) {
+            $where_clause = "job_title_id = %d AND created_at >= DATE_SUB(NOW(), INTERVAL {$window_months} MONTH)";
+            $where_param  = $job_title_id;
+        } else {
+            $where_clause = "title = %s AND created_at >= DATE_SUB(NOW(), INTERVAL {$window_months} MONTH)";
+            $where_param  = $job_title;
+        }
 
         $row = $wpdb->get_row(
             $wpdb->prepare(
@@ -731,7 +1020,7 @@ class BKJA_Database {
                     AVG(CASE WHEN days_per_week > 0 THEN days_per_week END) AS avg_days_per_week
                  FROM {$table}
                  WHERE {$where_clause}",
-                $job_title
+                $where_param
             )
         );
 
@@ -740,20 +1029,20 @@ class BKJA_Database {
         $cities = $wpdb->get_col(
             $wpdb->prepare(
                 "SELECT city FROM {$table} WHERE {$where_clause} AND city <> '' GROUP BY city ORDER BY COUNT(*) DESC, city ASC LIMIT 5",
-                $job_title
+                $where_param
             )
         );
 
         $adv_rows = $wpdb->get_col(
             $wpdb->prepare(
                 "SELECT advantages FROM {$table} WHERE {$where_clause} AND advantages IS NOT NULL AND advantages <> '' ORDER BY created_at DESC LIMIT 50",
-                $job_title
+                $where_param
             )
         );
         $dis_rows = $wpdb->get_col(
             $wpdb->prepare(
                 "SELECT disadvantages FROM {$table} WHERE {$where_clause} AND disadvantages IS NOT NULL AND disadvantages <> '' ORDER BY created_at DESC LIMIT 50",
-                $job_title
+                $where_param
             )
         );
 
@@ -792,7 +1081,7 @@ class BKJA_Database {
                  GROUP BY employment_type
                  ORDER BY COUNT(*) DESC
                  LIMIT 1",
-                $job_title
+                $where_param
             )
         );
 
@@ -802,7 +1091,7 @@ class BKJA_Database {
                  FROM {$table}
                  WHERE {$where_clause}
                  GROUP BY gender",
-                $job_title
+                $where_param
             )
         );
 
@@ -842,6 +1131,9 @@ class BKJA_Database {
 
         return array(
             'job_title'         => $job_title,
+            'job_title_id'      => $job_title_id,
+            'job_title_label'   => $job_label ?: $job_title,
+            'job_title_slug'    => $job_slug ?: sanitize_title( $job_title ),
             'avg_income'        => $row->avg_income ? round( (float) $row->avg_income, 1 ) : null,
             'min_income'        => $row->min_income ? (float) $row->min_income : null,
             'max_income'        => $row->max_income ? (float) $row->max_income : null,
@@ -871,16 +1163,30 @@ class BKJA_Database {
      */
     public static function get_job_records($job_title, $limit = 5, $offset = 0) {
         global $wpdb;
-        $table = $wpdb->prefix . 'bkja_jobs';
+        $table        = $wpdb->prefix . 'bkja_jobs';
+        $table_titles = $wpdb->prefix . 'bkja_job_titles';
+
+        self::ensure_job_title_schema();
+
+        $job_title_id = self::resolve_job_title_id( $job_title );
+
+        if ( $job_title_id ) {
+            $where_clause = 'j.job_title_id = %d';
+            $where_param  = $job_title_id;
+        } else {
+            $where_clause = 'j.title = %s';
+            $where_param  = $job_title;
+        }
 
         $results = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT id, title, income, investment, income_num, investment_num, experience_years, employment_type, hours_per_day, days_per_week, source, city, gender, advantages, disadvantages, details, created_at
-                 FROM {$table}
-                 WHERE title = %s
-                 ORDER BY created_at DESC
+                "SELECT j.id, j.title, j.variant_title, j.income, j.investment, j.income_num, j.investment_num, j.experience_years, j.employment_type, j.hours_per_day, j.days_per_week, j.source, j.city, j.gender, j.advantages, j.disadvantages, j.details, j.created_at, jt.label AS job_title_label, jt.slug AS job_title_slug
+                 FROM {$table} j
+                 LEFT JOIN {$table_titles} jt ON jt.id = j.job_title_id
+                 WHERE {$where_clause}
+                 ORDER BY j.created_at DESC
                  LIMIT %d OFFSET %d",
-                $job_title, $limit, $offset
+                $where_param, $limit, $offset
             )
         );
 
@@ -889,6 +1195,9 @@ class BKJA_Database {
                 $records[] = array(
                     'id'                     => (int) $row->id,
                     'job_title'              => $row->title,
+                    'job_title_label'        => $row->job_title_label ? $row->job_title_label : $row->title,
+                    'job_title_slug'         => $row->job_title_slug ? $row->job_title_slug : sanitize_title( $row->title ),
+                    'variant_title'          => $row->variant_title ? $row->variant_title : $row->title,
                     'income'                 => $row->income,
                     'income_num'             => isset( $row->income_num ) ? (int) $row->income_num : 0,
                     'investment'             => $row->investment,
@@ -909,6 +1218,65 @@ class BKJA_Database {
                     'created_at_display'     => bkja_format_job_date( $row->created_at ),
                 );
         }
+        return $records;
+    }
+
+    /**
+     * Return job titles grouped by category with counts.
+     */
+    public static function get_job_titles_by_category( $category_id ) {
+        global $wpdb;
+        $table_titles = $wpdb->prefix . 'bkja_job_titles';
+        $table_jobs   = $wpdb->prefix . 'bkja_jobs';
+
+        return $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT jt.id, jt.label, jt.slug, COUNT(j.id) AS jobs_count
+                 FROM {$table_titles} jt
+                 LEFT JOIN {$table_jobs} j ON j.job_title_id = jt.id
+                 WHERE jt.category_id = %d
+                 GROUP BY jt.id, jt.label, jt.slug
+                 ORDER BY jt.label ASC",
+                $category_id
+            )
+        );
+    }
+
+    /**
+     * Return job variants for a base title.
+     */
+    public static function get_job_variants_for_title( $job_title_id, $window_months = 12 ) {
+        global $wpdb;
+        $table        = $wpdb->prefix . 'bkja_jobs';
+        $table_titles = $wpdb->prefix . 'bkja_job_titles';
+
+        $results = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT j.id, j.variant_title, j.title, j.income, j.investment, j.city, j.gender, j.created_at, jt.label AS job_title_label, jt.slug AS job_title_slug
+                 FROM {$table} j
+                 LEFT JOIN {$table_titles} jt ON jt.id = j.job_title_id
+                 WHERE j.job_title_id = %d AND j.created_at >= DATE_SUB(NOW(), INTERVAL {$window_months} MONTH)
+                 ORDER BY j.created_at DESC",
+                $job_title_id
+            )
+        );
+
+        $records = array();
+        foreach ( $results as $row ) {
+            $records[] = array(
+                'id'                 => (int) $row->id,
+                'variant_title'      => $row->variant_title ? $row->variant_title : $row->title,
+                'job_title_label'    => $row->job_title_label,
+                'job_title_slug'     => $row->job_title_slug,
+                'income'             => $row->income,
+                'investment'         => $row->investment,
+                'city'               => $row->city,
+                'gender'             => $row->gender,
+                'created_at'         => $row->created_at,
+                'created_at_display' => bkja_format_job_date( $row->created_at ),
+            );
+        }
+
         return $records;
     }
 }
