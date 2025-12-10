@@ -51,6 +51,7 @@ class BKJA_Jobs {
                 'job_title'  => $title->label,
                 'label'      => $title->label,
                 'slug'       => $title->slug,
+                'group_key'  => isset( $title->group_key ) ? $title->group_key : '',
                 'jobs_count' => isset( $title->jobs_count ) ? (int) $title->jobs_count : 0,
             );
         }
