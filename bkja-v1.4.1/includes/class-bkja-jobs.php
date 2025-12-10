@@ -36,22 +36,26 @@ class BKJA_Jobs {
         return $wpdb->get_results("SELECT id, name FROM {$table} ORDER BY id ASC");
     }
 
-    // لیست عناوین شغل در یک دسته (Distinct by title as job_title, همراه با id)
+    // لیست عناوین پایه شغل در یک دسته
     public static function get_jobs_by_category($cat_id) {
-        global $wpdb;
-        $table = $wpdb->prefix . 'bkja_jobs';
-        // لاگ برای بررسی category_id
         if ( defined('WP_DEBUG') && WP_DEBUG ) {
             error_log('BKJA get_jobs_by_category called with category_id: ' . print_r($cat_id, true));
         }
-        return $wpdb->get_results($wpdb->prepare(
-            "SELECT MIN(id) AS id, title AS job_title 
-             FROM {$table} 
-             WHERE category_id = %d 
-             GROUP BY title 
-             ORDER BY title ASC",
-            $cat_id
-        ));
+
+        $titles = BKJA_Database::get_job_titles_by_category( $cat_id );
+
+        $mapped = array();
+        foreach ( $titles as $title ) {
+            $mapped[] = (object) array(
+                'id'         => isset( $title->id ) ? (int) $title->id : 0,
+                'job_title'  => $title->label,
+                'label'      => $title->label,
+                'slug'       => $title->slug,
+                'jobs_count' => isset( $title->jobs_count ) ? (int) $title->jobs_count : 0,
+            );
+        }
+
+        return $mapped;
     }
     // خلاصه شغل
     public static function get_job_summary($job_title) {
@@ -63,15 +67,21 @@ class BKJA_Jobs {
         return BKJA_Database::get_job_records($job_title, $limit, $offset);
     }
 
+    // لیست واریانت‌های یک عنوان پایه
+    public static function get_job_variants( $job_title_id, $window_months = 12 ) {
+        return BKJA_Database::get_job_variants_for_title( $job_title_id, $window_months );
+    }
+
     // گرفتن جزئیات کامل یک شغل (برای ارسال به JS)
     public static function get_job_detail($job_id) {
         global $wpdb;
         $table = $wpdb->prefix . 'bkja_jobs';
         $row = $wpdb->get_row(
             $wpdb->prepare(
-                "SELECT id, title, income, investment, income_num, investment_num, experience_years, employment_type, hours_per_day, days_per_week, source, city, gender, advantages, disadvantages, details, created_at, category_id
-                 FROM {$table}
-                 WHERE id = %d LIMIT 1",
+                "SELECT j.id, j.title, j.variant_title, j.job_title_id, j.income, j.investment, j.income_num, j.investment_num, j.experience_years, j.employment_type, j.hours_per_day, j.days_per_week, j.source, j.city, j.gender, j.advantages, j.disadvantages, j.details, j.created_at, j.category_id, jt.label AS job_title_label, jt.slug AS job_title_slug
+                 FROM {$table} j
+                 LEFT JOIN {$wpdb->prefix}bkja_job_titles jt ON jt.id = j.job_title_id
+                 WHERE j.id = %d LIMIT 1",
                 $job_id
             )
         );
@@ -80,6 +90,10 @@ class BKJA_Jobs {
         return array(
             'id'            => (int)$row->id,
             'job_title'     => $row->title,
+            'job_title_label' => isset( $row->job_title_label ) ? $row->job_title_label : $row->title,
+            'job_title_slug'  => isset( $row->job_title_slug ) ? $row->job_title_slug : sanitize_title( $row->title ),
+            'variant_title' => isset( $row->variant_title ) && $row->variant_title ? $row->variant_title : $row->title,
+            'job_title_id'   => isset( $row->job_title_id ) ? (int) $row->job_title_id : null,
             'income'        => $row->income,
             'income_num'    => isset( $row->income_num ) ? (int) $row->income_num : null,
             'investment'    => $row->investment,

@@ -20,6 +20,8 @@ class BKJA_Migrations {
         $sql2 = "CREATE TABLE IF NOT EXISTS `{$table_jobs}` (
             `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             `category_id` BIGINT UNSIGNED NOT NULL,
+            `job_title_id` BIGINT UNSIGNED NULL,
+            `variant_title` VARCHAR(255) NULL,
             `title` VARCHAR(255) NOT NULL,
             `income` VARCHAR(255) DEFAULT NULL,
             `investment` VARCHAR(255) DEFAULT NULL,
@@ -38,7 +40,22 @@ class BKJA_Migrations {
             `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (`id`),
             INDEX (`category_id`),
+            INDEX (`job_title_id`),
             INDEX (`gender`)
+        ) {$charset_collate};";
+
+        $table_job_titles = $prefix . 'bkja_job_titles';
+        $sql3 = "CREATE TABLE IF NOT EXISTS `{$table_job_titles}` (
+            `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `category_id` BIGINT UNSIGNED NOT NULL,
+            `slug` VARCHAR(191) NOT NULL,
+            `label` VARCHAR(191) NOT NULL,
+            `description` TEXT NULL,
+            `created_at` DATETIME NOT NULL,
+            `updated_at` DATETIME NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `cat_slug_unique` (`category_id`,`slug`),
+            KEY `cat_idx` (`category_id`)
         ) {$charset_collate};";
 
                 // --- متدهای جدید هماهنگ با class-bkja-database.php ---
@@ -46,8 +63,9 @@ class BKJA_Migrations {
                 // اینجا فقط ساختار جدول و داده نمونه را هماهنگ نگه می‌داریم.
 
         require_once( ABSPATH . 'wp-admin/includes/upgrade.php' );
-        dbDelta( $sql1 ); 
+        dbDelta( $sql1 );
         dbDelta( $sql2 );
+        dbDelta( $sql3 );
 
         // افزودن داده نمونه
         $cat_count = $wpdb->get_var("SELECT COUNT(*) FROM {$table_categories}");

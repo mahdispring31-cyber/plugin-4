@@ -223,10 +223,31 @@
 							<input type="hidden" name="action" value="bkja_update_job" />
 							<input type="hidden" name="id" value="<?php echo esc_attr($job->id); ?>" />
 
-							<div class="bkja-form-row">
-								<label>عنوان *</label>
-								<input type="text" name="title" value="<?php echo esc_attr($job->title); ?>" required />
-							</div>
+                                                <div class="bkja-form-row">
+                                                                <label>عنوان پایه *</label>
+                                                                <?php $job_titles = class_exists('BKJA_Database') ? BKJA_Database::get_job_titles_by_category( $job->category_id ) : array(); ?>
+                                                                <select name="job_title_id">
+                                                                        <option value="">یک عنوان را انتخاب کنید</option>
+                                                                        <?php foreach ( (array) $job_titles as $title_row ) : ?>
+                                                                                <option value="<?php echo esc_attr( $title_row->id ); ?>" <?php selected( isset( $job->job_title_id ) ? $job->job_title_id : 0, $title_row->id ); ?>><?php echo esc_html( $title_row->label ); ?></option>
+                                                                        <?php endforeach; ?>
+                                                                        <option value="new">+ افزودن عنوان جدید</option>
+                                                                </select>
+                                                                <div class="bkja-note">برای افزودن عنوان جدید، آن را در فیلد زیر بنویسید.</div>
+                                                        </div>
+                                                        <div class="bkja-form-row">
+                                                                <label>عنوان پایه جدید (اختیاری)</label>
+                                                                <input type="text" name="job_title_label" value="" placeholder="مثلاً معلم" />
+                                                        </div>
+                                                        <div class="bkja-form-row">
+                                                                <label>عنوان واریانت</label>
+                                                                <input type="text" name="variant_title" value="<?php echo esc_attr( isset( $job->variant_title ) ? $job->variant_title : $job->title ); ?>" />
+                                                                <div class="bkja-note">مثال: «معلم ابتدایی – ۳ سال سابقه»</div>
+                                                        </div>
+                                                        <div class="bkja-form-row">
+                                                                <label>عنوان کامل (پشتیبانی قدیمی)</label>
+                                                                <input type="text" name="title" value="<?php echo esc_attr($job->title); ?>" />
+                                                        </div>
 							<div class="bkja-form-row">
 								<label>شهر</label>
 								<input type="text" name="city" value="<?php echo esc_attr($job->city); ?>" />
@@ -678,10 +699,24 @@
 
 	                                $data = [];
 
-				// Title (required)
-	                                if ( isset($map['title']) && isset($row[$map['title']]) && strlen(trim($row[$map['title']])) ) {
-	                                        $data['title'] = sanitize_text_field( $row[$map['title']] );
-	                                } else { $skipped++; continue; }
+                                        // Title (required)
+                                        if ( isset($map['title']) && isset($row[$map['title']]) && strlen(trim($row[$map['title']])) ) {
+                                                $data['title'] = sanitize_text_field( $row[$map['title']] );
+                                        } else { $skipped++; continue; }
+
+                                        // Base job title label (optional – fallback to title)
+                                        if ( isset($map['job_title_label']) && isset($row[$map['job_title_label']]) && strlen(trim($row[$map['job_title_label']]))) {
+                                                $data['job_title_label'] = sanitize_text_field( $row[$map['job_title_label']] );
+                                        }
+                                        if ( ! isset( $data['job_title_label'] ) ) {
+                                                $data['job_title_label'] = $data['title'];
+                                        }
+                                        // Variant title (optional)
+                                        if ( isset($map['variant_title']) && isset($row[$map['variant_title']]) && strlen(trim($row[$map['variant_title']]))) {
+                                                $data['variant_title'] = sanitize_text_field( $row[$map['variant_title']] );
+                                        } else {
+                                                $data['variant_title'] = $data['title'];
+                                        }
 
 	                                // Optional fields
 	                                if ( isset($map['city']) && isset($row[$map['city']]) )               { $data['city'] = sanitize_text_field($row[$map['city']]); }
@@ -773,19 +808,33 @@
 			wp_redirect($url); exit;
 		}
 
-		$data = [];
-		$formats = [];
+                $data = [];
+                $formats = [];
 
-		// Required: title
-		if (!empty($_POST['title'])) {
-			$data['title'] = sanitize_text_field( wp_unslash($_POST['title']) );
-			$formats[] = '%s';
-		}
+                // Required: title
+                if (!empty($_POST['title'])) {
+                    $data['title'] = sanitize_text_field( wp_unslash($_POST['title']) );
+                    $formats[] = '%s';
+                }
 
-	                // Optional fields
-	                if (isset($_POST['city']))        { $data['city']        = sanitize_text_field( wp_unslash($_POST['city']) ); $formats[]='%s'; }
-	                if (isset($_POST['gender']))      { $data['gender']      = sanitize_text_field( wp_unslash($_POST['gender']) ); $formats[]='%s'; }
-	                if (isset($_POST['category_id'])) { $data['category_id'] = intval($_POST['category_id']); $formats[]='%d'; }
+                $job_title_id = 0;
+                if ( isset( $_POST['job_title_id'] ) ) {
+                        $job_title_id = 'new' === $_POST['job_title_id'] ? 0 : intval( $_POST['job_title_id'] );
+                }
+                $job_title_label = isset( $_POST['job_title_label'] ) ? sanitize_text_field( wp_unslash( $_POST['job_title_label'] ) ) : '';
+                $variant_title   = isset( $_POST['variant_title'] ) ? sanitize_text_field( wp_unslash( $_POST['variant_title'] ) ) : '';
+
+                if ( class_exists( 'BKJA_Database' ) ) {
+                        BKJA_Database::ensure_job_title_schema();
+                        if ( $job_title_label && isset( $_POST['category_id'] ) ) {
+                                $job_title_id = BKJA_Database::ensure_job_title_exists( intval( $_POST['category_id'] ), $job_title_label );
+                        }
+                }
+
+                        // Optional fields
+                        if (isset($_POST['city']))        { $data['city']        = sanitize_text_field( wp_unslash($_POST['city']) ); $formats[]='%s'; }
+                        if (isset($_POST['gender']))      { $data['gender']      = sanitize_text_field( wp_unslash($_POST['gender']) ); $formats[]='%s'; }
+                        if (isset($_POST['category_id'])) { $data['category_id'] = intval($_POST['category_id']); $formats[]='%d'; }
 	                if (isset($_POST['income']))      { $data['income']      = sanitize_text_field( wp_unslash($_POST['income']) ); $formats[]='%s'; }
 	                if (isset($_POST['investment']))  { $data['investment']  = sanitize_text_field( wp_unslash($_POST['investment']) ); $formats[]='%s'; }
 	                if (isset($_POST['income_num']))  { $data['income_num']  = intval($_POST['income_num']); $formats[] = '%d'; }
@@ -798,12 +847,23 @@
 	                if (isset($_POST['disadvantages'])) { $data['disadvantages'] = sanitize_textarea_field( wp_unslash($_POST['disadvantages']) ); $formats[]='%s'; }
 	                if (isset($_POST['details']))      { $data['details']      = sanitize_textarea_field( wp_unslash($_POST['details']) ); $formats[]='%s'; }
 	                if (isset($_POST['source']))       { $data['source']       = sanitize_text_field( wp_unslash($_POST['source']) ); $formats[]='%s'; }
-	                if (isset($_POST['created_at']) && $_POST['created_at'] !== '') { $data['created_at'] = sanitize_text_field( wp_unslash($_POST['created_at']) ); $formats[]='%s'; }
+                        if (isset($_POST['created_at']) && $_POST['created_at'] !== '') { $data['created_at'] = sanitize_text_field( wp_unslash($_POST['created_at']) ); $formats[]='%s'; }
 
-	                // Ensure numeric fallbacks from textual values
-	                if ( isset( $data['income'] ) ) {
-	                        if ( ! isset( $data['income_num'] ) ) {
-	                                $data['income_num'] = bkja_parse_numeric_amount( $data['income'] );
+                        if ( $job_title_id > 0 ) { $data['job_title_id'] = $job_title_id; $formats[] = '%d'; }
+                        if ( $variant_title ) { $data['variant_title'] = $variant_title; $formats[] = '%s'; }
+
+                        if ( $variant_title && empty( $data['title'] ) ) {
+                                $data['title'] = $variant_title;
+                                $formats[] = '%s';
+                        } elseif ( $job_title_label && empty( $data['title'] ) ) {
+                                $data['title'] = $job_title_label;
+                                $formats[] = '%s';
+                        }
+
+                        // Ensure numeric fallbacks from textual values
+                        if ( isset( $data['income'] ) ) {
+                                if ( ! isset( $data['income_num'] ) ) {
+                                        $data['income_num'] = bkja_parse_numeric_amount( $data['income'] );
 	                                $formats[] = '%d';
 	                        } elseif ( $data['income_num'] <= 0 ) {
 	                                $data['income_num'] = bkja_parse_numeric_amount( $data['income'] );
