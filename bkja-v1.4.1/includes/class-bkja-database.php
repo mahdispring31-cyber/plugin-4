@@ -70,7 +70,25 @@ class BKJA_Database {
      *
      * @var array
      */
-    protected static $job_title_stopwords = array( 'هر', 'ولی', 'تهران', 'درآمد', 'درامد', 'خالص', 'البته' );
+    protected static $job_title_stopwords = array(
+        'هر',
+        'ولی',
+        'سلام',
+        'دوستم',
+        'درمیاد',
+        'در میاد',
+        'درامد',
+        'درآمد',
+        'روزی',
+        'روزانه',
+        'ارزش',
+        'تلفات',
+        'سرمایه',
+        'صاحب',
+        'البته',
+        'خالص',
+        'تهران',
+    );
 
     // ایجاد جدول‌ها (محافظت‌شده، dbDelta idempotent)
     public static function activate() {
@@ -171,6 +189,10 @@ class BKJA_Database {
         self::ensure_job_title_schema();
         self::maybe_backfill_job_titles();
         update_option( 'bkja_job_titles_migrated', 1 );
+
+        if ( ! get_option( 'bkja_job_titles_recleaned' ) ) {
+            self::reclean_job_titles();
+        }
 
         // مقدار پیش‌فرض برای تعداد پیام رایگان در روز
         if ( false === get_option( 'bkja_free_messages_per_day' ) ) {
@@ -426,6 +448,10 @@ class BKJA_Database {
         }
 
         self::backfill_job_title_groups();
+
+        if ( ! get_option( 'bkja_job_titles_recleaned' ) ) {
+            self::reclean_job_titles();
+        }
     }
 
     /**
@@ -597,6 +623,74 @@ class BKJA_Database {
             'base_slug'  => $base_slug,
             'group_key'  => $group_key,
         );
+    }
+
+    /**
+     * Detect if a given title/label should be treated as noisy and hidden.
+     */
+    protected static function is_noisy_title( $label, $base_label, $jobs_count ) {
+        $jobs_count = (int) $jobs_count;
+
+        $normalize = function( $text ) {
+            if ( ! is_string( $text ) ) {
+                return '';
+            }
+
+            return trim( preg_replace( '/\s+/u', ' ', $text ) );
+        };
+
+        $get_length = function( $text ) {
+            if ( '' === $text ) {
+                return 0;
+            }
+
+            return function_exists( 'mb_strlen' ) ? mb_strlen( $text, 'UTF-8' ) : strlen( $text );
+        };
+
+        $to_lower = function( $text ) {
+            return function_exists( 'mb_strtolower' ) ? mb_strtolower( $text, 'UTF-8' ) : strtolower( $text );
+        };
+
+        $label_clean = $normalize( $label );
+        $base_clean  = $normalize( $base_label );
+
+        $label_len = $get_length( $label_clean );
+        $base_len  = $get_length( $base_clean );
+
+        $is_short = ( $label_len > 0 && $label_len <= 3 ) || ( $base_len > 0 && $base_len <= 3 );
+
+        $labels_to_check = array_filter( array( $label_clean, $base_clean ) );
+
+        $is_stopword = false;
+        foreach ( $labels_to_check as $text ) {
+            if ( in_array( $to_lower( $text ), self::$job_title_stopwords, true ) ) {
+                $is_stopword = true;
+                break;
+            }
+        }
+
+        $numeric_like = false;
+        foreach ( $labels_to_check as $text ) {
+            if ( preg_match( '/^[0-9۰-۹]+$/u', $text ) || preg_match( '/^[0-9۰-۹]/u', $text ) ) {
+                $numeric_like = true;
+                break;
+            }
+        }
+
+        $city_words   = array( 'تهران', 'کرمان', 'مشهد', 'شیراز', 'تبریز' );
+        $matches_city = false;
+        foreach ( $labels_to_check as $text ) {
+            if ( in_array( $to_lower( $text ), $city_words, true ) ) {
+                $matches_city = true;
+                break;
+            }
+        }
+
+        if ( $jobs_count <= 3 && ( $is_short || $is_stopword || $numeric_like || $matches_city ) ) {
+            return true;
+        }
+
+        return false;
     }
 
     /**
@@ -809,19 +903,9 @@ class BKJA_Database {
         // Hide obvious junk titles
         $all_titles = $wpdb->get_results( "SELECT id, label, base_label, is_visible FROM {$table_job_titles}" );
         foreach ( $all_titles as $title_row ) {
-            $check_label = $title_row->base_label ? $title_row->base_label : $title_row->label;
-            $check_label = trim( preg_replace( '/\s+/u', ' ', $check_label ) );
-
             $jobs_count = isset( $counts[ (int) $title_row->id ] ) ? (int) $counts[ (int) $title_row->id ] : 0;
 
-            $starts_with_digit = preg_match( '/^[0-9۰-۹]/u', $check_label );
-            $length            = function_exists( 'mb_strlen' ) ? mb_strlen( $check_label, 'UTF-8' ) : strlen( $check_label );
-            $is_short          = $length > 0 && $length <= 3;
-
-            $lower_label = function_exists( 'mb_strtolower' ) ? mb_strtolower( $check_label, 'UTF-8' ) : strtolower( $check_label );
-            $is_stopword = in_array( $lower_label, self::$job_title_stopwords, true );
-
-            if ( $starts_with_digit || $is_short || ( $is_stopword && $jobs_count <= 2 ) ) {
+            if ( self::is_noisy_title( $title_row->label, $title_row->base_label, $jobs_count ) ) {
                 $wpdb->update(
                     $table_job_titles,
                     array(
@@ -886,6 +970,50 @@ class BKJA_Database {
                 );
             }
         }
+    }
+
+    /**
+     * Re-evaluate visibility/primary flags against current noise rules and counts.
+     */
+    public static function reclean_job_titles() {
+        global $wpdb;
+
+        self::ensure_job_title_schema();
+
+        $table_job_titles = $wpdb->prefix . 'bkja_job_titles';
+        $table_jobs       = $wpdb->prefix . 'bkja_jobs';
+
+        if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_job_titles ) ) !== $table_job_titles ) {
+            return;
+        }
+
+        $counts = array();
+        if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table_jobs ) ) === $table_jobs ) {
+            $count_rows = $wpdb->get_results( "SELECT job_title_id, COUNT(*) AS c FROM {$table_jobs} GROUP BY job_title_id" );
+            foreach ( $count_rows as $c_row ) {
+                $counts[ (int) $c_row->job_title_id ] = (int) $c_row->c;
+            }
+        }
+
+        $all_titles = $wpdb->get_results( "SELECT id, label, base_label FROM {$table_job_titles}" );
+        foreach ( $all_titles as $title_row ) {
+            $jobs_count = isset( $counts[ (int) $title_row->id ] ) ? (int) $counts[ (int) $title_row->id ] : 0;
+
+            if ( self::is_noisy_title( $title_row->label, $title_row->base_label, $jobs_count ) ) {
+                $wpdb->update(
+                    $table_job_titles,
+                    array(
+                        'is_visible' => 0,
+                        'is_primary' => 0,
+                    ),
+                    array( 'id' => (int) $title_row->id )
+                );
+            }
+        }
+
+        self::backfill_job_title_groups();
+
+        update_option( 'bkja_job_titles_recleaned', 1 );
     }
 
     /**
