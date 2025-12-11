@@ -1,5 +1,5 @@
-	<?php
-	if ( ! defined( 'ABSPATH' ) ) exit;
+<?php
+        if ( ! defined( 'ABSPATH' ) ) exit;
 
 	/**
 	 * Admin Menu
