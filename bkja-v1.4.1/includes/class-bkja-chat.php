@@ -313,24 +313,80 @@ class BKJA_Chat {
             $core = $lowered;
         }
 
-        $search_terms = array_values( array_unique( array_filter( array( $core, $normalized_full ) ) ) );
-
         $table_titles = $wpdb->prefix . 'bkja_job_titles';
         $table_jobs   = $wpdb->prefix . 'bkja_jobs';
 
-        $candidates = array();
+        $candidate_tokens = array( $core );
 
-        foreach ( $search_terms as $term ) {
-            $term_prefix = $term . '%';
-            $term_like   = '%' . $term . '%';
+        if ( function_exists( 'mb_substr' ) ? 'ی' === mb_substr( $core, -1, 1, 'UTF-8' ) : ( 'ی' === substr( $core, -2 ) ) ) {
+            $alt_core = function_exists( 'mb_substr' ) ? mb_substr( $core, 0, mb_strlen( $core, 'UTF-8' ) - 1, 'UTF-8' ) : substr( $core, 0, -2 );
 
-            $conditions = array(
-                array( 'where' => 'COALESCE(jt.base_label, jt.label) = %s', 'param' => $term ),
-                array( 'where' => 'COALESCE(jt.base_label, jt.label) LIKE %s', 'param' => $term_prefix ),
-                array( 'where' => 'COALESCE(jt.base_label, jt.label) LIKE %s', 'param' => $term_like ),
-            );
+            if ( '' !== $alt_core ) {
+                $exists_alt = (bool) $wpdb->get_var(
+                    $wpdb->prepare(
+                        "SELECT 1 FROM {$table_titles} WHERE (label = %s OR base_label = %s OR slug = %s OR base_slug = %s) LIMIT 1",
+                        $alt_core,
+                        $alt_core,
+                        $alt_core,
+                        $alt_core
+                    )
+                );
 
-            foreach ( $conditions as $condition ) {
+                if ( $exists_alt ) {
+                    $candidate_tokens[] = $alt_core;
+                }
+            }
+        }
+
+        $candidate_tokens[] = $normalized_full;
+        $candidate_tokens   = array_values( array_unique( array_filter( $candidate_tokens ) ) );
+
+        $stages = array(
+            'exact'    => function( $term ) {
+                return array(
+                    'where'  => '(jt.label = %s OR jt.base_label = %s OR jt.slug = %s OR jt.base_slug = %s)',
+                    'params' => array( $term, $term, $term, $term ),
+                );
+            },
+            'prefix'   => function( $term ) {
+                $term_prefix = $term . '%';
+                return array(
+                    'where'  => '(jt.label LIKE %s OR jt.base_label LIKE %s)',
+                    'params' => array( $term_prefix, $term_prefix ),
+                );
+            },
+            'contains' => function( $term ) {
+                $term_like = '%' . $term . '%';
+                return array(
+                    'where'  => '(jt.label LIKE %s OR jt.base_label LIKE %s)',
+                    'params' => array( $term_like, $term_like ),
+                );
+            },
+        );
+
+        $calc_match_length = function( $label ) use ( $candidate_tokens ) {
+            $max_len = 0;
+            foreach ( $candidate_tokens as $token ) {
+                if ( '' === $token ) {
+                    continue;
+                }
+
+                $contains = function_exists( 'mb_strpos' ) ? mb_strpos( $label, $token, 0, 'UTF-8' ) : strpos( $label, $token );
+                if ( false !== $contains ) {
+                    $len     = function_exists( 'mb_strlen' ) ? mb_strlen( $token, 'UTF-8' ) : strlen( $token );
+                    $max_len = max( $max_len, $len );
+                }
+            }
+
+            return $max_len;
+        };
+
+        foreach ( $stages as $callback ) {
+            $stage_rows = array();
+
+            foreach ( $candidate_tokens as $term ) {
+                $condition = $callback( $term );
+
                 $sql = "SELECT jt.id, jt.group_key, COALESCE(jt.base_label, jt.label) AS label, COALESCE(jt.base_slug, jt.slug) AS slug, jt.is_primary, jt.is_visible,
                                COALESCE(j.cnt, 0) AS jobs_count, COALESCE(g.group_jobs, 0) AS group_jobs
                         FROM {$table_titles} jt
@@ -342,69 +398,95 @@ class BKJA_Chat {
                             GROUP BY jt2.group_key
                         ) g ON g.group_key = jt.group_key
                         WHERE {$condition['where']} AND jt.group_key IS NOT NULL AND jt.is_visible = 1
-                        ORDER BY g.group_jobs DESC, j.cnt DESC, CHAR_LENGTH(COALESCE(jt.base_label, jt.label)) ASC
-                        LIMIT 15";
+                        LIMIT 40";
 
-                $rows = $wpdb->get_results( $wpdb->prepare( $sql, $condition['param'] ) );
+                $params = $condition['params'];
+                array_unshift( $params, $sql );
+                $sql_prepared = call_user_func_array( array( $wpdb, 'prepare' ), $params );
 
-                foreach ( $rows as $row ) {
-                    $key = $row->group_key ?: $row->id;
-                    if ( ! isset( $candidates[ $key ] ) ) {
-                        $candidates[ $key ] = $row;
-                    }
+                $rows = $wpdb->get_results( $sql_prepared );
+                if ( ! empty( $rows ) ) {
+                    $stage_rows = array_merge( $stage_rows, $rows );
                 }
             }
-        }
 
-        if ( empty( $candidates ) ) {
-            return array();
-        }
-
-        $candidates = array_values( $candidates );
-        usort( $candidates, function ( $a, $b ) {
-            $group_a = isset( $a->group_jobs ) ? (int) $a->group_jobs : 0;
-            $group_b = isset( $b->group_jobs ) ? (int) $b->group_jobs : 0;
-
-            if ( $group_a !== $group_b ) {
-                return ( $group_a > $group_b ) ? -1 : 1;
+            if ( empty( $stage_rows ) ) {
+                continue;
             }
 
-            $count_a = isset( $a->jobs_count ) ? (int) $a->jobs_count : 0;
-            $count_b = isset( $b->jobs_count ) ? (int) $b->jobs_count : 0;
+            $grouped = array();
+            foreach ( $stage_rows as $row ) {
+                $group_key = $row->group_key ? $row->group_key : $row->id;
+                $label     = isset( $row->label ) ? (string) $row->label : '';
+                $match_len = $calc_match_length( $label );
 
-            if ( $count_a !== $count_b ) {
-                return ( $count_a > $count_b ) ? -1 : 1;
+                if ( ! isset( $grouped[ $group_key ] ) ) {
+                    $grouped[ $group_key ] = array(
+                        'group_jobs'   => (int) $row->group_jobs,
+                        'total_jobs'   => (int) $row->jobs_count,
+                        'match_len'    => $match_len,
+                        'primary_row'  => null,
+                        'best_row'     => $row,
+                        'rows'         => array( $row ),
+                    );
+                } else {
+                    $grouped[ $group_key ]['total_jobs'] += (int) $row->jobs_count;
+                    $grouped[ $group_key ]['rows'][]      = $row;
+                    $grouped[ $group_key ]['match_len']    = max( $grouped[ $group_key ]['match_len'], $match_len );
+                }
+
+                if ( ! empty( $row->is_primary ) && ! $grouped[ $group_key ]['primary_row'] ) {
+                    $grouped[ $group_key ]['primary_row'] = $row;
+                }
             }
 
-            $len_a = function_exists( 'mb_strlen' ) ? mb_strlen( $a->label, 'UTF-8' ) : strlen( $a->label );
-            $len_b = function_exists( 'mb_strlen' ) ? mb_strlen( $b->label, 'UTF-8' ) : strlen( $b->label );
+            $grouped = array_values( $grouped );
+            usort( $grouped, function( $a, $b ) {
+                if ( $a['group_jobs'] !== $b['group_jobs'] ) {
+                    return ( $a['group_jobs'] > $b['group_jobs'] ) ? -1 : 1;
+                }
 
-            if ( $len_a === $len_b ) {
+                if ( $a['match_len'] !== $b['match_len'] ) {
+                    return ( $a['match_len'] > $b['match_len'] ) ? -1 : 1;
+                }
+
+                if ( $a['total_jobs'] !== $b['total_jobs'] ) {
+                    return ( $a['total_jobs'] > $b['total_jobs'] ) ? -1 : 1;
+                }
+
                 return 0;
+            } );
+
+            $best_group = $grouped[0];
+            $best_row   = $best_group['primary_row'] ? $best_group['primary_row'] : $best_group['best_row'];
+
+            $primary_id = (int) $best_row->id;
+            if ( ! $best_row->is_primary ) {
+                $primary_id = (int) $wpdb->get_var(
+                    $wpdb->prepare(
+                        "SELECT id FROM {$table_titles} WHERE group_key = %s ORDER BY is_primary DESC, id ASC LIMIT 1",
+                        $best_row->group_key
+                    )
+                );
+
+                if ( ! $primary_id ) {
+                    $primary_id = (int) $best_row->id;
+                }
             }
 
-            return ( $len_a < $len_b ) ? -1 : 1;
-        } );
+            if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+                error_log( sprintf( '[BKJA] resolve_job_title_from_query: raw="%s" core="%s" resolved_group="%s" primary_id=%d label="%s"', (string) $raw_query, (string) $core, (string) $best_row->group_key, (int) $primary_id, (string) $best_row->label ) );
+            }
 
-        $best = $candidates[0];
-
-        $primary_id = $best->is_primary ? (int) $best->id : (int) $wpdb->get_var(
-            $wpdb->prepare(
-                "SELECT id FROM {$table_titles} WHERE group_key = %s ORDER BY is_primary DESC, id ASC LIMIT 1",
-                $best->group_key
-            )
-        );
-
-        if ( ! $primary_id ) {
-            $primary_id = (int) $best->id;
+            return array(
+                'job_title_id' => $primary_id,
+                'group_key'    => $best_row->group_key,
+                'label'        => $best_row->label,
+                'slug'         => $best_row->slug,
+            );
         }
 
-        return array(
-            'job_title_id' => $primary_id,
-            'group_key'    => $best->group_key,
-            'label'        => $best->label,
-            'slug'         => $best->slug,
-        );
+        return array();
     }
 
     protected static function get_feedback_hint( $normalized_message, $session_id, $user_id ) {
