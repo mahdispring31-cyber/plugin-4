@@ -1,16 +1,21 @@
 <?php
-// BKJA enhanced includes
-require_once plugin_dir_path(__FILE__) . 'includes/logging.php';
-require_once plugin_dir_path(__FILE__) . 'includes/helpers.php';
-require_once plugin_dir_path(__FILE__) . 'admin/settings-page.php';
-require_once plugin_dir_path(__FILE__) . 'admin/github-issue-reporter.php';
-
 /*
 Plugin Name: BKJA Assistant
 Version: 1.5.11
 Description: ابزار دستیار شغلی حرفه‌ای برای وردپرس.
 Author: Mahdi Mohammadi
 */
+
+// Prevent direct file access and avoid any accidental output before WordPress hooks are registered.
+if ( ! defined( 'ABSPATH' ) ) {
+        exit;
+}
+
+// BKJA enhanced includes
+require_once plugin_dir_path(__FILE__) . 'includes/logging.php';
+require_once plugin_dir_path(__FILE__) . 'includes/helpers.php';
+require_once plugin_dir_path(__FILE__) . 'admin/settings-page.php';
+require_once plugin_dir_path(__FILE__) . 'admin/github-issue-reporter.php';
 
 if ( ! defined( 'BKJA_PLUGIN_VERSION' ) ) {
         define( 'BKJA_PLUGIN_VERSION', '1.5.11' );
@@ -156,7 +161,6 @@ function bkja_ajax_get_job_records(){
 	$free_messages = get_option('bkja_free_messages_per_day', 5);
 	wp_send_json_success(['records'=>$records]);
 }
-if ( ! defined( 'ABSPATH' ) ) exit;
 define( 'BKJA_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'BKJA_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 require_once BKJA_PLUGIN_DIR . 'includes/class-bkja-database.php';
