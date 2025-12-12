@@ -80,7 +80,7 @@ class BKJA_Jobs {
         $table = $wpdb->prefix . 'bkja_jobs';
         $row = $wpdb->get_row(
             $wpdb->prepare(
-                "SELECT j.id, j.title, j.variant_title, j.job_title_id, j.income, j.investment, j.income_num, j.investment_num, j.experience_years, j.employment_type, j.hours_per_day, j.days_per_week, j.source, j.city, j.gender, j.advantages, j.disadvantages, j.details, j.created_at, j.category_id, jt.label AS job_title_label, jt.slug AS job_title_slug
+                "SELECT j.id, j.title, j.variant_title, j.job_title_id, j.income, j.investment, j.income_num, j.investment_num, j.income_toman, j.income_min_toman, j.income_max_toman, j.investment_toman, j.experience_years, j.employment_type, j.hours_per_day, j.days_per_week, j.source, j.city, j.gender, j.advantages, j.disadvantages, j.details, j.created_at, j.category_id, jt.label AS job_title_label, jt.slug AS job_title_slug
                  FROM {$table} j
                  LEFT JOIN {$wpdb->prefix}bkja_job_titles jt ON jt.id = j.job_title_id
                  WHERE j.id = %d LIMIT 1",
@@ -97,9 +97,11 @@ class BKJA_Jobs {
             'variant_title' => isset( $row->variant_title ) && $row->variant_title ? $row->variant_title : $row->title,
             'job_title_id'   => isset( $row->job_title_id ) ? (int) $row->job_title_id : null,
             'income'        => $row->income,
-            'income_num'    => isset( $row->income_num ) ? (int) $row->income_num : null,
+            'income_num'    => isset( $row->income_toman ) && $row->income_toman > 0 ? (int) $row->income_toman : ( isset( $row->income_num ) ? (int) $row->income_num : null ),
+            'income_min_toman' => isset( $row->income_min_toman ) ? (int) $row->income_min_toman : null,
+            'income_max_toman' => isset( $row->income_max_toman ) ? (int) $row->income_max_toman : null,
             'investment'    => $row->investment,
-            'investment_num'=> isset( $row->investment_num ) ? (int) $row->investment_num : null,
+            'investment_num'=> isset( $row->investment_toman ) && $row->investment_toman > 0 ? (int) $row->investment_toman : ( isset( $row->investment_num ) ? (int) $row->investment_num : null ),
             'experience_years' => isset( $row->experience_years ) ? (int) $row->experience_years : null,
             'employment_type'   => $row->employment_type,
             'employment_label'  => function_exists( 'bkja_get_employment_label' ) ? bkja_get_employment_label( $row->employment_type ) : $row->employment_type,

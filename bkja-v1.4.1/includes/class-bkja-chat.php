@@ -481,12 +481,12 @@ class BKJA_Chat {
 
             $grouped = array_values( $grouped );
             usort( $grouped, function( $a, $b ) {
-                if ( $a['group_jobs'] !== $b['group_jobs'] ) {
-                    return ( $a['group_jobs'] > $b['group_jobs'] ) ? -1 : 1;
-                }
-
                 if ( $a['match_len'] !== $b['match_len'] ) {
                     return ( $a['match_len'] > $b['match_len'] ) ? -1 : 1;
+                }
+
+                if ( $a['group_jobs'] !== $b['group_jobs'] ) {
+                    return ( $a['group_jobs'] > $b['group_jobs'] ) ? -1 : 1;
                 }
 
                 if ( $a['total_jobs'] !== $b['total_jobs'] ) {
@@ -535,6 +535,25 @@ class BKJA_Chat {
         }
 
         return array();
+    }
+
+    /**
+     * Unified resolver that mirrors sidebar resolution (group_key based).
+     */
+    public static function resolve_job_context_from_query( $user_text ) {
+        $resolved = self::resolve_job_title_from_query( $user_text );
+
+        if ( empty( $resolved ) ) {
+            return array();
+        }
+
+        return array(
+            'group_key'             => isset( $resolved['group_key'] ) ? $resolved['group_key'] : null,
+            'primary_job_title_id'  => isset( $resolved['job_title_id'] ) ? (int) $resolved['job_title_id'] : null,
+            'job_title_ids'         => isset( $resolved['job_title_ids'] ) ? (array) $resolved['job_title_ids'] : array(),
+            'label'                 => isset( $resolved['label'] ) ? $resolved['label'] : '',
+            'slug'                  => isset( $resolved['slug'] ) ? $resolved['slug'] : '',
+        );
     }
 
     protected static function get_feedback_hint( $normalized_message, $session_id, $user_id ) {
@@ -602,7 +621,7 @@ class BKJA_Chat {
         $resolved_ids    = array();
 
         if ( $job_title_id > 0 || $group_key ) {
-            $resolved = self::resolve_job_title_from_query(
+            $resolved = self::resolve_job_context_from_query(
                 array(
                     'job_title_id' => $job_title_id,
                     'group_key'    => $group_key,
@@ -612,27 +631,27 @@ class BKJA_Chat {
                 $job_title       = $resolved['label'];
                 $job_slug        = isset( $resolved['slug'] ) ? $resolved['slug'] : $job_slug;
                 $resolved_ids    = isset( $resolved['job_title_ids'] ) ? (array) $resolved['job_title_ids'] : array();
-                $resolved_for_db = ! empty( $resolved['group_key'] ) ? array( 'group_key' => $resolved['group_key'], 'job_title_ids' => $resolved_ids, 'label' => $resolved['label'] ) : ( ! empty( $resolved['job_title_id'] ) ? $resolved['job_title_id'] : $resolved['label'] );
+                $resolved_for_db = ! empty( $resolved['group_key'] ) ? array( 'group_key' => $resolved['group_key'], 'job_title_ids' => $resolved_ids, 'label' => $resolved['label'] ) : ( ! empty( $resolved['primary_job_title_id'] ) ? $resolved['primary_job_title_id'] : $resolved['label'] );
             }
         }
 
         if ( '' !== $normalized ) {
-            $resolved = self::resolve_job_title_from_query( $normalized );
+            $resolved = self::resolve_job_context_from_query( $normalized );
             if ( $resolved ) {
                 $job_title       = $resolved['label'];
                 $job_slug        = isset( $resolved['slug'] ) ? $resolved['slug'] : $job_slug;
                 $resolved_ids    = isset( $resolved['job_title_ids'] ) ? (array) $resolved['job_title_ids'] : array();
-                $resolved_for_db = ! empty( $resolved['group_key'] ) ? array( 'group_key' => $resolved['group_key'], 'job_title_ids' => $resolved_ids, 'label' => $resolved['label'] ) : ( ! empty( $resolved['job_title_id'] ) ? $resolved['job_title_id'] : $resolved['label'] );
+                $resolved_for_db = ! empty( $resolved['group_key'] ) ? array( 'group_key' => $resolved['group_key'], 'job_title_ids' => $resolved_ids, 'label' => $resolved['label'] ) : ( ! empty( $resolved['primary_job_title_id'] ) ? $resolved['primary_job_title_id'] : $resolved['label'] );
             }
         }
 
         if ( '' === $job_title && '' !== $job_title_hint ) {
-            $resolved_hint = self::resolve_job_title_from_query( $job_title_hint );
+            $resolved_hint = self::resolve_job_context_from_query( $job_title_hint );
             if ( $resolved_hint ) {
                 $job_title       = $resolved_hint['label'];
                 $job_slug        = isset( $resolved_hint['slug'] ) ? $resolved_hint['slug'] : $job_slug;
                 $resolved_ids    = isset( $resolved_hint['job_title_ids'] ) ? (array) $resolved_hint['job_title_ids'] : $resolved_ids;
-                $resolved_for_db = ! empty( $resolved_hint['group_key'] ) ? array( 'group_key' => $resolved_hint['group_key'], 'job_title_ids' => $resolved_ids, 'label' => $resolved_hint['label'] ) : ( ! empty( $resolved_hint['job_title_id'] ) ? $resolved_hint['job_title_id'] : $resolved_hint['label'] );
+                $resolved_for_db = ! empty( $resolved_hint['group_key'] ) ? array( 'group_key' => $resolved_hint['group_key'], 'job_title_ids' => $resolved_ids, 'label' => $resolved_hint['label'] ) : ( ! empty( $resolved_hint['primary_job_title_id'] ) ? $resolved_hint['primary_job_title_id'] : $resolved_hint['label'] );
             }
         }
 
@@ -665,15 +684,7 @@ class BKJA_Chat {
     }
 
     protected static function format_amount_label( $value ) {
-        if ( ! is_numeric( $value ) || $value <= 0 ) {
-            return 'نامشخص';
-        }
-
-        $number    = (float) $value;
-        $rounded   = abs( $number - round( $number ) ) < 0.1 ? round( $number ) : round( $number, 1 );
-        $formatted = is_float( $rounded ) ? rtrim( rtrim( number_format( $rounded, 1, '.', '' ), '0' ), '.' ) : $rounded;
-
-        return $formatted . ' میلیون تومان';
+        return bkja_format_toman_as_million_label( $value );
     }
 
     protected static function format_range_label( $min, $max ) {
@@ -687,7 +698,15 @@ class BKJA_Chat {
             $max = $tmp;
         }
 
-        return self::format_amount_label( $min ) . ' تا ' . self::format_amount_label( $max );
+        $format_number = function( $toman_value ) {
+            $label = bkja_format_toman_as_million_label( $toman_value );
+            return str_replace( ' میلیون تومان', '', $label );
+        };
+
+        $min_label = $format_number( $min );
+        $max_label = $format_number( $max );
+
+        return trim( $min_label ) . ' تا ' . trim( $max_label ) . ' میلیون تومان';
     }
 
     protected static function trim_snippet( $text, $length = 140 ) {
@@ -812,10 +831,19 @@ class BKJA_Chat {
         $count_reports = isset( $summary['count_reports'] ) ? (int) $summary['count_reports'] : 0;
         $window_months = isset( $summary['window_months'] ) ? (int) $summary['window_months'] : null;
 
+        $window_label = $window_months ? 'حدود ' . $window_months . ' ماه اخیر' : '';
+        $income_numeric_total = isset( $summary['income_numeric_total'] ) ? (int) $summary['income_numeric_total'] : 0;
+
         if ( $count_reports > 0 ) {
-            $sections[] = '• ' . ( $window_months ? $window_months . ' ماه اخیر - ' : '' ) . $count_reports . ' گزارش کاربری ثبت شده است.';
+            $sections[] = '• ' . ( $window_label ? $window_label . ' - ' : '' ) . $count_reports . ' گزارش کاربری ثبت شده است.';
+
+            if ( $income_numeric_total > 0 ) {
+                $sections[] = '• از ' . $count_reports . ' گزارش، ' . $income_numeric_total . ' گزارش درآمد عددی قابل تحلیل داشت.';
+            } else {
+                $sections[] = '• دادهٔ کافی برای محاسبهٔ دقیق درآمد ندارم (مثلاً فقط ۰ گزارش عددی). اگر چند تجربهٔ دیگر اضافه شود، میانگین دقیق‌تر می‌شود.';
+            }
         } else {
-            $sections[] = '• هنوز گزارش عددی معنادار نداریم؛ برآوردها تقریبی است.';
+            $sections[] = '• در ۱۲ ماه اخیر گزارشی برای این شغل ثبت نشده. می‌خوای کل زمان رو هم بررسی کنم؟';
         }
         $sections[] = '• اعداد زیر بر اساس گزارش‌های کاربران این سیستم است و آمار رسمی نیست.';
 
@@ -826,7 +854,7 @@ class BKJA_Chat {
         if ( $income_range ) {
             $income_line .= ' | بازه رایج: ' . $income_range;
         }
-        if ( $count_reports > 0 && $count_reports < 3 ) {
+        if ( $income_numeric_total > 0 && $income_numeric_total < 3 ) {
             $income_line .= ' (دقت پایین به دلیل گزارش‌های محدود)';
         }
         $sections[] = $income_line;
@@ -838,7 +866,7 @@ class BKJA_Chat {
         if ( $invest_range ) {
             $invest_line .= ' | بازه رایج: ' . $invest_range;
         }
-        if ( $count_reports > 0 && $count_reports < 3 ) {
+        if ( isset( $summary['investment_count'] ) && $summary['investment_count'] > 0 && $summary['investment_count'] < 3 ) {
             $invest_line .= ' (دقت پایین به دلیل گزارش‌های محدود)';
         }
         $sections[] = $invest_line;
