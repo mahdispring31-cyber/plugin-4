@@ -55,6 +55,90 @@ if ( ! function_exists( 'bkja_parse_numeric_amount' ) ) {
     }
 }
 
+if ( ! function_exists( 'bkja_parse_money_to_toman' ) ) {
+    /**
+     * Parse a free-form money string and convert it to Tomans.
+     *
+     * - Supports Persian/Arabic digits
+     * - Handles ranges like "بین X تا Y" or "X تا Y"
+     * - Detects units: میلیارد، میلیون، هزار، تومان/تومن
+     * - When no unit is present: numbers >= 1,000,000 are treated as toman; smaller numbers are treated as million toman.
+     *
+     * @param string $raw Raw input value.
+     * @return array{value:?int,min:?int,max:?int}
+     */
+    function bkja_parse_money_to_toman( $raw ) {
+        if ( ! is_string( $raw ) || '' === trim( $raw ) ) {
+            return array( 'value' => null, 'min' => null, 'max' => null );
+        }
+
+        $normalized = wp_strip_all_tags( $raw );
+        $normalized = trim( preg_replace( '/\s+/u', ' ', $normalized ) );
+
+        $persian_digits = array( '۰','۱','۲','۳','۴','۵','۶','۷','۸','۹' );
+        $latin_digits   = array( '0','1','2','3','4','5','6','7','8','9' );
+        $normalized     = str_replace( $persian_digits, $latin_digits, $normalized );
+        $normalized     = str_replace( array( '٬', ',' ), '', $normalized );
+
+        $lower   = mb_strtolower( $normalized );
+        $has_mld = ( false !== strpos( $lower, 'میلیارد' ) ) || ( false !== strpos( $lower, 'ميليارد' ) );
+        $has_mil = ( false !== strpos( $lower, 'میلیون' ) ) || ( false !== strpos( $lower, 'ميليون' ) );
+        $has_th  = ( false !== strpos( $lower, 'هزار' ) );
+        $has_to  = ( false !== strpos( $lower, 'تومان' ) ) || ( false !== strpos( $lower, 'تومن' ) );
+
+        $multiplier = null;
+        if ( $has_mld ) {
+            $multiplier = 1000000000;
+        } elseif ( $has_mil ) {
+            $multiplier = 1000000;
+        } elseif ( $has_th ) {
+            $multiplier = 1000;
+        } elseif ( $has_to ) {
+            $multiplier = 1;
+        }
+
+        preg_match_all( '/([0-9]+(?:[\.\/][0-9]+)?)/', $normalized, $matches );
+        $numbers = array();
+        if ( ! empty( $matches[1] ) ) {
+            foreach ( $matches[1] as $match ) {
+                $numbers[] = floatval( str_replace( array( '/', '\\' ), '.', $match ) );
+            }
+        }
+
+        if ( empty( $numbers ) ) {
+            return array( 'value' => null, 'min' => null, 'max' => null );
+        }
+
+        if ( null === $multiplier ) {
+            $multiplier = ( $numbers[0] >= 1000000 ) ? 1 : 1000000;
+        }
+
+        $amounts = array_map( function( $num ) use ( $multiplier ) {
+            return (int) round( $num * $multiplier );
+        }, $numbers );
+
+        $min = isset( $amounts[0] ) ? $amounts[0] : null;
+        $max = isset( $amounts[1] ) ? $amounts[1] : null;
+
+        if ( null !== $min && null !== $max && $min > $max ) {
+            $tmp = $min;
+            $min = $max;
+            $max = $tmp;
+        }
+
+        $value = $min;
+        if ( null !== $min && null !== $max ) {
+            $value = (int) round( ( $min + $max ) / 2 );
+        }
+
+        return array(
+            'value' => $value,
+            'min'   => $min,
+            'max'   => $max,
+        );
+    }
+}
+
 /**
  * BKJA_Database
  * - مدیریت جداول (activate)
@@ -91,11 +175,16 @@ class BKJA_Database {
         $sql2 = "CREATE TABLE IF NOT EXISTS `{$table_jobs}` (
             `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             `category_id` BIGINT UNSIGNED NOT NULL,
+            `job_title_id` BIGINT UNSIGNED NULL,
             `title` VARCHAR(255) NOT NULL,
             `income` VARCHAR(255) DEFAULT NULL,
             `investment` VARCHAR(255) DEFAULT NULL,
             `income_num` BIGINT NULL,
             `investment_num` BIGINT NULL,
+            `income_toman` BIGINT NULL,
+            `income_min_toman` BIGINT NULL,
+            `income_max_toman` BIGINT NULL,
+            `investment_toman` BIGINT NULL,
             `experience_years` TINYINT NULL,
             `employment_type` VARCHAR(50) NULL,
             `hours_per_day` TINYINT NULL,
@@ -109,6 +198,7 @@ class BKJA_Database {
             `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (`id`),
             INDEX (`category_id`),
+            INDEX (`job_title_id`),
             INDEX (`gender`)
         ) {$charset_collate};";
 
@@ -140,8 +230,10 @@ class BKJA_Database {
 
         self::ensure_numeric_job_columns();
         self::backfill_numeric_fields();
+        self::backfill_money_fields();
         update_option( 'bkja_jobs_numeric_fields_migrated', 1 );
         update_option( 'bkja_jobs_extended_fields_migrated', 1 );
+        update_option( 'bkja_jobs_money_fields_migrated', 1 );
 
         // مقدار پیش‌فرض برای تعداد پیام رایگان در روز
         if ( false === get_option( 'bkja_free_messages_per_day' ) ) {
@@ -362,18 +454,18 @@ class BKJA_Database {
     public static function maybe_migrate_numeric_job_fields() {
         self::ensure_numeric_job_columns();
 
-        $needs_backfill = false;
-        if ( ! get_option( 'bkja_jobs_numeric_fields_migrated' ) ) {
-            $needs_backfill = true;
-        }
-        if ( ! get_option( 'bkja_jobs_extended_fields_migrated' ) ) {
-            $needs_backfill = true;
-        }
+        $needs_backfill = ( ! get_option( 'bkja_jobs_numeric_fields_migrated' ) ) || ( ! get_option( 'bkja_jobs_extended_fields_migrated' ) );
+        $needs_money    = ( ! get_option( 'bkja_jobs_money_fields_migrated' ) );
 
         if ( $needs_backfill ) {
             self::backfill_numeric_fields();
             update_option( 'bkja_jobs_numeric_fields_migrated', 1 );
             update_option( 'bkja_jobs_extended_fields_migrated', 1 );
+        }
+
+        if ( $needs_money ) {
+            self::backfill_money_fields();
+            update_option( 'bkja_jobs_money_fields_migrated', 1 );
         }
     }
 
@@ -399,13 +491,36 @@ class BKJA_Database {
             $wpdb->query( "ALTER TABLE {$table} ADD COLUMN {$column} {$definition}{$after_clause}" );
         };
 
+        $add_index = function( $index, $column ) use ( $wpdb, $table ) {
+            $existing_indexes = $wpdb->get_var(
+                $wpdb->prepare(
+                    "SELECT COUNT(1) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = %s AND index_name = %s",
+                    $table,
+                    $index
+                )
+            );
+
+            if ( $existing_indexes > 0 ) {
+                return;
+            }
+
+            $wpdb->query( "ALTER TABLE {$table} ADD INDEX {$index} ({$column})" );
+        };
+
         $add_column( 'income_num', 'BIGINT NULL', 'investment' );
         $add_column( 'investment_num', 'BIGINT NULL', 'income_num' );
+        $add_column( 'income_toman', 'BIGINT NULL', 'investment_num' );
+        $add_column( 'income_min_toman', 'BIGINT NULL', 'income_toman' );
+        $add_column( 'income_max_toman', 'BIGINT NULL', 'income_min_toman' );
+        $add_column( 'investment_toman', 'BIGINT NULL', 'income_max_toman' );
         $add_column( 'experience_years', 'TINYINT NULL', 'investment_num' );
         $add_column( 'employment_type', 'VARCHAR(50) NULL', 'experience_years' );
         $add_column( 'hours_per_day', 'TINYINT NULL', 'employment_type' );
         $add_column( 'days_per_week', 'TINYINT NULL', 'hours_per_day' );
         $add_column( 'source', 'VARCHAR(50) NULL', 'days_per_week' );
+        $add_column( 'job_title_id', 'BIGINT UNSIGNED NULL', 'category_id' );
+
+        $add_index( 'job_title_id', 'job_title_id' );
     }
 
     /**
@@ -457,6 +572,74 @@ class BKJA_Database {
     }
 
     /**
+     * Backfill canonical money columns (in Toman) from textual income/investment values.
+     */
+    public static function backfill_money_fields( $limit = 300 ) {
+        global $wpdb;
+
+        $table  = $wpdb->prefix . 'bkja_jobs';
+        $exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+        if ( $exists !== $table ) {
+            return;
+        }
+
+        self::ensure_numeric_job_columns();
+
+        $limit = absint( $limit );
+        if ( $limit <= 0 ) {
+            $limit = 300;
+        }
+
+        $max_batches = 25;
+
+        do {
+            $rows = $wpdb->get_results(
+                $wpdb->prepare(
+                    "SELECT id, income, investment, income_toman, investment_toman, income_min_toman, income_max_toman
+                     FROM {$table}
+                     WHERE (income_toman IS NULL OR income_toman <= 0 OR income_toman > 1000000000000)
+                        OR (investment_toman IS NULL OR investment_toman < 0 OR investment_toman > 1000000000000)
+                     ORDER BY id ASC
+                     LIMIT %d",
+                    $limit
+                )
+            );
+
+            if ( empty( $rows ) ) {
+                break;
+            }
+
+            foreach ( $rows as $row ) {
+                $updates = array();
+
+                $income = bkja_parse_money_to_toman( $row->income );
+                if ( isset( $income['value'] ) && $income['value'] > 0 && $income['value'] < 1000000000000 ) {
+                    $updates['income_toman']      = $income['value'];
+                    $updates['income_min_toman']  = ( isset( $income['min'] ) && $income['min'] > 0 ) ? $income['min'] : null;
+                    $updates['income_max_toman']  = ( isset( $income['max'] ) && $income['max'] > 0 ) ? $income['max'] : null;
+                } elseif ( $row->income_toman && $row->income_toman > 1000000000000 ) {
+                    $updates['income_toman']     = null;
+                    $updates['income_min_toman'] = null;
+                    $updates['income_max_toman'] = null;
+                }
+
+                $investment = bkja_parse_money_to_toman( $row->investment );
+                if ( isset( $investment['value'] ) && $investment['value'] > 0 && $investment['value'] < 1000000000000 ) {
+                    $updates['investment_toman'] = $investment['value'];
+                } elseif ( $row->investment_toman && $row->investment_toman > 1000000000000 ) {
+                    $updates['investment_toman'] = null;
+                }
+
+                if ( ! empty( $updates ) ) {
+                    $wpdb->update( $table, $updates, array( 'id' => (int) $row->id ) );
+                }
+            }
+
+            $max_batches--;
+        } while ( $max_batches > 0 );
+    }
+
+    /**
      * insert_job
      * درج یک رکورد شغلی (هر رکورد متعلق به یک کاربر/مشاهده است)
      */
@@ -476,26 +659,43 @@ class BKJA_Database {
         $days_per_week    = ( $days_per_week && $days_per_week > 0 ) ? $days_per_week : null;
 
         $row = [
-            'category_id'      => isset( $data['category_id'] ) ? sanitize_text_field( $data['category_id'] ) : 0,
-            'title'            => isset( $data['title'] ) ? sanitize_text_field( $data['title'] ) : '',
-            'income'           => isset( $data['income'] ) ? sanitize_text_field( $data['income'] ) : '',
-            'investment'       => isset( $data['investment'] ) ? sanitize_text_field( $data['investment'] ) : '',
-            'income_num'       => 0,
-            'investment_num'   => 0,
-            'experience_years' => $experience_years,
-            'employment_type'  => isset( $data['employment_type'] ) ? sanitize_text_field( $data['employment_type'] ) : null,
-            'hours_per_day'    => $hours_per_day,
-            'days_per_week'    => $days_per_week,
-            'source'           => isset( $data['source'] ) ? sanitize_text_field( $data['source'] ) : null,
-            'city'             => isset( $data['city'] ) ? sanitize_text_field( $data['city'] ) : '',
-            'gender'           => isset( $data['gender'] ) ? sanitize_text_field( $data['gender'] ) : 'both',
-            'advantages'       => isset( $data['advantages'] ) ? sanitize_textarea_field( $data['advantages'] ) : '',
-            'disadvantages'    => isset( $data['disadvantages'] ) ? sanitize_textarea_field( $data['disadvantages'] ) : '',
-            'details'          => isset( $data['details'] ) ? sanitize_textarea_field( $data['details'] ) : '',
+            'category_id'        => isset( $data['category_id'] ) ? sanitize_text_field( $data['category_id'] ) : 0,
+            'job_title_id'       => isset( $data['job_title_id'] ) ? intval( $data['job_title_id'] ) : null,
+            'title'              => isset( $data['title'] ) ? sanitize_text_field( $data['title'] ) : '',
+            'income'             => isset( $data['income'] ) ? sanitize_text_field( $data['income'] ) : '',
+            'investment'         => isset( $data['investment'] ) ? sanitize_text_field( $data['investment'] ) : '',
+            'income_num'         => 0,
+            'investment_num'     => 0,
+            'income_toman'       => null,
+            'income_min_toman'   => null,
+            'income_max_toman'   => null,
+            'investment_toman'   => null,
+            'experience_years'   => $experience_years,
+            'employment_type'    => isset( $data['employment_type'] ) ? sanitize_text_field( $data['employment_type'] ) : null,
+            'hours_per_day'      => $hours_per_day,
+            'days_per_week'      => $days_per_week,
+            'source'             => isset( $data['source'] ) ? sanitize_text_field( $data['source'] ) : null,
+            'city'               => isset( $data['city'] ) ? sanitize_text_field( $data['city'] ) : '',
+            'gender'             => isset( $data['gender'] ) ? sanitize_text_field( $data['gender'] ) : 'both',
+            'advantages'         => isset( $data['advantages'] ) ? sanitize_textarea_field( $data['advantages'] ) : '',
+            'disadvantages'      => isset( $data['disadvantages'] ) ? sanitize_textarea_field( $data['disadvantages'] ) : '',
+            'details'            => isset( $data['details'] ) ? sanitize_textarea_field( $data['details'] ) : '',
         ];
 
-        $row['income_num']     = ( $income_num_input && $income_num_input > 0 ) ? $income_num_input : bkja_parse_numeric_amount( $row['income'] );
-        $row['investment_num'] = ( $investment_num_input && $investment_num_input > 0 ) ? $investment_num_input : bkja_parse_numeric_amount( $row['investment'] );
+        $income_money           = bkja_parse_money_to_toman( $row['income'] );
+        $investment_money       = bkja_parse_money_to_toman( $row['investment'] );
+
+        $row['income_toman']       = ( isset( $income_money['value'] ) && $income_money['value'] > 0 ) ? $income_money['value'] : null;
+        $row['income_min_toman']   = ( isset( $income_money['min'] ) && $income_money['min'] > 0 ) ? $income_money['min'] : null;
+        $row['income_max_toman']   = ( isset( $income_money['max'] ) && $income_money['max'] > 0 ) ? $income_money['max'] : null;
+        $row['investment_toman']   = ( isset( $investment_money['value'] ) && $investment_money['value'] > 0 ) ? $investment_money['value'] : null;
+
+        $row['income_num']     = ( $income_num_input && $income_num_input > 0 )
+            ? $income_num_input
+            : ( $row['income_toman'] ? (int) round( $row['income_toman'] / 1000000 ) : bkja_parse_numeric_amount( $row['income'] ) );
+        $row['investment_num'] = ( $investment_num_input && $investment_num_input > 0 )
+            ? $investment_num_input
+            : ( $row['investment_toman'] ? (int) round( $row['investment_toman'] / 1000000 ) : bkja_parse_numeric_amount( $row['investment'] ) );
 
         if ( isset( $data['created_at'] ) && ! empty( $data['created_at'] ) ) {
             $row['created_at'] = sanitize_text_field( $data['created_at'] );
@@ -713,26 +913,38 @@ class BKJA_Database {
         $window_months = 24;
         $where_clause  = "title = %s AND created_at >= DATE_SUB(NOW(), INTERVAL {$window_months} MONTH)";
 
-        $row = $wpdb->get_row(
+        $rows = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT
-                    COUNT(*) AS total_reports,
-                    MAX(created_at) AS latest_at,
-                    AVG(CASE WHEN income_num > 0 THEN income_num END) AS avg_income,
-                    MIN(CASE WHEN income_num > 0 THEN income_num END) AS min_income,
-                    MAX(CASE WHEN income_num > 0 THEN income_num END) AS max_income,
-                    SUM(CASE WHEN income_num > 0 THEN 1 ELSE 0 END) AS income_count,
-                    AVG(CASE WHEN investment_num > 0 THEN investment_num END) AS avg_investment,
-                    MIN(CASE WHEN investment_num > 0 THEN investment_num END) AS min_investment,
-                    MAX(CASE WHEN investment_num > 0 THEN investment_num END) AS max_investment,
-                    SUM(CASE WHEN investment_num > 0 THEN 1 ELSE 0 END) AS investment_count
-                 FROM {$table}
-                 WHERE {$where_clause}",
+                "SELECT income_toman, investment_toman, created_at FROM {$table} WHERE {$where_clause}",
                 $job_title
             )
         );
 
-        if ( ! $row ) return null;
+        if ( null === $rows ) {
+            return null;
+        }
+
+        $total_reports = count( $rows );
+        $latest_at     = null;
+        $incomes       = array();
+        $investments   = array();
+
+        foreach ( $rows as $row ) {
+            if ( $row->income_toman && $row->income_toman > 0 && $row->income_toman < 1000000000000 ) {
+                $incomes[] = (int) $row->income_toman;
+            }
+
+            if ( $row->investment_toman && $row->investment_toman >= 0 && $row->investment_toman < 1000000000000 ) {
+                $investments[] = (int) $row->investment_toman;
+            }
+
+            if ( empty( $latest_at ) || $row->created_at > $latest_at ) {
+                $latest_at = $row->created_at;
+            }
+        }
+
+        $income_stats     = self::prepare_money_stats( $incomes );
+        $investment_stats = self::prepare_money_stats( $investments );
 
         $cities = $wpdb->get_col(
             $wpdb->prepare(
@@ -783,22 +995,94 @@ class BKJA_Database {
 
         return array(
             'job_title'         => $job_title,
-            'avg_income'        => $row->avg_income ? round( (float) $row->avg_income, 1 ) : null,
-            'min_income'        => $row->min_income ? (float) $row->min_income : null,
-            'max_income'        => $row->max_income ? (float) $row->max_income : null,
-            'income_count'      => (int) $row->income_count,
-            'avg_investment'    => $row->avg_investment ? round( (float) $row->avg_investment, 1 ) : null,
-            'min_investment'    => $row->min_investment ? (float) $row->min_investment : null,
-            'max_investment'    => $row->max_investment ? (float) $row->max_investment : null,
-            'investment_count'  => (int) $row->investment_count,
-            'count_reports'     => (int) $row->total_reports,
-            'latest_at'         => $row->latest_at,
+            'avg_income'        => $income_stats['avg'] ? round( $income_stats['avg'] / 1000000, 2 ) : null,
+            'min_income'        => $income_stats['min'] ? round( $income_stats['min'] / 1000000, 2 ) : null,
+            'max_income'        => $income_stats['max'] ? round( $income_stats['max'] / 1000000, 2 ) : null,
+            'income_count'      => (int) $income_stats['count'],
+            'avg_investment'    => $investment_stats['avg'] ? round( $investment_stats['avg'] / 1000000, 2 ) : null,
+            'min_investment'    => $investment_stats['min'] ? round( $investment_stats['min'] / 1000000, 2 ) : null,
+            'max_investment'    => $investment_stats['max'] ? round( $investment_stats['max'] / 1000000, 2 ) : null,
+            'investment_count'  => (int) $investment_stats['count'],
+            'count_reports'     => (int) $total_reports,
+            'latest_at'         => $latest_at,
+            'numeric_reports_used' => array(
+                'income'      => (int) $income_stats['count'],
+                'investment'  => (int) $investment_stats['count'],
+            ),
             'cities'            => $cities,
             'genders'           => null,
             'advantages'        => $advantages,
             'disadvantages'     => $disadvantages,
             'window_months'     => $window_months,
         );
+    }
+
+    private static function prepare_money_stats( $values ) {
+        if ( empty( $values ) || ! is_array( $values ) ) {
+            return array(
+                'avg'   => null,
+                'min'   => null,
+                'max'   => null,
+                'count' => 0,
+            );
+        }
+
+        sort( $values );
+        $filtered = self::filter_money_outliers( $values );
+
+        if ( empty( $filtered ) ) {
+            $filtered = $values;
+        }
+
+        $count = count( $filtered );
+
+        return array(
+            'avg'   => $count ? array_sum( $filtered ) / $count : null,
+            'min'   => $count ? min( $filtered ) : null,
+            'max'   => $count ? max( $filtered ) : null,
+            'count' => $count,
+        );
+    }
+
+    private static function calculate_percentile( $values, $percentile ) {
+        $count = count( $values );
+        if ( 0 === $count ) {
+            return 0;
+        }
+
+        $index = ( $percentile / 100 ) * ( $count - 1 );
+        $lower = floor( $index );
+        $upper = ceil( $index );
+
+        if ( $lower === $upper ) {
+            return $values[ (int) $index ];
+        }
+
+        $weight = $index - $lower;
+        return $values[ $lower ] * ( 1 - $weight ) + $values[ $upper ] * $weight;
+    }
+
+    private static function filter_money_outliers( $values ) {
+        $count = count( $values );
+        if ( $count < 4 ) {
+            return $values;
+        }
+
+        sort( $values );
+        $q1  = self::calculate_percentile( $values, 25 );
+        $q3  = self::calculate_percentile( $values, 75 );
+        $iqr = $q3 - $q1;
+
+        if ( $iqr <= 0 ) {
+            return $values;
+        }
+
+        $lower = $q1 - ( 1.5 * $iqr );
+        $upper = $q3 + ( 1.5 * $iqr );
+
+        return array_values( array_filter( $values, function( $value ) use ( $lower, $upper ) {
+            return $value >= $lower && $value <= $upper;
+        } ) );
     }
 
     /**
