@@ -1797,9 +1797,6 @@
                         var groupKey = job.group_key || '';
                         var jobTitleIds = Array.isArray(job.job_title_ids) ? job.job_title_ids.join(',') : '';
                         var $j = $('<div class="bkja-job-title-item" data-id="'+job.id+'" data-group-key="'+esc(groupKey)+'" data-label="'+esc(titleLabel)+'" data-job-title-ids="'+esc(jobTitleIds)+'" data-slug="'+esc(job.slug||'')+'">🧭 '+esc(titleLabel)+'</div>');
-                        if(typeof job.jobs_count !== 'undefined'){
-                            $j.append(' <span class="bkja-job-count">('+esc(job.jobs_count)+')</span>');
-                        }
                         $sub.append($j);
                     });
                 } else {
