@@ -1069,20 +1069,22 @@ class BKJA_Database {
         $incoming_group_key = null;
         $incoming_ids       = array();
         $incoming_label     = '';
-        if ( is_array( $job_title ) && isset( $job_title['group_key'] ) ) {
-            $incoming_group_key = sanitize_text_field( $job_title['group_key'] );
+        $incoming_id        = 0;
+        if ( is_array( $job_title ) || is_object( $job_title ) ) {
+            $incoming_group_key = isset( $job_title['group_key'] ) ? sanitize_text_field( $job_title['group_key'] ) : ( isset( $job_title->group_key ) ? sanitize_text_field( $job_title->group_key ) : '' );
             if ( isset( $job_title['job_title_ids'] ) && is_array( $job_title['job_title_ids'] ) ) {
                 $incoming_ids = array_map( 'intval', $job_title['job_title_ids'] );
+            } elseif ( isset( $job_title->job_title_ids ) && is_array( $job_title->job_title_ids ) ) {
+                $incoming_ids = array_map( 'intval', $job_title->job_title_ids );
+            }
+            if ( isset( $job_title['job_title_id'] ) ) {
+                $incoming_id = (int) $job_title['job_title_id'];
+            } elseif ( isset( $job_title->job_title_id ) ) {
+                $incoming_id = (int) $job_title->job_title_id;
             }
             if ( isset( $job_title['label'] ) ) {
                 $incoming_label = sanitize_text_field( $job_title['label'] );
-            }
-        } elseif ( is_object( $job_title ) && isset( $job_title->group_key ) ) {
-            $incoming_group_key = sanitize_text_field( $job_title->group_key );
-            if ( isset( $job_title->job_title_ids ) && is_array( $job_title->job_title_ids ) ) {
-                $incoming_ids = array_map( 'intval', $job_title->job_title_ids );
-            }
-            if ( isset( $job_title->label ) ) {
+            } elseif ( isset( $job_title->label ) ) {
                 $incoming_label = sanitize_text_field( $job_title->label );
             }
         }
@@ -1097,7 +1099,7 @@ class BKJA_Database {
                     )
                 );
 
-                $context['job_title_ids'] = $ids;
+                $context['job_title_ids'] = array_map( 'intval', $ids );
                 $context['group_key']     = $incoming_group_key;
                 $context['label']         = $primary ? $primary->label : $incoming_label;
                 $context['slug']          = $primary ? $primary->slug : '';
@@ -1107,8 +1109,9 @@ class BKJA_Database {
         }
 
         if ( ! empty( $incoming_ids ) ) {
-            $placeholders = implode( ',', array_fill( 0, count( $incoming_ids ), '%d' ) );
-            $row          = $wpdb->get_row( $wpdb->prepare( "SELECT group_key, COALESCE(base_label, label) AS label, COALESCE(base_slug, slug) AS slug FROM {$table_job_titles} WHERE id IN ({$placeholders}) ORDER BY is_primary DESC, id ASC LIMIT 1", $incoming_ids ) );
+            $incoming_ids   = array_filter( array_map( 'intval', $incoming_ids ) );
+            $placeholders   = implode( ',', array_fill( 0, count( $incoming_ids ), '%d' ) );
+            $row            = $wpdb->get_row( $wpdb->prepare( "SELECT id, group_key, COALESCE(base_label, label) AS label, COALESCE(base_slug, slug) AS slug FROM {$table_job_titles} WHERE id IN ({$placeholders}) ORDER BY is_primary DESC, id ASC LIMIT 1", $incoming_ids ) );
             if ( $row ) {
                 $ids                  = $row->group_key ? self::get_job_title_ids_for_group( $row->group_key ) : $incoming_ids;
                 $context['job_title_ids'] = array_unique( array_map( 'intval', $ids ) );
@@ -1119,7 +1122,12 @@ class BKJA_Database {
             }
         }
 
-        $job_title_id = self::resolve_job_title_id( $job_title );
+        if ( $incoming_id > 0 ) {
+            $job_title_id = $incoming_id;
+        } else {
+            $job_title_id = self::resolve_job_title_id( $job_title );
+        }
+
         if ( $job_title_id ) {
             $row = $wpdb->get_row( $wpdb->prepare( "SELECT id, group_key, COALESCE(base_label, label) AS label, COALESCE(base_slug, slug) AS slug FROM {$table_job_titles} WHERE id = %d", $job_title_id ) );
             if ( $row ) {
@@ -1130,7 +1138,7 @@ class BKJA_Database {
                     $ids = array( (int) $row->id );
                 }
 
-                $context['job_title_ids'] = $ids;
+                $context['job_title_ids'] = array_map( 'intval', $ids );
                 $context['group_key']     = $group_key ? $group_key : null;
                 $context['label']         = $row->label;
                 $context['slug']          = $row->slug;
@@ -1167,7 +1175,7 @@ class BKJA_Database {
                     $group_key = $candidate->group_key;
                     $ids       = $group_key ? self::get_job_title_ids_for_group( $group_key ) : array( (int) $candidate->id );
 
-                    $context['job_title_ids'] = $ids;
+                    $context['job_title_ids'] = array_map( 'intval', $ids );
                     $context['group_key']     = $group_key ? $group_key : null;
                     $context['label']         = $candidate->label;
                     $context['slug']          = $candidate->slug;
@@ -1187,7 +1195,7 @@ class BKJA_Database {
                     $group_key = $candidate->group_key;
                     $ids       = $group_key ? self::get_job_title_ids_for_group( $group_key ) : array( (int) $candidate->id );
 
-                    $context['job_title_ids'] = $ids;
+                    $context['job_title_ids'] = array_map( 'intval', $ids );
                     $context['group_key']     = $group_key ? $group_key : null;
                     $context['label']         = $candidate->label;
                     $context['slug']          = $candidate->slug;
@@ -1207,13 +1215,21 @@ class BKJA_Database {
                     $group_key = $candidate->group_key;
                     $ids       = $group_key ? self::get_job_title_ids_for_group( $group_key ) : array( (int) $candidate->id );
 
-                    $context['job_title_ids'] = $ids;
+                    $context['job_title_ids'] = array_map( 'intval', $ids );
                     $context['group_key']     = $group_key ? $group_key : null;
                     $context['label']         = $candidate->label;
                     $context['slug']          = $candidate->slug;
                     break;
                 }
             }
+        }
+
+        if ( empty( $context['label'] ) && $incoming_label ) {
+            $context['label'] = $incoming_label;
+        }
+
+        if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+            error_log( 'BKJA resolve_job_group_context input: ' . print_r( $job_title, true ) . ' -> ' . print_r( $context, true ) );
         }
 
         return $context;
@@ -1540,7 +1556,10 @@ class BKJA_Database {
         self::ensure_numeric_job_columns();
         self::ensure_job_title_schema();
 
-        $window_months = 24;
+        $window_months = (int) get_option( 'bkja_stats_window_months', 12 );
+        if ( $window_months <= 0 ) {
+            $window_months = 12;
+        }
 
         $context      = self::resolve_job_group_context( $job_title );
         $job_title_id = ! empty( $context['job_title_ids'] ) ? (int) $context['job_title_ids'][0] : null;
@@ -1556,6 +1575,10 @@ class BKJA_Database {
         $where        = self::build_job_where_clause( $context, $job_title, $window_months, $filters, 'j' );
         $where_clause = $where['where_clause'];
         $where_params = $where['where_params'];
+
+        if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+            error_log( 'BKJA get_job_summary context: ' . print_r( $context, true ) . ' WHERE ' . $where_clause . ' params ' . print_r( $where_params, true ) );
+        }
 
         $prepare_with_params = function( $sql, $extra_params = array() ) use ( $wpdb, $where_params ) {
             $params = array_merge( $where_params, (array) $extra_params );
@@ -1734,9 +1757,18 @@ class BKJA_Database {
 
         $job_ids = ! empty( $context['job_title_ids'] ) ? array_map( 'intval', $context['job_title_ids'] ) : array();
 
-        $where        = self::build_job_where_clause( $context, $job_title, null, $filters, 'j' );
+        $window_months = (int) get_option( 'bkja_stats_window_months', 12 );
+        if ( $window_months <= 0 ) {
+            $window_months = 12;
+        }
+
+        $where        = self::build_job_where_clause( $context, $job_title, $window_months, $filters, 'j' );
         $where_clause = $where['where_clause'];
         $where_params = $where['where_params'];
+
+        if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+            error_log( 'BKJA get_job_records context: ' . print_r( $context, true ) . ' WHERE ' . $where_clause . ' params ' . print_r( $where_params, true ) );
+        }
 
         $prepare_with_params = function( $sql, $extra_params = array() ) use ( $wpdb, $where_params ) {
             $params = array_merge( $where_params, (array) $extra_params );
@@ -1845,6 +1877,11 @@ class BKJA_Database {
         $prefix        = $table_alias ? $table_alias . '.' : '';
         $job_ids       = ! empty( $context['job_title_ids'] ) ? array_map( 'intval', $context['job_title_ids'] ) : array();
         $window_months = $window_months ? absint( $window_months ) : 0;
+        $fallback_title = $job_title;
+
+        if ( ! $fallback_title && ! empty( $context['label'] ) ) {
+            $fallback_title = $context['label'];
+        }
 
         if ( empty( $job_ids ) && ! empty( $context['group_key'] ) ) {
             $job_ids = self::get_job_title_ids_for_group( $context['group_key'] );
@@ -1854,9 +1891,9 @@ class BKJA_Database {
             $placeholders = implode( ',', array_fill( 0, count( $job_ids ), '%d' ) );
             $clauses[]    = "{$prefix}job_title_id IN ({$placeholders})";
             $params       = array_merge( $params, $job_ids );
-        } else {
+        } elseif ( '' !== $fallback_title ) {
             $clauses[] = "{$prefix}title = %s";
-            $params[]  = $job_title;
+            $params[]  = $fallback_title;
         }
 
         if ( $window_months > 0 ) {

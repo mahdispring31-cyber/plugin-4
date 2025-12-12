@@ -835,6 +835,9 @@
 
             function appendJobMetaNote(){
                 $message.find('.bkja-job-meta-note').remove();
+                if(!data.used_job_stats){
+                    return;
+                }
                 var count = parseInt(data.job_report_count, 10);
                 if(isNaN(count) || count <= 0){
                     return;
@@ -1831,12 +1834,13 @@
             $messages.scrollTop($messages.prop("scrollHeight"));
 
             showJobSummaryAndRecords({
-                job_title: jobSlug ? jobSlug : jobTitleId,
+                job_title: baseLabel,
                 job_title_id: jobTitleId,
                 group_key: groupKey,
                 job_slug: jobSlug,
                 label: baseLabel,
-                job_title_ids: jobTitleIds
+                job_title_ids: jobTitleIds,
+                job_label: baseLabel
             }, baseLabel);
 
             $(".bkja-category-item.open").removeClass("open");
@@ -1856,11 +1860,18 @@
                 if(job_title.job_title){ payloadSummary.job_title = job_title.job_title; payloadRecords.job_title = job_title.job_title; }
                 if(job_title.job_title_id){ payloadSummary.job_title_id = job_title.job_title_id; payloadRecords.job_title_id = job_title.job_title_id; }
                 if(job_title.group_key){ payloadSummary.group_key = job_title.group_key; payloadRecords.group_key = job_title.group_key; }
+                if(job_title.job_title_ids){ payloadSummary.job_title_ids = job_title.job_title_ids; payloadRecords.job_title_ids = job_title.job_title_ids; }
+                if(job_title.job_label){ payloadSummary.job_label = job_title.job_label; payloadRecords.job_label = job_title.job_label; }
                 if(job_title.job_slug){ payloadSummary.job_slug = job_title.job_slug; }
                 if(job_title.label && !displayTitle){ displayTitle = job_title.label; }
             } else {
                 payloadSummary.job_title = job_title;
                 payloadRecords.job_title = job_title;
+            }
+
+            if((window.BKJA_DEBUG || (typeof wp !== 'undefined' && wp && wp.debug) || (typeof BKJA !== 'undefined' && BKJA && BKJA.debug)) && typeof console !== 'undefined' && console.log){
+                console.log('BKJA sidebar payload summary:', payloadSummary);
+                console.log('BKJA sidebar payload records:', payloadRecords);
             }
 
             $.when(

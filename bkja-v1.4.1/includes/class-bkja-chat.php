@@ -1084,6 +1084,7 @@ class BKJA_Chat {
 
     protected static function build_response_payload( $text, $context, $message, $from_cache = false, $source = 'openai', $extra = array() ) {
         $context_used = ! empty( $context['job_title'] );
+        $used_job_stats = false;
 
         $payload = array(
             'text'         => (string) $text,
@@ -1101,11 +1102,15 @@ class BKJA_Chat {
         $job_income_range      = array( $summary['min_income'] ?? null, $summary['max_income'] ?? null );
         $job_avg_investment    = isset( $summary['avg_investment'] ) ? (float) $summary['avg_investment'] : null;
         $job_investment_range  = array( $summary['min_investment'] ?? null, $summary['max_investment'] ?? null );
+        if ( $context_used && ! empty( $summary ) && $job_report_count && $job_report_count > 0 ) {
+            $used_job_stats = true;
+        }
         $payload['job_report_count']     = $job_report_count;
         $payload['job_avg_income']       = $job_avg_income;
         $payload['job_income_range']     = $job_income_range;
         $payload['job_avg_investment']   = $job_avg_investment;
         $payload['job_investment_range'] = $job_investment_range;
+        $payload['used_job_stats']       = $used_job_stats;
 
         if ( ! empty( $extra ) && is_array( $extra ) ) {
             $payload = array_merge( $payload, $extra );
@@ -1144,6 +1149,7 @@ class BKJA_Chat {
             'job_income_range'     => $job_income_range,
             'job_avg_investment'   => $job_avg_investment,
             'job_investment_range' => $job_investment_range,
+            'used_job_stats'       => $used_job_stats,
         );
 
         return $payload;
