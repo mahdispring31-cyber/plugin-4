@@ -138,9 +138,19 @@ function bkja_ajax_get_job_summary(){
                 wp_send_json_error( array( 'error' => 'invalid_nonce' ), 403 );
         }
         $job_title     = isset($_POST['job_title']) ? sanitize_text_field( wp_unslash( $_POST['job_title'] ) ) : '';
+        $job_label     = isset($_POST['job_label']) ? sanitize_text_field( wp_unslash( $_POST['job_label'] ) ) : '';
         $job_title_id  = isset($_POST['job_title_id']) ? intval($_POST['job_title_id']) : 0;
         $group_key     = isset($_POST['group_key']) ? sanitize_text_field( wp_unslash( $_POST['group_key'] ) ) : '';
-        if(!$job_title && !$job_title_id && !$group_key) wp_send_json_error(['error'=>'empty_title'],400);
+        $job_title_ids_raw = isset($_POST['job_title_ids']) ? wp_unslash( $_POST['job_title_ids'] ) : '';
+        $job_title_ids = array();
+        if ( $job_title_ids_raw ) {
+            if ( is_array( $job_title_ids_raw ) ) {
+                $job_title_ids = array_map( 'intval', $job_title_ids_raw );
+            } else {
+                $job_title_ids = array_map( 'intval', array_filter( array_map( 'trim', explode( ',', (string) $job_title_ids_raw ) ) ) );
+            }
+        }
+        if(!$job_title && !$job_title_id && !$group_key && empty($job_title_ids)) wp_send_json_error(['error'=>'empty_title'],400);
 
         $filters = array(
             'gender'          => isset($_POST['gender']) ? sanitize_text_field( wp_unslash( $_POST['gender'] ) ) : '',
@@ -152,9 +162,10 @@ function bkja_ajax_get_job_summary(){
         );
 
         $summary = BKJA_Jobs::get_job_summary(array(
-            'label' => $job_title,
+            'label' => $job_label ?: $job_title,
             'job_title_id' => $job_title_id,
             'group_key' => $group_key,
+            'job_title_ids' => $job_title_ids,
         ), $filters);
         $free_messages = get_option('bkja_free_messages_per_day', 5);
         if(!$summary) wp_send_json_error(['error'=>'not_found'],404);
@@ -170,11 +181,21 @@ function bkja_ajax_get_job_records(){
                 wp_send_json_error( array( 'error' => 'invalid_nonce' ), 403 );
         }
         $job_title = isset($_POST['job_title']) ? sanitize_text_field( wp_unslash( $_POST['job_title'] ) ) : '';
+        $job_label     = isset($_POST['job_label']) ? sanitize_text_field( wp_unslash( $_POST['job_label'] ) ) : '';
         $job_title_id  = isset($_POST['job_title_id']) ? intval($_POST['job_title_id']) : 0;
         $group_key     = isset($_POST['group_key']) ? sanitize_text_field( wp_unslash( $_POST['group_key'] ) ) : '';
+        $job_title_ids_raw = isset($_POST['job_title_ids']) ? wp_unslash( $_POST['job_title_ids'] ) : '';
+        $job_title_ids = array();
+        if ( $job_title_ids_raw ) {
+            if ( is_array( $job_title_ids_raw ) ) {
+                $job_title_ids = array_map( 'intval', $job_title_ids_raw );
+            } else {
+                $job_title_ids = array_map( 'intval', array_filter( array_map( 'trim', explode( ',', (string) $job_title_ids_raw ) ) ) );
+            }
+        }
         $limit = isset($_POST['limit']) ? intval($_POST['limit']) : 5;
         $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
-        if(!$job_title && !$job_title_id && !$group_key) wp_send_json_error(['error'=>'empty_title'],400);
+        if(!$job_title && !$job_title_id && !$group_key && empty($job_title_ids)) wp_send_json_error(['error'=>'empty_title'],400);
 
         $filters = array(
             'gender'          => isset($_POST['gender']) ? sanitize_text_field( wp_unslash( $_POST['gender'] ) ) : '',
@@ -186,9 +207,10 @@ function bkja_ajax_get_job_records(){
         );
 
         $records = BKJA_Jobs::get_job_records(array(
-            'label' => $job_title,
+            'label' => $job_label ?: $job_title,
             'job_title_id' => $job_title_id,
             'group_key' => $group_key,
+            'job_title_ids' => $job_title_ids,
         ), $limit, $offset, $filters);
         $free_messages = get_option('bkja_free_messages_per_day', 5);
 
