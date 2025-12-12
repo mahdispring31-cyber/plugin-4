@@ -1017,9 +1017,25 @@ class BKJA_Database {
     }
 
     /**
+     * One-time maintenance to ensure job_title records carry group metadata and visibility flags.
+     */
+    public static function maybe_run_job_title_integrity() {
+        if ( get_option( 'bkja_job_titles_integrity_checked' ) ) {
+            return;
+        }
+
+        self::ensure_job_title_schema();
+        self::maybe_backfill_job_titles();
+        self::backfill_job_title_groups();
+        self::reclean_job_titles();
+
+        update_option( 'bkja_job_titles_integrity_checked', 1 );
+    }
+
+    /**
      * Return all job_title IDs that share a group key.
      */
-    protected static function get_job_title_ids_for_group( $group_key ) {
+    public static function get_job_title_ids_for_group( $group_key ) {
         global $wpdb;
 
         $group_key = is_string( $group_key ) ? trim( $group_key ) : '';
@@ -1051,10 +1067,24 @@ class BKJA_Database {
         );
 
         $incoming_group_key = null;
+        $incoming_ids       = array();
+        $incoming_label     = '';
         if ( is_array( $job_title ) && isset( $job_title['group_key'] ) ) {
             $incoming_group_key = sanitize_text_field( $job_title['group_key'] );
+            if ( isset( $job_title['job_title_ids'] ) && is_array( $job_title['job_title_ids'] ) ) {
+                $incoming_ids = array_map( 'intval', $job_title['job_title_ids'] );
+            }
+            if ( isset( $job_title['label'] ) ) {
+                $incoming_label = sanitize_text_field( $job_title['label'] );
+            }
         } elseif ( is_object( $job_title ) && isset( $job_title->group_key ) ) {
             $incoming_group_key = sanitize_text_field( $job_title->group_key );
+            if ( isset( $job_title->job_title_ids ) && is_array( $job_title->job_title_ids ) ) {
+                $incoming_ids = array_map( 'intval', $job_title->job_title_ids );
+            }
+            if ( isset( $job_title->label ) ) {
+                $incoming_label = sanitize_text_field( $job_title->label );
+            }
         }
 
         if ( $incoming_group_key ) {
@@ -1069,9 +1099,22 @@ class BKJA_Database {
 
                 $context['job_title_ids'] = $ids;
                 $context['group_key']     = $incoming_group_key;
-                $context['label']         = $primary ? $primary->label : '';
+                $context['label']         = $primary ? $primary->label : $incoming_label;
                 $context['slug']          = $primary ? $primary->slug : '';
 
+                return $context;
+            }
+        }
+
+        if ( ! empty( $incoming_ids ) ) {
+            $placeholders = implode( ',', array_fill( 0, count( $incoming_ids ), '%d' ) );
+            $row          = $wpdb->get_row( $wpdb->prepare( "SELECT group_key, COALESCE(base_label, label) AS label, COALESCE(base_slug, slug) AS slug FROM {$table_job_titles} WHERE id IN ({$placeholders}) ORDER BY is_primary DESC, id ASC LIMIT 1", $incoming_ids ) );
+            if ( $row ) {
+                $ids                  = $row->group_key ? self::get_job_title_ids_for_group( $row->group_key ) : $incoming_ids;
+                $context['job_title_ids'] = array_unique( array_map( 'intval', $ids ) );
+                $context['group_key']     = $row->group_key ? $row->group_key : null;
+                $context['label']         = $row->label;
+                $context['slug']          = $row->slug;
                 return $context;
             }
         }
@@ -1097,24 +1140,79 @@ class BKJA_Database {
         }
 
         if ( is_string( $job_title ) && '' !== trim( $job_title ) ) {
-            $candidate = $wpdb->get_row(
-                $wpdb->prepare(
-                    "SELECT id, group_key, COALESCE(base_label, label) AS label, COALESCE(base_slug, slug) AS slug FROM {$table_job_titles} WHERE base_label = %s OR base_slug = %s OR label = %s OR slug = %s ORDER BY is_primary DESC, id ASC LIMIT 1",
-                    $job_title,
-                    sanitize_title( $job_title ),
-                    $job_title,
-                    sanitize_title( $job_title )
-                )
-            );
+            $trimmed       = trim( $job_title );
+            $base_slug     = sanitize_title( $trimmed );
+            $candidates    = array( $trimmed );
+            $maybe_stemmed = ( function_exists( 'mb_substr' ) ? mb_substr( $trimmed, -1, 1, 'UTF-8' ) : substr( $trimmed, -2 ) ) === 'ی'
+                ? trim( function_exists( 'mb_substr' ) ? mb_substr( $trimmed, 0, mb_strlen( $trimmed, 'UTF-8' ) - 1, 'UTF-8' ) : substr( $trimmed, 0, -2 ) )
+                : '';
 
-            if ( $candidate ) {
-                $group_key = $candidate->group_key;
-                $ids       = $group_key ? self::get_job_title_ids_for_group( $group_key ) : array( (int) $candidate->id );
+            if ( $maybe_stemmed ) {
+                $candidates[] = $maybe_stemmed;
+            }
 
-                $context['job_title_ids'] = $ids;
-                $context['group_key']     = $group_key ? $group_key : null;
-                $context['label']         = $candidate->label;
-                $context['slug']          = $candidate->slug;
+            foreach ( $candidates as $term ) {
+                $term_slug = sanitize_title( $term );
+                $candidate = $wpdb->get_row(
+                    $wpdb->prepare(
+                        "SELECT id, group_key, COALESCE(base_label, label) AS label, COALESCE(base_slug, slug) AS slug FROM {$table_job_titles} WHERE base_label = %s OR base_slug = %s OR label = %s OR slug = %s ORDER BY is_primary DESC, id ASC LIMIT 1",
+                        $term,
+                        $term_slug,
+                        $term,
+                        $term_slug
+                    )
+                );
+
+                if ( $candidate ) {
+                    $group_key = $candidate->group_key;
+                    $ids       = $group_key ? self::get_job_title_ids_for_group( $group_key ) : array( (int) $candidate->id );
+
+                    $context['job_title_ids'] = $ids;
+                    $context['group_key']     = $group_key ? $group_key : null;
+                    $context['label']         = $candidate->label;
+                    $context['slug']          = $candidate->slug;
+                    break;
+                }
+
+                $prefix_term = $term . '%';
+                $candidate   = $wpdb->get_row(
+                    $wpdb->prepare(
+                        "SELECT id, group_key, COALESCE(base_label, label) AS label, COALESCE(base_slug, slug) AS slug FROM {$table_job_titles} WHERE base_label LIKE %s OR label LIKE %s ORDER BY is_primary DESC, id ASC LIMIT 1",
+                        $prefix_term,
+                        $prefix_term
+                    )
+                );
+
+                if ( $candidate ) {
+                    $group_key = $candidate->group_key;
+                    $ids       = $group_key ? self::get_job_title_ids_for_group( $group_key ) : array( (int) $candidate->id );
+
+                    $context['job_title_ids'] = $ids;
+                    $context['group_key']     = $group_key ? $group_key : null;
+                    $context['label']         = $candidate->label;
+                    $context['slug']          = $candidate->slug;
+                    break;
+                }
+
+                $contains_term = '%' . $term . '%';
+                $candidate     = $wpdb->get_row(
+                    $wpdb->prepare(
+                        "SELECT id, group_key, COALESCE(base_label, label) AS label, COALESCE(base_slug, slug) AS slug FROM {$table_job_titles} WHERE base_label LIKE %s OR label LIKE %s ORDER BY is_primary DESC, id ASC LIMIT 1",
+                        $contains_term,
+                        $contains_term
+                    )
+                );
+
+                if ( $candidate ) {
+                    $group_key = $candidate->group_key;
+                    $ids       = $group_key ? self::get_job_title_ids_for_group( $group_key ) : array( (int) $candidate->id );
+
+                    $context['job_title_ids'] = $ids;
+                    $context['group_key']     = $group_key ? $group_key : null;
+                    $context['label']         = $candidate->label;
+                    $context['slug']          = $candidate->slug;
+                    break;
+                }
             }
         }
 
@@ -1453,10 +1551,16 @@ class BKJA_Database {
             $job_title = is_array( $job_title ) && isset( $job_title['label'] ) ? $job_title['label'] : '';
         }
 
-        if ( ! empty( $context['job_title_ids'] ) ) {
-            $placeholders = implode( ',', array_fill( 0, count( $context['job_title_ids'] ), '%d' ) );
+        $job_ids = ! empty( $context['job_title_ids'] ) ? array_map( 'intval', $context['job_title_ids'] ) : array();
+
+        if ( ! empty( $context['group_key'] ) && empty( $job_ids ) ) {
+            $job_ids = self::get_job_title_ids_for_group( $context['group_key'] );
+        }
+
+        if ( ! empty( $job_ids ) ) {
+            $placeholders = implode( ',', array_fill( 0, count( $job_ids ), '%d' ) );
             $where_clause = "job_title_id IN ({$placeholders}) AND created_at >= DATE_SUB(NOW(), INTERVAL {$window_months} MONTH)";
-            $where_params = $context['job_title_ids'];
+            $where_params = $job_ids;
         } else {
             $where_clause = "title = %s AND created_at >= DATE_SUB(NOW(), INTERVAL {$window_months} MONTH)";
             $where_params = array( $job_title );
@@ -1635,10 +1739,16 @@ class BKJA_Database {
             $job_title = is_array( $job_title ) && isset( $job_title['label'] ) ? $job_title['label'] : '';
         }
 
-        if ( ! empty( $context['job_title_ids'] ) ) {
-            $placeholders = implode( ',', array_fill( 0, count( $context['job_title_ids'] ), '%d' ) );
+        $job_ids = ! empty( $context['job_title_ids'] ) ? array_map( 'intval', $context['job_title_ids'] ) : array();
+
+        if ( ! empty( $context['group_key'] ) && empty( $job_ids ) ) {
+            $job_ids = self::get_job_title_ids_for_group( $context['group_key'] );
+        }
+
+        if ( ! empty( $job_ids ) ) {
+            $placeholders = implode( ',', array_fill( 0, count( $job_ids ), '%d' ) );
             $where_clause = "j.job_title_id IN ({$placeholders})";
-            $where_params = $context['job_title_ids'];
+            $where_params = $job_ids;
         } else {
             $where_clause = 'j.title = %s';
             $where_params = array( $job_title );
@@ -1705,7 +1815,8 @@ class BKJA_Database {
         return $wpdb->get_results(
             $wpdb->prepare(
                 "SELECT primary_rows.id, COALESCE(primary_rows.base_label, primary_rows.label) AS label, COALESCE(primary_rows.base_slug, primary_rows.slug) AS slug, primary_rows.group_key,
-                        SUM(COALESCE(j_counts.cnt, 0)) AS jobs_count
+                        SUM(COALESCE(j_counts.cnt, 0)) AS jobs_count,
+                        GROUP_CONCAT(DISTINCT other_titles.id) AS job_title_ids
                  FROM {$table_titles} primary_rows
                  LEFT JOIN {$table_titles} other_titles ON other_titles.group_key = primary_rows.group_key
                  LEFT JOIN (
@@ -1737,7 +1848,7 @@ class BKJA_Database {
         $placeholders = implode( ',', array_fill( 0, count( $ids ), '%d' ) );
         $params       = $ids;
 
-        $sql = "SELECT j.id, j.variant_title, j.title, j.income, j.investment, j.city, j.gender, j.created_at, jt.label AS job_title_label, jt.slug AS job_title_slug
+        $sql = "SELECT j.id, j.variant_title, j.title, j.job_title_id, j.income, j.investment, j.city, j.gender, j.created_at, jt.label AS job_title_label, jt.slug AS job_title_slug, jt.group_key
                  FROM {$table} j
                  LEFT JOIN {$table_titles} jt ON jt.id = j.job_title_id
                  WHERE j.job_title_id IN ({$placeholders}) AND j.created_at >= DATE_SUB(NOW(), INTERVAL {$window_months} MONTH)
@@ -1750,8 +1861,10 @@ class BKJA_Database {
             $records[] = array(
                 'id'                 => (int) $row->id,
                 'variant_title'      => $row->variant_title ? $row->variant_title : $row->title,
+                'job_title_id'       => isset( $row->job_title_id ) ? (int) $row->job_title_id : null,
                 'job_title_label'    => $row->job_title_label,
                 'job_title_slug'     => $row->job_title_slug,
+                'group_key'          => isset( $row->group_key ) ? $row->group_key : $context['group_key'],
                 'income'             => $row->income,
                 'investment'         => $row->investment,
                 'city'               => $row->city,

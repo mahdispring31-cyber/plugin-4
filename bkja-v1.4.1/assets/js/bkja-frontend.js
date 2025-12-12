@@ -549,6 +549,9 @@
             });
         }
         var lastKnownJobTitle = '';
+        var lastKnownJobTitleId = null;
+        var lastKnownGroupKey = '';
+        var lastKnownJobSlug = '';
         var lastReplyMeta = {};
         window.lastReplyMeta = lastReplyMeta;
         var categoryDisplayNames = {};
@@ -817,6 +820,18 @@
             var categoryValue = data.category ? String(data.category) : '';
             var jobTitleValue = data.job_title ? String(data.job_title) : '';
             var jobSlugValue = data.job_slug ? String(data.job_slug) : '';
+            if(jobTitleValue){
+                lastKnownJobTitle = jobTitleValue;
+            }
+            if(data.job_title_id){
+                lastKnownJobTitleId = parseInt(data.job_title_id, 10) || null;
+            }
+            if(data.group_key){
+                lastKnownGroupKey = String(data.group_key);
+            }
+            if(jobSlugValue){
+                lastKnownJobSlug = jobSlugValue;
+            }
 
             function appendJobMetaNote(){
                 $message.find('.bkja-job-meta-note').remove();
@@ -1421,6 +1436,22 @@
                     sendOptions.jobSlug = explicitJobSlug;
                 } else if(lastReplyMeta && cleanJobHint(lastReplyMeta.job_slug)){
                     sendOptions.jobSlug = cleanJobHint(lastReplyMeta.job_slug);
+                } else if(cleanJobHint(lastKnownJobSlug)){
+                    sendOptions.jobSlug = cleanJobHint(lastKnownJobSlug);
+                }
+
+                if(options.jobTitleId){
+                    sendOptions.jobTitleId = options.jobTitleId;
+                } else if(lastKnownJobTitleId){
+                    sendOptions.jobTitleId = lastKnownJobTitleId;
+                }
+
+                if(options.groupKey){
+                    sendOptions.groupKey = options.groupKey;
+                } else if(lastKnownGroupKey){
+                    sendOptions.groupKey = lastKnownGroupKey;
+                } else if(lastReplyMeta && lastReplyMeta.group_key){
+                    sendOptions.groupKey = lastReplyMeta.group_key;
                 }
 
                 sendOptions._bypassLimit = true;
@@ -1453,8 +1484,12 @@
                 payload.append('category', opts.category || '');
                 var jobTitleParam = cleanJobHint(opts.jobTitle);
                 var jobSlugParam = cleanJobHint(opts.jobSlug);
+                var jobTitleIdParam = opts.jobTitleId ? parseInt(opts.jobTitleId, 10) : '';
+                var groupKeyParam = opts.groupKey ? String(opts.groupKey) : '';
                 payload.append('job_title', jobTitleParam || '');
                 payload.append('job_slug', jobSlugParam || '');
+                payload.append('job_title_id', jobTitleIdParam || '');
+                payload.append('group_key', groupKeyParam || '');
 
                 fetch(config.ajax_url, {
                     method: 'POST',
@@ -1759,7 +1794,9 @@
                 if(res && res.success && res.data.jobs && res.data.jobs.length){
                     res.data.jobs.forEach(function(job){
                         var titleLabel = job.label || job.job_title || job.title || '';
-                        var $j = $('<div class="bkja-job-title-item" data-id="'+job.id+'" data-slug="'+esc(job.slug||'')+'">🧭 '+esc(titleLabel)+'</div>');
+                        var groupKey = job.group_key || '';
+                        var jobTitleIds = Array.isArray(job.job_title_ids) ? job.job_title_ids.join(',') : '';
+                        var $j = $('<div class="bkja-job-title-item" data-id="'+job.id+'" data-group-key="'+esc(groupKey)+'" data-label="'+esc(titleLabel)+'" data-job-title-ids="'+esc(jobTitleIds)+'" data-slug="'+esc(job.slug||'')+'">🧭 '+esc(titleLabel)+'</div>');
                         if(typeof job.jobs_count !== 'undefined'){
                             $j.append(' <span class="bkja-job-count">('+esc(job.jobs_count)+')</span>');
                         }
@@ -1779,7 +1816,8 @@
             e.stopPropagation();
             var $titleItem = $(this);
             var jobTitleId = parseInt($titleItem.data('id'),10) || 0;
-            var baseLabel = $.trim($titleItem.text().replace('🧭',''));
+            var baseLabel = $.trim($titleItem.data('label') || $titleItem.text().replace('🧭',''));
+            var groupKey = $titleItem.data('group-key') || '';
 
             if($titleItem.hasClass('open')){
                 $titleItem.removeClass('open');
@@ -1812,11 +1850,12 @@
                     return;
                 }
                 if(res && res.success && res.data.variants && res.data.variants.length){
-                    res.data.variants.forEach(function(variant){
+                        res.data.variants.forEach(function(variant){
                         var variantTitle = variant.variant_title || variant.title || baseLabel;
-                        var $v = $('<div class="bkja-job-item" data-job-title-id="'+jobTitleId+'" data-job-title-slug="'+esc(variant.job_title_slug||'')+'" data-display-title="'+esc(variantTitle)+'">💼 '+esc(variantTitle)+'</div>');
+                        var varJobTitleId = variant.job_title_id || jobTitleId;
+                        var $v = $('<div class="bkja-job-item" data-job-title-id="'+varJobTitleId+'" data-group-key="'+esc(variant.group_key||groupKey||'')+'" data-job-title-slug="'+esc(variant.job_title_slug||'')+'" data-label="'+esc(baseLabel)+'" data-display-title="'+esc(variantTitle)+'">💼 '+esc(variantTitle)+'</div>');
                         $wrap.append($v);
-                    });
+                        });
                 } else {
                     $wrap.append('<div>❌ تجربه‌ای ثبت نشده است.</div>');
                 }
@@ -1831,11 +1870,23 @@
             e.stopPropagation();
             var jobTitleId = $(this).data('job-title-id');
             var jobSlug = $(this).data('job-title-slug');
+            var groupKey = $(this).data('group-key') || '';
+            var baseLabel = $(this).data('label') || '';
             var displayTitle = $(this).data('display-title') || $(this).text().replace('💼','').trim();
             var identifier = jobSlug ? jobSlug : jobTitleId;
+            lastKnownJobTitle = baseLabel || displayTitle || lastKnownJobTitle;
+            lastKnownJobTitleId = jobTitleId || lastKnownJobTitleId;
+            lastKnownGroupKey = groupKey || lastKnownGroupKey;
+            lastKnownJobSlug = jobSlug || lastKnownJobSlug;
             $messages.append('<div class="bkja-bubble user">ℹ️ درخواست اطلاعات شغل '+esc(displayTitle)+'</div>');
             $messages.scrollTop($messages.prop("scrollHeight"));
-            showJobSummaryAndRecords(identifier, displayTitle);
+            showJobSummaryAndRecords({
+                job_title: identifier,
+                job_title_id: jobTitleId,
+                group_key: groupKey,
+                job_slug: jobSlug,
+                label: baseLabel || displayTitle
+            }, displayTitle);
             $(".bkja-job-variants").slideUp(200,function(){$(this).remove();});
             $(".bkja-job-title-item.open").removeClass("open");
             $(".bkja-category-item.open").removeClass("open");
@@ -1846,17 +1897,24 @@
         // نمایش خلاصه و رکوردهای شغل با دکمه نمایش بیشتر
         function showJobSummaryAndRecords(job_title, display_title) {
             // دریافت خلاصه و اولین سری رکوردها با هم
+            var payloadSummary = { action: "bkja_get_job_summary" };
+            var payloadRecords = { action: "bkja_get_job_records", limit: 5, offset: 0 };
+            var displayTitle = display_title;
+
+            if(typeof job_title === 'object' && job_title !== null){
+                if(job_title.job_title){ payloadSummary.job_title = job_title.job_title; payloadRecords.job_title = job_title.job_title; }
+                if(job_title.job_title_id){ payloadSummary.job_title_id = job_title.job_title_id; payloadRecords.job_title_id = job_title.job_title_id; }
+                if(job_title.group_key){ payloadSummary.group_key = job_title.group_key; payloadRecords.group_key = job_title.group_key; }
+                if(job_title.job_slug){ payloadSummary.job_slug = job_title.job_slug; }
+                if(job_title.label && !displayTitle){ displayTitle = job_title.label; }
+            } else {
+                payloadSummary.job_title = job_title;
+                payloadRecords.job_title = job_title;
+            }
+
             $.when(
-                ajaxWithNonce({
-                    action: "bkja_get_job_summary",
-                    job_title: job_title
-                }),
-                ajaxWithNonce({
-                    action: "bkja_get_job_records",
-                    job_title: job_title,
-                    limit: 5,
-                    offset: 0
-                })
+                ajaxWithNonce(payloadSummary),
+                ajaxWithNonce(payloadRecords)
             ).done(function(summaryRes, recordsRes) {
                 var summaryPayload = summaryRes && summaryRes[0] ? extractGuestLimitPayload(summaryRes[0]) : null;
                 var recordsPayload = recordsRes && recordsRes[0] ? extractGuestLimitPayload(recordsRes[0]) : null;
@@ -1885,7 +1943,10 @@
                     return rounded + ' میلیون تومان';
                 }
 
-                var titleToShow = display_title || (s && (s.job_title_label || s.job_title)) || job_title;
+                var titleToShow = displayTitle || (s && (s.job_title_label || s.job_title)) || (typeof job_title === 'object' && job_title.label ? job_title.label : job_title);
+                var summaryJobTitle = payloadRecords.job_title || payloadSummary.job_title || titleToShow;
+                var summaryJobTitleId = payloadRecords.job_title_id || '';
+                var summaryGroupKey = payloadRecords.group_key || '';
                 var html = '<div class="bkja-job-summary-card">';
                 html += '<div class="bkja-job-summary-header">';
                 if (s) {
@@ -1975,7 +2036,7 @@
                     });
                     // اگر رکورد بیشتری وجود دارد دکمه نمایش بیشتر اضافه شود
                     if(records.length === 5){
-                        var moreBtn = '<button class="bkja-show-records-btn" data-title="'+esc(job_title)+'" data-offset="5">نمایش بیشتر تجربه کاربران</button>';
+                        var moreBtn = '<button class="bkja-show-records-btn" data-title="'+esc(summaryJobTitle)+'" data-title-id="'+esc(summaryJobTitleId)+'" data-group-key="'+esc(summaryGroupKey)+'" data-offset="5">نمایش بیشتر تجربه کاربران</button>';
                         pushBotHtml(moreBtn);
                     }
                 } else {
@@ -1989,6 +2050,8 @@
         // هندل کلیک روی دکمه نمایش رکوردها
         $(document).on('click', '.bkja-show-records-btn', function() {
             var job_title = $(this).data('title');
+            var job_title_id = $(this).data('title-id');
+            var group_key = $(this).data('group-key');
             var offset = parseInt($(this).data('offset')) || 0;
             var limit = 5;
             var $btn = $(this);
@@ -1996,6 +2059,8 @@
             ajaxWithNonce({
                 action: "bkja_get_job_records",
                 job_title: job_title,
+                job_title_id: job_title_id,
+                group_key: group_key,
                 limit: limit,
                 offset: offset
             }).done(function(res) {
@@ -2032,7 +2097,7 @@
                     // اگر رکورد بیشتری وجود دارد دکمه نمایش بیشتر اضافه شود
                     if (res.data.records.length === limit) {
                         var nextOffset = offset + limit;
-                        var moreBtn = '<button class="bkja-show-records-btn" data-title="'+esc(job_title)+'" data-offset="'+nextOffset+'">نمایش بیشتر تجربه کاربران</button>';
+                        var moreBtn = '<button class="bkja-show-records-btn" data-title="'+esc(job_title)+'" data-title-id="'+esc(job_title_id||'')+'" data-group-key="'+esc(group_key||'')+'" data-offset="'+nextOffset+'">نمایش بیشتر تجربه کاربران</button>';
                         pushBotHtml(moreBtn);
                     }
                     $btn.remove();

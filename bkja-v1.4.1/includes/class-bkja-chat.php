@@ -287,6 +287,57 @@ class BKJA_Chat {
     public static function resolve_job_title_from_query( $raw_query ) {
         global $wpdb;
 
+        if ( is_array( $raw_query ) || is_object( $raw_query ) ) {
+            $group_key     = '';
+            $job_title_id  = 0;
+            $label_hint    = '';
+            if ( is_array( $raw_query ) ) {
+                $group_key    = isset( $raw_query['group_key'] ) ? sanitize_text_field( $raw_query['group_key'] ) : '';
+                $job_title_id = isset( $raw_query['job_title_id'] ) ? intval( $raw_query['job_title_id'] ) : 0;
+                $label_hint   = isset( $raw_query['label'] ) ? sanitize_text_field( $raw_query['label'] ) : '';
+            } else {
+                $group_key    = isset( $raw_query->group_key ) ? sanitize_text_field( $raw_query->group_key ) : '';
+                $job_title_id = isset( $raw_query->job_title_id ) ? intval( $raw_query->job_title_id ) : 0;
+                $label_hint   = isset( $raw_query->label ) ? sanitize_text_field( $raw_query->label ) : '';
+            }
+
+            if ( $group_key ) {
+                $ids    = class_exists( 'BKJA_Database' ) ? BKJA_Database::get_job_title_ids_for_group( $group_key ) : array();
+                $row    = $wpdb->get_row( $wpdb->prepare( "SELECT id, COALESCE(base_label, label) AS label, COALESCE(base_slug, slug) AS slug FROM {$wpdb->prefix}bkja_job_titles WHERE group_key = %s ORDER BY is_primary DESC, id ASC LIMIT 1", $group_key ) );
+                $label  = $row ? $row->label : $label_hint;
+                $slug   = $row ? $row->slug : '';
+                $id_val = $row ? (int) $row->id : ( $job_title_id ?: ( ! empty( $ids ) ? (int) $ids[0] : 0 ) );
+
+                return array(
+                    'job_title_id'  => $id_val,
+                    'group_key'     => $group_key,
+                    'label'         => $label,
+                    'slug'          => $slug,
+                    'job_title_ids' => $ids ? $ids : ( $id_val ? array( $id_val ) : array() ),
+                );
+            }
+
+            if ( $job_title_id > 0 ) {
+                $row = $wpdb->get_row( $wpdb->prepare( "SELECT id, group_key, COALESCE(base_label, label) AS label, COALESCE(base_slug, slug) AS slug FROM {$wpdb->prefix}bkja_job_titles WHERE id = %d", $job_title_id ) );
+                if ( $row ) {
+                    $ids = array( (int) $row->id );
+                    if ( $row->group_key && class_exists( 'BKJA_Database' ) ) {
+                        $ids = BKJA_Database::get_job_title_ids_for_group( $row->group_key );
+                    }
+
+                    return array(
+                        'job_title_id'  => (int) $row->id,
+                        'group_key'     => $row->group_key ? $row->group_key : null,
+                        'label'         => $row->label,
+                        'slug'          => $row->slug,
+                        'job_title_ids' => $ids,
+                    );
+                }
+            }
+
+            $raw_query = $label_hint ? $label_hint : (string) $raw_query;
+        }
+
         $normalized_full = self::normalize_lookup_text( $raw_query );
         if ( '' === $normalized_full ) {
             return array();
@@ -322,19 +373,7 @@ class BKJA_Chat {
             $alt_core = function_exists( 'mb_substr' ) ? mb_substr( $core, 0, mb_strlen( $core, 'UTF-8' ) - 1, 'UTF-8' ) : substr( $core, 0, -2 );
 
             if ( '' !== $alt_core ) {
-                $exists_alt = (bool) $wpdb->get_var(
-                    $wpdb->prepare(
-                        "SELECT 1 FROM {$table_titles} WHERE (label = %s OR base_label = %s OR slug = %s OR base_slug = %s) LIMIT 1",
-                        $alt_core,
-                        $alt_core,
-                        $alt_core,
-                        $alt_core
-                    )
-                );
-
-                if ( $exists_alt ) {
-                    $candidate_tokens[] = $alt_core;
-                }
+                $candidate_tokens[] = $alt_core;
             }
         }
 
@@ -344,8 +383,8 @@ class BKJA_Chat {
         $stages = array(
             'exact'    => function( $term ) {
                 return array(
-                    'where'  => '(jt.label = %s OR jt.base_label = %s OR jt.slug = %s OR jt.base_slug = %s)',
-                    'params' => array( $term, $term, $term, $term ),
+                        'where'  => '(jt.base_label = %s OR jt.label = %s OR jt.slug = %s OR jt.base_slug = %s)',
+                        'params' => array( $term, $term, $term, $term ),
                 );
             },
             'prefix'   => function( $term ) {
@@ -474,6 +513,14 @@ class BKJA_Chat {
                 }
             }
 
+            $group_ids = array( $primary_id );
+            if ( class_exists( 'BKJA_Database' ) && ! empty( $best_row->group_key ) ) {
+                $maybe_ids = BKJA_Database::get_job_title_ids_for_group( $best_row->group_key );
+                if ( $maybe_ids ) {
+                    $group_ids = array_map( 'intval', $maybe_ids );
+                }
+            }
+
             if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
                 error_log( sprintf( '[BKJA] resolve_job_title_from_query: raw="%s" core="%s" resolved_group="%s" primary_id=%d label="%s"', (string) $raw_query, (string) $core, (string) $best_row->group_key, (int) $primary_id, (string) $best_row->label ) );
             }
@@ -483,6 +530,7 @@ class BKJA_Chat {
                 'group_key'    => $best_row->group_key,
                 'label'        => $best_row->label,
                 'slug'         => $best_row->slug,
+                'job_title_ids'=> $group_ids,
             );
         }
 
@@ -524,12 +572,14 @@ class BKJA_Chat {
     }
 
     // دریافت خلاصه و رکوردهای شغل مرتبط با پیام
-    public static function get_job_context($message, $job_title_hint = '', $job_slug = '') {
+    public static function get_job_context($message, $job_title_hint = '', $job_slug = '', $job_title_id = 0, $group_key = '') {
         global $wpdb;
 
         $normalized = self::normalize_message( $message );
         $job_title_hint = is_string( $job_title_hint ) ? trim( $job_title_hint ) : '';
         $job_slug = is_string( $job_slug ) ? trim( $job_slug ) : '';
+        $job_title_id  = (int) $job_title_id;
+        $group_key     = is_string( $group_key ) ? trim( $group_key ) : '';
 
         if ( '' === $normalized && '' === $job_title_hint && '' === $job_slug ) {
             return array();
@@ -549,13 +599,30 @@ class BKJA_Chat {
 
         $job_title       = '';
         $resolved_for_db = null;
+        $resolved_ids    = array();
+
+        if ( $job_title_id > 0 || $group_key ) {
+            $resolved = self::resolve_job_title_from_query(
+                array(
+                    'job_title_id' => $job_title_id,
+                    'group_key'    => $group_key,
+                )
+            );
+            if ( $resolved ) {
+                $job_title       = $resolved['label'];
+                $job_slug        = isset( $resolved['slug'] ) ? $resolved['slug'] : $job_slug;
+                $resolved_ids    = isset( $resolved['job_title_ids'] ) ? (array) $resolved['job_title_ids'] : array();
+                $resolved_for_db = ! empty( $resolved['group_key'] ) ? array( 'group_key' => $resolved['group_key'], 'job_title_ids' => $resolved_ids, 'label' => $resolved['label'] ) : ( ! empty( $resolved['job_title_id'] ) ? $resolved['job_title_id'] : $resolved['label'] );
+            }
+        }
 
         if ( '' !== $normalized ) {
             $resolved = self::resolve_job_title_from_query( $normalized );
             if ( $resolved ) {
                 $job_title       = $resolved['label'];
                 $job_slug        = isset( $resolved['slug'] ) ? $resolved['slug'] : $job_slug;
-                $resolved_for_db = ! empty( $resolved['group_key'] ) ? array( 'group_key' => $resolved['group_key'] ) : ( ! empty( $resolved['job_title_id'] ) ? $resolved['job_title_id'] : $resolved['label'] );
+                $resolved_ids    = isset( $resolved['job_title_ids'] ) ? (array) $resolved['job_title_ids'] : array();
+                $resolved_for_db = ! empty( $resolved['group_key'] ) ? array( 'group_key' => $resolved['group_key'], 'job_title_ids' => $resolved_ids, 'label' => $resolved['label'] ) : ( ! empty( $resolved['job_title_id'] ) ? $resolved['job_title_id'] : $resolved['label'] );
             }
         }
 
@@ -564,7 +631,8 @@ class BKJA_Chat {
             if ( $resolved_hint ) {
                 $job_title       = $resolved_hint['label'];
                 $job_slug        = isset( $resolved_hint['slug'] ) ? $resolved_hint['slug'] : $job_slug;
-                $resolved_for_db = ! empty( $resolved_hint['group_key'] ) ? array( 'group_key' => $resolved_hint['group_key'] ) : ( ! empty( $resolved_hint['job_title_id'] ) ? $resolved_hint['job_title_id'] : $resolved_hint['label'] );
+                $resolved_ids    = isset( $resolved_hint['job_title_ids'] ) ? (array) $resolved_hint['job_title_ids'] : $resolved_ids;
+                $resolved_for_db = ! empty( $resolved_hint['group_key'] ) ? array( 'group_key' => $resolved_hint['group_key'], 'job_title_ids' => $resolved_ids, 'label' => $resolved_hint['label'] ) : ( ! empty( $resolved_hint['job_title_id'] ) ? $resolved_hint['job_title_id'] : $resolved_hint['label'] );
             }
         }
 
@@ -588,7 +656,9 @@ class BKJA_Chat {
             'job_title' => $job_title,
             'summary'   => $summary,
             'records'   => $records,
-            'job_slug'  => '' !== $job_slug ? $job_slug : null
+            'job_slug'  => '' !== $job_slug ? $job_slug : null,
+            'job_title_ids' => $resolved_ids,
+            'group_key' => $resolved_for_db && is_array( $resolved_for_db ) && isset( $resolved_for_db['group_key'] ) ? $resolved_for_db['group_key'] : null,
         ];
     }
 
@@ -1147,6 +1217,8 @@ class BKJA_Chat {
             'category'       => '',
             'job_title_hint' => '',
             'job_slug'       => '',
+            'job_title_id'   => 0,
+            'job_group_key'  => '',
         );
         $args              = wp_parse_args( $args, $defaults );
         $model             = self::resolve_model( $args['model'] );
@@ -1154,9 +1226,11 @@ class BKJA_Chat {
         $resolved_category = is_string( $args['category'] ) ? $args['category'] : '';
         $job_title_hint    = is_string( $args['job_title_hint'] ) ? trim( $args['job_title_hint'] ) : '';
         $job_slug          = is_string( $args['job_slug'] ) ? trim( $args['job_slug'] ) : '';
+        $job_title_id      = isset( $args['job_title_id'] ) ? (int) $args['job_title_id'] : 0;
+        $job_group_key     = is_string( $args['job_group_key'] ) ? trim( $args['job_group_key'] ) : '';
 
         $normalized_message = self::normalize_message( $message );
-        $context            = self::get_job_context( $normalized_message, $job_title_hint, $job_slug );
+        $context            = self::get_job_context( $normalized_message, $job_title_hint, $job_slug, $job_title_id, $job_group_key );
 
         $api_key = self::get_api_key();
 

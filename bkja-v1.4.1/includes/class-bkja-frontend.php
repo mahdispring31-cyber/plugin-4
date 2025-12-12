@@ -87,6 +87,8 @@ class BKJA_Frontend {
         $session         = self::canonical_session_id( $raw_session );
         $job_title_hint  = isset($_POST['job_title']) ? sanitize_text_field(wp_unslash($_POST['job_title'])) : '';
         $job_slug        = isset($_POST['job_slug']) ? sanitize_text_field(wp_unslash($_POST['job_slug'])) : '';
+        $job_title_id    = isset($_POST['job_title_id']) ? intval($_POST['job_title_id']) : 0;
+        $job_group_key   = isset($_POST['group_key']) ? sanitize_text_field( wp_unslash( $_POST['group_key'] ) ) : '';
 
         if ( empty($message) ) {
             wp_send_json_error(array('error'=>'empty_message'),400);
@@ -172,6 +174,8 @@ class BKJA_Frontend {
             'model'          => $resolved_model,
             'job_title_hint' => $job_title_hint,
             'job_slug'       => $job_slug,
+            'job_title_id'   => $job_title_id,
+            'job_group_key'  => $job_group_key,
         ));
 
         $reply              = '';
