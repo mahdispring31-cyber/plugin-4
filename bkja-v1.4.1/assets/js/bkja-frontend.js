@@ -1811,85 +1811,39 @@
             });
         });
 
-        // کلیک روی عنوان پایه → گرفتن واریانت‌ها
+        // کلیک روی عنوان پایه → نمایش خلاصه و رکوردهای شغل (تجمیع‌شده)
         $(document).on("click", ".bkja-job-title-item", function(e){
             e.stopPropagation();
             var $titleItem = $(this);
             var jobTitleId = parseInt($titleItem.data('id'),10) || 0;
             var baseLabel = $.trim($titleItem.data('label') || $titleItem.text().replace('🧭',''));
             var groupKey = $titleItem.data('group-key') || '';
-
-            if($titleItem.hasClass('open')){
-                $titleItem.removeClass('open');
-                $titleItem.next('.bkja-job-variants').slideUp(200,function(){$(this).remove();});
-                return;
+            var jobSlug = $titleItem.data('slug') || '';
+            var jobTitleIdsStr = $titleItem.data('job-title-ids') || '';
+            var jobTitleIds = [];
+            if(jobTitleIdsStr){
+                jobTitleIds = String(jobTitleIdsStr).split(',').map(function(id){ return parseInt(id,10)||0; }).filter(function(v){ return v>0; });
             }
 
-            $titleItem.siblings('.bkja-job-title-item.open').removeClass('open').each(function(){
-                $(this).next('.bkja-job-variants').remove();
-            });
-
-            $titleItem.addClass('open');
-            var $variants = $('<div class="bkja-job-variants">⏳ در حال بارگذاری...</div>');
-            $titleItem.next('.bkja-job-variants').remove();
-            $titleItem.after($variants);
-
-            ajaxWithNonce({
-                action:"bkja_get_job_variants",
-                job_title_id: jobTitleId
-            }).done(function(res){
-                var $wrap = $titleItem.next('.bkja-job-variants').empty();
-                var limitPayload = extractGuestLimitPayload(res);
-                if(limitPayload){
-                    handleGuestLimitExceeded(limitPayload);
-                    var limitNotice = limitPayload && limitPayload.message ? $.trim(String(limitPayload.message)) : '';
-                    if(!limitNotice){
-                        limitNotice = 'برای مشاهده فهرست مشاغل لطفاً وارد شوید.';
-                    }
-                    $wrap.append('<div style="color:#d32f2f;">'+esc(limitNotice)+'</div>');
-                    return;
-                }
-                if(res && res.success && res.data.variants && res.data.variants.length){
-                        res.data.variants.forEach(function(variant){
-                        var variantTitle = variant.variant_title || variant.title || baseLabel;
-                        var varJobTitleId = variant.job_title_id || jobTitleId;
-                        var $v = $('<div class="bkja-job-item" data-job-title-id="'+varJobTitleId+'" data-group-key="'+esc(variant.group_key||groupKey||'')+'" data-job-title-slug="'+esc(variant.job_title_slug||'')+'" data-label="'+esc(baseLabel)+'" data-display-title="'+esc(variantTitle)+'">💼 '+esc(variantTitle)+'</div>');
-                        $wrap.append($v);
-                        });
-                } else {
-                    $wrap.append('<div>❌ تجربه‌ای ثبت نشده است.</div>');
-                }
-            }).fail(function(){
-                var $wrap = $titleItem.next('.bkja-job-variants').empty();
-                $wrap.append('<div style="color:#d32f2f;">خطا در دریافت تجربه‌ها.</div>');
-            });
-        });
-
-        // کلیک روی واریانت → نمایش خلاصه و رکوردهای شغل
-        $(document).on("click", ".bkja-job-item", function(e){
-            e.stopPropagation();
-            var jobTitleId = $(this).data('job-title-id');
-            var jobSlug = $(this).data('job-title-slug');
-            var groupKey = $(this).data('group-key') || '';
-            var baseLabel = $(this).data('label') || '';
-            var displayTitle = $(this).data('display-title') || $(this).text().replace('💼','').trim();
-            var identifier = jobSlug ? jobSlug : jobTitleId;
-            lastKnownJobTitle = baseLabel || displayTitle || lastKnownJobTitle;
+            lastKnownJobTitle = baseLabel || lastKnownJobTitle;
             lastKnownJobTitleId = jobTitleId || lastKnownJobTitleId;
             lastKnownGroupKey = groupKey || lastKnownGroupKey;
             lastKnownJobSlug = jobSlug || lastKnownJobSlug;
-            $messages.append('<div class="bkja-bubble user">ℹ️ درخواست اطلاعات شغل '+esc(displayTitle)+'</div>');
+
+            $messages.append('<div class="bkja-bubble user">ℹ️ درخواست اطلاعات شغل '+esc(baseLabel)+'</div>');
             $messages.scrollTop($messages.prop("scrollHeight"));
+
             showJobSummaryAndRecords({
-                job_title: identifier,
+                job_title: jobSlug ? jobSlug : jobTitleId,
                 job_title_id: jobTitleId,
                 group_key: groupKey,
                 job_slug: jobSlug,
-                label: baseLabel || displayTitle
-            }, displayTitle);
-            $(".bkja-job-variants").slideUp(200,function(){$(this).remove();});
-            $(".bkja-job-title-item.open").removeClass("open");
+                label: baseLabel,
+                job_title_ids: jobTitleIds
+            }, baseLabel);
+
             $(".bkja-category-item.open").removeClass("open");
+            $(".bkja-jobs-sublist").slideUp(200,function(){ $(this).remove(); });
             $("#bkja-menu-panel").removeClass("bkja-open");
             $("#bkja-menu-toggle").attr("aria-expanded","false");
         });
@@ -1930,7 +1884,10 @@
                 }
                 var s = summaryRes[0] && summaryRes[0].success && summaryRes[0].data && summaryRes[0].data.summary ? summaryRes[0].data.summary : null;
                 var records = recordsRes[0] && recordsRes[0].success && recordsRes[0].data && recordsRes[0].data.records ? recordsRes[0].data.records : [];
-                var totalCount = recordsRes[0] && recordsRes[0].success && recordsRes[0].data && typeof recordsRes[0].data.total_count !== 'undefined' ? recordsRes[0].data.total_count : records.length;
+                var totalCount = s && typeof s.count_reports !== 'undefined' ? s.count_reports : records.length;
+                var hasMore = recordsRes[0] && recordsRes[0].success && recordsRes[0].data && recordsRes[0].data.has_more ? true : false;
+                var nextOffset = recordsRes[0] && recordsRes[0].data ? recordsRes[0].data.next_offset : null;
+                var pageLimit = recordsRes[0] && recordsRes[0].data && recordsRes[0].data.limit ? parseInt(recordsRes[0].data.limit,10) : 5;
                 function fmtMillion(val){
                     var num = parseFloat(val);
                     if(isNaN(num) || num <= 0){
@@ -1945,8 +1902,8 @@
 
                 var titleToShow = displayTitle || (s && (s.job_title_label || s.job_title)) || (typeof job_title === 'object' && job_title.label ? job_title.label : job_title);
                 var summaryJobTitle = payloadRecords.job_title || payloadSummary.job_title || titleToShow;
-                var summaryJobTitleId = payloadRecords.job_title_id || '';
-                var summaryGroupKey = payloadRecords.group_key || '';
+                var summaryJobTitleId = payloadRecords.job_title_id || (s && s.job_title_id ? s.job_title_id : '');
+                var summaryGroupKey = (s && s.group_key) ? s.group_key : (payloadRecords.group_key || '');
                 var html = '<div class="bkja-job-summary-card">';
                 html += '<div class="bkja-job-summary-header">';
                 if (s) {
@@ -2020,7 +1977,13 @@
                     records.forEach(function(r){
                         var recHtml = '<div class="bkja-job-record-card">';
                         var genderLabel = r.gender_label || r.gender;
-                        recHtml += '<h5>🧑‍💼 تجربه کاربر</h5>';
+                        var variantLabel = r.variant_title || r.job_title_label || summaryJobTitle;
+                        if(variantLabel){
+                            recHtml += '<h5>🧑‍🏫 ' + esc(variantLabel) + '</h5>';
+                        } else {
+                            recHtml += '<h5>🧑‍💼 تجربه کاربر</h5>';
+                        }
+                        if (r.created_at_display) recHtml += '<p>⏱️ ' + esc(r.created_at_display) + '</p>';
                         if (r.income) recHtml += '<p>💵 درآمد: ' + esc(r.income) + '</p>';
                         if (r.investment) recHtml += '<p>💰 سرمایه: ' + esc(r.investment) + '</p>';
                         if (r.city) recHtml += '<p>📍 شهر: ' + esc(r.city) + '</p>';
@@ -2035,8 +1998,9 @@
                         pushBotHtml(recHtml);
                     });
                     // اگر رکورد بیشتری وجود دارد دکمه نمایش بیشتر اضافه شود
-                    if(records.length === 5){
-                        var moreBtn = '<button class="bkja-show-records-btn" data-title="'+esc(summaryJobTitle)+'" data-title-id="'+esc(summaryJobTitleId)+'" data-group-key="'+esc(summaryGroupKey)+'" data-offset="5">نمایش بیشتر تجربه کاربران</button>';
+                    if(hasMore){
+                        var nextOffsetVal = nextOffset !== null && typeof nextOffset !== 'undefined' ? nextOffset : pageLimit;
+                        var moreBtn = '<button class="bkja-show-records-btn" data-title="'+esc(summaryJobTitle)+'" data-title-id="'+esc(summaryJobTitleId)+'" data-group-key="'+esc(summaryGroupKey)+'" data-offset="'+esc(nextOffsetVal)+'" data-limit="'+esc(pageLimit)+'">نمایش بیشتر تجربه کاربران</button>';
                         pushBotHtml(moreBtn);
                     }
                 } else {
@@ -2053,7 +2017,7 @@
             var job_title_id = $(this).data('title-id');
             var group_key = $(this).data('group-key');
             var offset = parseInt($(this).data('offset')) || 0;
-            var limit = 5;
+            var limit = parseInt($(this).data('limit')) || 5;
             var $btn = $(this);
             $btn.prop('disabled', true).text('⏳ در حال دریافت...');
             ajaxWithNonce({
@@ -2077,10 +2041,20 @@
                 }
                 $btn.prop('disabled', false).text('مشاهده تجربه کاربران این شغل');
                 if (res && res.success && res.data && res.data.records && res.data.records.length) {
-                    res.data.records.forEach(function(r) {
+                    var records = res.data.records;
+                    var hasMore = res.data.has_more ? true : false;
+                    var nextOffsetVal = typeof res.data.next_offset !== 'undefined' && res.data.next_offset !== null ? res.data.next_offset : offset + limit;
+
+                    records.forEach(function(r) {
                         var html = '<div class="bkja-job-record-card">';
                         var genderLabel = r.gender_label || r.gender;
-                        html += '<h5>🧑‍💼 تجربه کاربر</h5>';
+                        var variantLabel = r.variant_title || r.job_title_label || job_title;
+                        if(variantLabel){
+                            html += '<h5>🧑‍🏫 ' + esc(variantLabel) + '</h5>';
+                        } else {
+                            html += '<h5>🧑‍💼 تجربه کاربر</h5>';
+                        }
+                        if (r.created_at_display) html += '<p>⏱️ ' + esc(r.created_at_display) + '</p>';
                         if (r.income) html += '<p>💵 درآمد: ' + esc(r.income) + '</p>';
                         if (r.investment) html += '<p>💰 سرمایه: ' + esc(r.investment) + '</p>';
                         if (r.city) html += '<p>📍 شهر: ' + esc(r.city) + '</p>';
@@ -2095,12 +2069,12 @@
                         pushBotHtml(html);
                     });
                     // اگر رکورد بیشتری وجود دارد دکمه نمایش بیشتر اضافه شود
-                    if (res.data.records.length === limit) {
-                        var nextOffset = offset + limit;
-                        var moreBtn = '<button class="bkja-show-records-btn" data-title="'+esc(job_title)+'" data-title-id="'+esc(job_title_id||'')+'" data-group-key="'+esc(group_key||'')+'" data-offset="'+nextOffset+'">نمایش بیشتر تجربه کاربران</button>';
-                        pushBotHtml(moreBtn);
+                    if (hasMore) {
+                        var moreBtn = '<button class="bkja-show-records-btn" data-title="'+esc(job_title)+'" data-title-id="'+esc(job_title_id||'')+'" data-group-key="'+esc(group_key||'')+'" data-offset="'+esc(nextOffsetVal)+'" data-limit="'+esc(limit)+'">نمایش بیشتر تجربه کاربران</button>';
+                        $btn.replaceWith(moreBtn);
+                    } else {
+                        $btn.remove();
                     }
-                    $btn.remove();
                 } else {
                     pushBotHtml('<div>📭 تجربه بیشتری برای این شغل ثبت نشده است.</div>');
                     $btn.remove();

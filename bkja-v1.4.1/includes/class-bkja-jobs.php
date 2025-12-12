@@ -60,13 +60,13 @@ class BKJA_Jobs {
         return $mapped;
     }
     // خلاصه شغل
-    public static function get_job_summary($job_title) {
-        return BKJA_Database::get_job_summary($job_title);
+    public static function get_job_summary($job_title, $filters = array()) {
+        return BKJA_Database::get_job_summary($job_title, $filters);
     }
 
     // رکوردهای شغل (برای نمایش جزئیات کاربران)
-    public static function get_job_records($job_title, $limit = 5, $offset = 0) {
-        return BKJA_Database::get_job_records($job_title, $limit, $offset);
+    public static function get_job_records($job_title, $limit = 5, $offset = 0, $filters = array()) {
+        return BKJA_Database::get_job_records($job_title, $limit, $offset, $filters);
     }
 
     // لیست واریانت‌های یک عنوان پایه

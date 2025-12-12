@@ -141,11 +141,21 @@ function bkja_ajax_get_job_summary(){
         $job_title_id  = isset($_POST['job_title_id']) ? intval($_POST['job_title_id']) : 0;
         $group_key     = isset($_POST['group_key']) ? sanitize_text_field( wp_unslash( $_POST['group_key'] ) ) : '';
         if(!$job_title && !$job_title_id && !$group_key) wp_send_json_error(['error'=>'empty_title'],400);
+
+        $filters = array(
+            'gender'          => isset($_POST['gender']) ? sanitize_text_field( wp_unslash( $_POST['gender'] ) ) : '',
+            'city'            => isset($_POST['city']) ? sanitize_text_field( wp_unslash( $_POST['city'] ) ) : '',
+            'income_min'      => isset($_POST['income_min']) ? intval($_POST['income_min']) : 0,
+            'income_max'      => isset($_POST['income_max']) ? intval($_POST['income_max']) : 0,
+            'investment_min'  => isset($_POST['investment_min']) ? intval($_POST['investment_min']) : 0,
+            'investment_max'  => isset($_POST['investment_max']) ? intval($_POST['investment_max']) : 0,
+        );
+
         $summary = BKJA_Jobs::get_job_summary(array(
             'label' => $job_title,
             'job_title_id' => $job_title_id,
             'group_key' => $group_key,
-        ));
+        ), $filters);
         $free_messages = get_option('bkja_free_messages_per_day', 5);
         if(!$summary) wp_send_json_error(['error'=>'not_found'],404);
         wp_send_json_success(['summary'=>$summary]);
@@ -165,13 +175,36 @@ function bkja_ajax_get_job_records(){
         $limit = isset($_POST['limit']) ? intval($_POST['limit']) : 5;
         $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
         if(!$job_title && !$job_title_id && !$group_key) wp_send_json_error(['error'=>'empty_title'],400);
+
+        $filters = array(
+            'gender'          => isset($_POST['gender']) ? sanitize_text_field( wp_unslash( $_POST['gender'] ) ) : '',
+            'city'            => isset($_POST['city']) ? sanitize_text_field( wp_unslash( $_POST['city'] ) ) : '',
+            'income_min'      => isset($_POST['income_min']) ? intval($_POST['income_min']) : 0,
+            'income_max'      => isset($_POST['income_max']) ? intval($_POST['income_max']) : 0,
+            'investment_min'  => isset($_POST['investment_min']) ? intval($_POST['investment_min']) : 0,
+            'investment_max'  => isset($_POST['investment_max']) ? intval($_POST['investment_max']) : 0,
+        );
+
         $records = BKJA_Jobs::get_job_records(array(
             'label' => $job_title,
             'job_title_id' => $job_title_id,
             'group_key' => $group_key,
-        ), $limit, $offset);
+        ), $limit, $offset, $filters);
         $free_messages = get_option('bkja_free_messages_per_day', 5);
-        wp_send_json_success(['records'=>$records]);
+
+        if ( is_array( $records ) && isset( $records['records'] ) ) {
+            wp_send_json_success( array(
+                'records'      => $records['records'],
+                'has_more'     => isset( $records['has_more'] ) ? (bool) $records['has_more'] : false,
+                'next_offset'  => isset( $records['next_offset'] ) ? $records['next_offset'] : null,
+                'limit'        => isset( $records['limit'] ) ? $records['limit'] : $limit,
+                'offset'       => isset( $records['offset'] ) ? $records['offset'] : $offset,
+                'group_key'    => isset( $records['group_key'] ) ? $records['group_key'] : $group_key,
+                'job_title_ids'=> isset( $records['job_title_ids'] ) ? $records['job_title_ids'] : array(),
+            ) );
+        }
+
+        wp_send_json_success( array( 'records' => is_array( $records ) ? $records : array() ) );
 }
 define( 'BKJA_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'BKJA_PLUGIN_URL', plugin_dir_url( __FILE__ ) );

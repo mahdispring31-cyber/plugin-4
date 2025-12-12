@@ -651,7 +651,8 @@ class BKJA_Chat {
         $target_title = $resolved_for_db ? $resolved_for_db : $job_title;
 
         $summary = class_exists('BKJA_Database') ? BKJA_Database::get_job_summary($target_title) : null;
-        $records = class_exists('BKJA_Database') ? BKJA_Database::get_job_records($target_title, 5, 0) : [];
+        $records_data = class_exists('BKJA_Database') ? BKJA_Database::get_job_records($target_title, 5, 0) : [];
+        $records = is_array( $records_data ) && isset( $records_data['records'] ) ? $records_data['records'] : $records_data;
         return [
             'job_title' => $job_title,
             'summary'   => $summary,
