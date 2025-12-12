@@ -3,55 +3,12 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 
 if ( ! function_exists( 'bkja_parse_numeric_amount' ) ) {
     /**
-     * Parse a numeric value from a free-form income/investment string.
-     *
-     * - Converts Persian digits to English.
-     * - Extracts all numeric parts; if a range is present (two numbers), returns their average.
-     * - Returns 0 when no numeric value is found.
-     *
-     * Assumes the unit is «میلیون تومان» and only stores the numeric part.
+     * Legacy wrapper kept for backward compatibility.
+     * Now returns value in TOMAN using the robust parser.
      */
     function bkja_parse_numeric_amount( $text ) {
-        if ( ! is_string( $text ) || '' === trim( $text ) ) {
-            return 0;
-        }
-
-        $english_digits = array( '۰','۱','۲','۳','۴','۵','۶','۷','۸','۹' );
-        $latin_digits   = array( '0','1','2','3','4','5','6','7','8','9' );
-
-        $normalized = str_replace( $english_digits, $latin_digits, wp_strip_all_tags( $text ) );
-        $normalized = str_replace( array( ',', '٬' ), '', $normalized );
-        $normalized = str_replace( array( 'تا', '-' ), ' ', $normalized );
-
-        if ( '' === $normalized ) {
-            return 0;
-        }
-
-        preg_match_all( '/([0-9]+(?:[\.\/][0-9]+)?)/', $normalized, $matches );
-
-        if ( empty( $matches[1] ) ) {
-            return 0;
-        }
-
-        $numbers = array();
-        foreach ( $matches[1] as $match ) {
-            $num = floatval( str_replace( array( '/', '\\' ), '.', $match ) );
-            if ( $num > 0 ) {
-                $numbers[] = $num;
-            }
-        }
-
-        if ( empty( $numbers ) ) {
-            return 0;
-        }
-
-        if ( count( $numbers ) >= 2 ) {
-            $value = ( $numbers[0] + $numbers[1] ) / 2;
-        } else {
-            $value = $numbers[0];
-        }
-
-        return (int) round( $value );
+        $parsed = bkja_parse_money_to_toman( $text );
+        return isset( $parsed['value_toman'] ) && $parsed['value_toman'] > 0 ? (int) $parsed['value_toman'] : 0;
     }
 }
 
@@ -478,7 +435,11 @@ class BKJA_Database {
 
         $add_column( 'income_num', 'BIGINT NULL', 'investment' );
         $add_column( 'investment_num', 'BIGINT NULL', 'income_num' );
-        $add_column( 'experience_years', 'TINYINT NULL', 'investment_num' );
+        $add_column( 'income_toman', 'BIGINT NULL', 'investment_num' );
+        $add_column( 'income_min_toman', 'BIGINT NULL', 'income_toman' );
+        $add_column( 'income_max_toman', 'BIGINT NULL', 'income_min_toman' );
+        $add_column( 'investment_toman', 'BIGINT NULL', 'income_max_toman' );
+        $add_column( 'experience_years', 'TINYINT NULL', 'investment_toman' );
         $add_column( 'employment_type', 'VARCHAR(50) NULL', 'experience_years' );
         $add_column( 'hours_per_day', 'TINYINT NULL', 'employment_type' );
         $add_column( 'days_per_week', 'TINYINT NULL', 'hours_per_day' );
@@ -715,7 +676,7 @@ class BKJA_Database {
         do {
             $rows = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT id, income, investment FROM {$table} WHERE income_num IS NULL OR income_num = 0 OR investment_num IS NULL OR investment_num = 0 ORDER BY id ASC LIMIT %d",
+                    "SELECT id, income, investment, income_toman, income_min_toman, income_max_toman, investment_toman, income_num, investment_num FROM {$table} WHERE (income_toman IS NULL OR income_toman = 0 OR income_toman > 1000000000000) OR (investment_toman IS NULL OR investment_toman = 0 OR investment_toman > 1000000000000) OR income_num IS NULL OR investment_num IS NULL ORDER BY id ASC LIMIT %d",
                     $limit
                 )
             );
@@ -725,12 +686,19 @@ class BKJA_Database {
             }
 
             foreach ( $rows as $row ) {
-                $income_num     = bkja_parse_numeric_amount( $row->income );
-                $investment_num = bkja_parse_numeric_amount( $row->investment );
+                $parsed_income     = bkja_parse_money_to_toman( $row->income );
+                $parsed_investment = bkja_parse_money_to_toman( $row->investment );
+
+                $income_value = isset( $parsed_income['value_toman'] ) ? (int) $parsed_income['value_toman'] : 0;
+                $invest_value = isset( $parsed_investment['value_toman'] ) ? (int) $parsed_investment['value_toman'] : 0;
 
                 $data  = array(
-                    'income_num'     => $income_num,
-                    'investment_num' => $investment_num,
+                    'income_num'        => $income_value,
+                    'investment_num'    => $invest_value,
+                    'income_toman'      => $income_value,
+                    'income_min_toman'  => isset( $parsed_income['min_toman'] ) ? $parsed_income['min_toman'] : null,
+                    'income_max_toman'  => isset( $parsed_income['max_toman'] ) ? $parsed_income['max_toman'] : null,
+                    'investment_toman'  => $invest_value,
                 );
                 $where = array( 'id' => (int) $row->id );
 
@@ -1281,6 +1249,9 @@ class BKJA_Database {
 
         $title_to_store = $variant_title ? $variant_title : $base_label;
 
+        $parsed_income     = bkja_parse_money_to_toman( isset( $data['income'] ) ? $data['income'] : '' );
+        $parsed_investment = bkja_parse_money_to_toman( isset( $data['investment'] ) ? $data['investment'] : '' );
+
         $row = [
             'category_id'      => $category_id,
             'job_title_id'     => $job_title_id ?: null,
@@ -1290,6 +1261,10 @@ class BKJA_Database {
             'investment'       => isset( $data['investment'] ) ? sanitize_text_field( $data['investment'] ) : '',
             'income_num'       => 0,
             'investment_num'   => 0,
+            'income_toman'     => isset( $parsed_income['value_toman'] ) ? $parsed_income['value_toman'] : null,
+            'income_min_toman' => isset( $parsed_income['min_toman'] ) ? $parsed_income['min_toman'] : null,
+            'income_max_toman' => isset( $parsed_income['max_toman'] ) ? $parsed_income['max_toman'] : null,
+            'investment_toman' => isset( $parsed_investment['value_toman'] ) ? $parsed_investment['value_toman'] : null,
             'experience_years' => $experience_years,
             'employment_type'  => isset( $data['employment_type'] ) ? sanitize_text_field( $data['employment_type'] ) : null,
             'hours_per_day'    => $hours_per_day,
@@ -1304,6 +1279,13 @@ class BKJA_Database {
 
         $row['income_num']     = ( $income_num_input && $income_num_input > 0 ) ? $income_num_input : bkja_parse_numeric_amount( $row['income'] );
         $row['investment_num'] = ( $investment_num_input && $investment_num_input > 0 ) ? $investment_num_input : bkja_parse_numeric_amount( $row['investment'] );
+
+        if ( $row['income_num'] && empty( $row['income_toman'] ) ) {
+            $row['income_toman'] = $row['income_num'];
+        }
+        if ( $row['investment_num'] && empty( $row['investment_toman'] ) ) {
+            $row['investment_toman'] = $row['investment_num'];
+        }
 
         if ( isset( $data['created_at'] ) && ! empty( $data['created_at'] ) ) {
             $row['created_at'] = sanitize_text_field( $data['created_at'] );
@@ -1586,46 +1568,141 @@ class BKJA_Database {
             return call_user_func_array( array( $wpdb, 'prepare' ), $params );
         };
 
-        $summary_sql = $prepare_with_params(
-            "SELECT
-                    COUNT(*) AS total_reports,
-                    MAX(j.created_at) AS latest_at,
-                    AVG(CASE WHEN j.income_num > 0 THEN j.income_num END) AS avg_income,
-                    MIN(CASE WHEN j.income_num > 0 THEN j.income_num END) AS min_income,
-                    MAX(CASE WHEN j.income_num > 0 THEN j.income_num END) AS max_income,
-                    SUM(CASE WHEN j.income_num > 0 THEN 1 ELSE 0 END) AS income_count,
-                    AVG(CASE WHEN j.investment_num > 0 THEN j.investment_num END) AS avg_investment,
-                    MIN(CASE WHEN j.investment_num > 0 THEN j.investment_num END) AS min_investment,
-                    MAX(CASE WHEN j.investment_num > 0 THEN j.investment_num END) AS max_investment,
-                    SUM(CASE WHEN j.investment_num > 0 THEN 1 ELSE 0 END) AS investment_count,
-                    AVG(CASE WHEN j.experience_years > 0 THEN j.experience_years END) AS avg_experience_years,
-                    AVG(CASE WHEN j.hours_per_day > 0 THEN j.hours_per_day END) AS avg_hours_per_day,
-                    AVG(CASE WHEN j.days_per_week > 0 THEN j.days_per_week END) AS avg_days_per_week
+        $latest_at = $wpdb->get_var( $prepare_with_params( "SELECT MAX(j.created_at) FROM {$table} j WHERE {$where_clause}" ) );
+        $total_reports = (int) $wpdb->get_var( $prepare_with_params( "SELECT COUNT(*) FROM {$table} j WHERE {$where_clause}" ) );
+
+        $stat_rows = $wpdb->get_results(
+            $prepare_with_params(
+                "SELECT j.income_toman, j.income_min_toman, j.income_max_toman, j.income_num, j.investment_toman, j.investment_num, j.experience_years, j.hours_per_day, j.days_per_week
                  FROM {$table} j
                  WHERE {$where_clause}"
+            )
         );
 
-        $row = $wpdb->get_row( $summary_sql );
+        $normalize_value = function( $value ) {
+            $value = (int) $value;
+            if ( $value <= 0 || $value > 1000000000000 ) {
+                return null;
+            }
+            return $value;
+        };
 
-        if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
-            error_log( 'BKJA get_job_summary context: ' . wp_json_encode( $context ) . ' WHERE ' . $where_clause . ' params ' . wp_json_encode( $where_params ) . ' SQL ' . $summary_sql . ' count=' . ( $row ? (int) $row->total_reports : 0 ) );
+        $income_values      = array();
+        $income_range_mins  = array();
+        $income_range_maxes = array();
+        $investment_values  = array();
+
+        $sum_experience = 0;
+        $exp_count      = 0;
+        $sum_hours      = 0;
+        $hours_count    = 0;
+        $sum_days       = 0;
+        $days_count     = 0;
+
+        foreach ( $stat_rows as $srow ) {
+            $income_base = $normalize_value( $srow->income_toman ? $srow->income_toman : $srow->income_num );
+            $income_min  = $normalize_value( $srow->income_min_toman );
+            $income_max  = $normalize_value( $srow->income_max_toman );
+
+            if ( $income_min ) {
+                $income_range_mins[] = $income_min;
+            }
+            if ( $income_max ) {
+                $income_range_maxes[] = $income_max;
+            }
+
+            if ( $income_base ) {
+                $income_values[] = $income_base;
+            } elseif ( $income_min && $income_max ) {
+                $income_values[] = (int) round( ( $income_min + $income_max ) / 2 );
+            }
+
+            $investment_base = $normalize_value( $srow->investment_toman ? $srow->investment_toman : $srow->investment_num );
+            if ( $investment_base ) {
+                $investment_values[] = $investment_base;
+            }
+
+            if ( isset( $srow->experience_years ) && (int) $srow->experience_years > 0 ) {
+                $sum_experience += (int) $srow->experience_years;
+                $exp_count++;
+            }
+            if ( isset( $srow->hours_per_day ) && (int) $srow->hours_per_day > 0 ) {
+                $sum_hours += (int) $srow->hours_per_day;
+                $hours_count++;
+            }
+            if ( isset( $srow->days_per_week ) && (int) $srow->days_per_week > 0 ) {
+                $sum_days += (int) $srow->days_per_week;
+                $days_count++;
+            }
         }
 
-        if ( defined( 'WP_DEBUG' ) && WP_DEBUG && ! empty( $job_ids ) ) {
-            $count_placeholders = implode( ',', array_fill( 0, count( $job_ids ), '%d' ) );
-            $count_params       = $job_ids;
-            $count_sql_all      = $wpdb->prepare( "SELECT COUNT(*) FROM {$table} j WHERE j.job_title_id IN ({$count_placeholders})", $count_params );
-            $count_sql_window   = $wpdb->prepare( "SELECT COUNT(*) FROM {$table} j WHERE j.job_title_id IN ({$count_placeholders}) AND j.created_at >= DATE_SUB(NOW(), INTERVAL %d MONTH)", array_merge( $job_ids, array( $window_months ) ) );
-            $minmax_sql         = $wpdb->prepare( "SELECT MIN(j.created_at) AS min_created_at, MAX(j.created_at) AS max_created_at FROM {$table} j WHERE j.job_title_id IN ({$count_placeholders})", $count_params );
+        $income_numeric_total = count( $income_values );
 
-            $count_all    = (int) $wpdb->get_var( $count_sql_all );
-            $count_window = (int) $wpdb->get_var( $count_sql_window );
-            $minmax       = $wpdb->get_row( $minmax_sql );
+        $quantile = function( $values, $q ) {
+            $count = count( $values );
+            if ( $count === 0 ) {
+                return null;
+            }
+            sort( $values, SORT_NUMERIC );
+            $pos   = ( $count - 1 ) * $q;
+            $floor = (int) floor( $pos );
+            $ceil  = (int) ceil( $pos );
+            if ( $floor === $ceil ) {
+                return $values[ $floor ];
+            }
+            $d0 = $values[ $floor ] * ( $ceil - $pos );
+            $d1 = $values[ $ceil ] * ( $pos - $floor );
+            return $d0 + $d1;
+        };
 
-            error_log( 'BKJA get_job_summary date diagnostics: ids=' . implode( ',', $job_ids ) . ' all_time=' . $count_all . ' window=' . $count_window . ' min_created_at=' . ( $minmax ? $minmax->min_created_at : 'n/a' ) . ' max_created_at=' . ( $minmax ? $minmax->max_created_at : 'n/a' ) );
+        $filter_outliers = function( $values ) use ( $quantile ) {
+            if ( count( $values ) < 5 ) {
+                return $values;
+            }
+            $p5  = $quantile( $values, 0.05 );
+            $p95 = $quantile( $values, 0.95 );
+
+            $filtered = array();
+            foreach ( $values as $v ) {
+                if ( ( null !== $p5 && $v < $p5 ) || ( null !== $p95 && $v > $p95 ) ) {
+                    continue;
+                }
+                $filtered[] = $v;
+            }
+
+            return ! empty( $filtered ) ? $filtered : $values;
+        };
+
+        $income_filtered = $filter_outliers( $income_values );
+        $income_used     = count( $income_filtered );
+
+        $calc_avg = function( $values ) {
+            $values = array_filter( $values, function( $v ) { return is_numeric( $v ) && $v > 0; } );
+            if ( empty( $values ) ) {
+                return null;
+            }
+            return array_sum( $values ) / count( $values );
+        };
+
+        $avg_income = $calc_avg( $income_filtered );
+        $min_income = ! empty( $income_filtered ) ? min( $income_filtered ) : null;
+        $max_income = ! empty( $income_filtered ) ? max( $income_filtered ) : null;
+
+        if ( empty( $income_range_mins ) && empty( $income_range_maxes ) ) {
+            $range_min = $min_income;
+            $range_max = $max_income;
+        } else {
+            $range_min = ! empty( $income_range_mins ) ? min( $income_range_mins ) : $min_income;
+            $range_max = ! empty( $income_range_maxes ) ? max( $income_range_maxes ) : $max_income;
         }
 
-        if ( ! $row ) return null;
+        $avg_investment = $calc_avg( $investment_values );
+        $min_investment = ! empty( $investment_values ) ? min( $investment_values ) : null;
+        $max_investment = ! empty( $investment_values ) ? max( $investment_values ) : null;
+
+        $avg_experience_years = $exp_count > 0 ? $sum_experience / $exp_count : null;
+        $avg_hours_per_day    = $hours_count > 0 ? $sum_hours / $hours_count : null;
+        $avg_days_per_week    = $days_count > 0 ? $sum_days / $days_count : null;
 
         $cities = $wpdb->get_col(
             $prepare_with_params(
@@ -1732,19 +1809,20 @@ class BKJA_Database {
             'job_title_slug'    => $job_slug ?: sanitize_title( $job_title ),
             'group_key'         => isset( $context['group_key'] ) ? $context['group_key'] : null,
             'job_title_ids'     => $job_ids,
-            'avg_income'        => $row->avg_income ? round( (float) $row->avg_income, 1 ) : null,
-            'min_income'        => $row->min_income ? (float) $row->min_income : null,
-            'max_income'        => $row->max_income ? (float) $row->max_income : null,
-            'income_count'      => (int) $row->income_count,
-            'avg_investment'    => $row->avg_investment ? round( (float) $row->avg_investment, 1 ) : null,
-            'min_investment'    => $row->min_investment ? (float) $row->min_investment : null,
-            'max_investment'    => $row->max_investment ? (float) $row->max_investment : null,
-            'investment_count'  => (int) $row->investment_count,
-            'avg_experience_years' => $row->avg_experience_years ? round( (float) $row->avg_experience_years, 1 ) : null,
-            'avg_hours_per_day'    => $row->avg_hours_per_day ? round( (float) $row->avg_hours_per_day, 1 ) : null,
-            'avg_days_per_week'    => $row->avg_days_per_week ? round( (float) $row->avg_days_per_week, 1 ) : null,
-            'count_reports'     => (int) $row->total_reports,
-            'latest_at'         => $row->latest_at,
+            'avg_income'        => $avg_income ? round( (float) $avg_income, 1 ) : null,
+            'min_income'        => $range_min ? (float) $range_min : null,
+            'max_income'        => $range_max ? (float) $range_max : null,
+            'income_count'      => $income_used,
+            'income_numeric_total' => $income_numeric_total,
+            'avg_investment'    => $avg_investment ? round( (float) $avg_investment, 1 ) : null,
+            'min_investment'    => $min_investment ? (float) $min_investment : null,
+            'max_investment'    => $max_investment ? (float) $max_investment : null,
+            'investment_count'  => count( $investment_values ),
+            'avg_experience_years' => $avg_experience_years ? round( (float) $avg_experience_years, 1 ) : null,
+            'avg_hours_per_day'    => $avg_hours_per_day ? round( (float) $avg_hours_per_day, 1 ) : null,
+            'avg_days_per_week'    => $avg_days_per_week ? round( (float) $avg_days_per_week, 1 ) : null,
+            'count_reports'     => $total_reports,
+            'latest_at'         => $latest_at,
             'cities'            => $cities,
             'genders'           => null,
             'advantages'        => $advantages,
@@ -1795,7 +1873,7 @@ class BKJA_Database {
         $limit_cap = $limit + 1;
 
         $records_sql = $prepare_with_params(
-            "SELECT j.id, j.title, j.variant_title, j.income, j.investment, j.income_num, j.investment_num, j.experience_years, j.employment_type, j.hours_per_day, j.days_per_week, j.source, j.city, j.gender, j.advantages, j.disadvantages, j.details, j.created_at, jt.label AS job_title_label, jt.slug AS job_title_slug
+            "SELECT j.id, j.title, j.variant_title, j.income, j.investment, j.income_num, j.investment_num, j.income_toman, j.income_min_toman, j.income_max_toman, j.investment_toman, j.experience_years, j.employment_type, j.hours_per_day, j.days_per_week, j.source, j.city, j.gender, j.advantages, j.disadvantages, j.details, j.created_at, jt.label AS job_title_label, jt.slug AS job_title_slug
                  FROM {$table} j
                  LEFT JOIN {$table_titles} jt ON jt.id = j.job_title_id
                  WHERE {$where_clause}
@@ -1815,9 +1893,12 @@ class BKJA_Database {
                     'job_title_slug'         => $row->job_title_slug ? $row->job_title_slug : sanitize_title( $row->title ),
                     'variant_title'          => $row->variant_title ? $row->variant_title : $row->title,
                     'income'                 => $row->income,
-                    'income_num'             => isset( $row->income_num ) ? (int) $row->income_num : 0,
+                    'income_num'             => isset( $row->income_toman ) && $row->income_toman > 0 ? (int) $row->income_toman : ( ( isset( $row->income_num ) && $row->income_num > 0 ) ? (int) $row->income_num : 0 ),
+                    'income_min_toman'       => isset( $row->income_min_toman ) ? (int) $row->income_min_toman : null,
+                    'income_max_toman'       => isset( $row->income_max_toman ) ? (int) $row->income_max_toman : null,
                     'investment'             => $row->investment,
-                    'investment_num'         => isset( $row->investment_num ) ? (int) $row->investment_num : 0,
+                    'investment_num'         => isset( $row->investment_toman ) && $row->investment_toman > 0 ? (int) $row->investment_toman : ( ( isset( $row->investment_num ) && $row->investment_num > 0 ) ? (int) $row->investment_num : 0 ),
+                    'investment_toman'       => isset( $row->investment_toman ) ? (int) $row->investment_toman : null,
                     'experience_years'       => isset( $row->experience_years ) ? (int) $row->experience_years : null,
                     'employment_type'        => isset( $row->employment_type ) ? $row->employment_type : null,
                     'employment_type_label'  => isset( $row->employment_type ) ? bkja_get_employment_label( $row->employment_type ) : null,
@@ -1931,22 +2012,22 @@ class BKJA_Database {
         }
 
         if ( isset( $filters['income_min'] ) && is_numeric( $filters['income_min'] ) && $filters['income_min'] > 0 ) {
-            $clauses[] = "{$prefix}income_num >= %d";
+            $clauses[] = "{$prefix}income_toman >= %d";
             $params[]  = (int) $filters['income_min'];
         }
 
         if ( isset( $filters['income_max'] ) && is_numeric( $filters['income_max'] ) && $filters['income_max'] > 0 ) {
-            $clauses[] = "{$prefix}income_num <= %d";
+            $clauses[] = "{$prefix}income_toman <= %d";
             $params[]  = (int) $filters['income_max'];
         }
 
         if ( isset( $filters['investment_min'] ) && is_numeric( $filters['investment_min'] ) && $filters['investment_min'] > 0 ) {
-            $clauses[] = "{$prefix}investment_num >= %d";
+            $clauses[] = "{$prefix}investment_toman >= %d";
             $params[]  = (int) $filters['investment_min'];
         }
 
         if ( isset( $filters['investment_max'] ) && is_numeric( $filters['investment_max'] ) && $filters['investment_max'] > 0 ) {
-            $clauses[] = "{$prefix}investment_num <= %d";
+            $clauses[] = "{$prefix}investment_toman <= %d";
             $params[]  = (int) $filters['investment_max'];
         }
 
