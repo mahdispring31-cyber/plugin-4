@@ -1069,13 +1069,13 @@ class BKJA_Database {
 
         return array(
             'job_title'         => $job_title,
-            'avg_income'        => $income_stats['avg'] ? round( $income_stats['avg'] / 1000000, 2 ) : null,
-            'min_income'        => $income_stats['min'] ? round( $income_stats['min'] / 1000000, 2 ) : null,
-            'max_income'        => $income_stats['max'] ? round( $income_stats['max'] / 1000000, 2 ) : null,
+            'avg_income'        => $income_stats['avg'] ? (int) round( $income_stats['avg'] ) : null,
+            'min_income'        => $income_stats['min'] ? (int) round( $income_stats['min'] ) : null,
+            'max_income'        => $income_stats['max'] ? (int) round( $income_stats['max'] ) : null,
             'income_count'      => (int) $income_stats['count'],
-            'avg_investment'    => $investment_stats['avg'] ? round( $investment_stats['avg'] / 1000000, 2 ) : null,
-            'min_investment'    => $investment_stats['min'] ? round( $investment_stats['min'] / 1000000, 2 ) : null,
-            'max_investment'    => $investment_stats['max'] ? round( $investment_stats['max'] / 1000000, 2 ) : null,
+            'avg_investment'    => $investment_stats['avg'] ? (int) round( $investment_stats['avg'] ) : null,
+            'min_investment'    => $investment_stats['min'] ? (int) round( $investment_stats['min'] ) : null,
+            'max_investment'    => $investment_stats['max'] ? (int) round( $investment_stats['max'] ) : null,
             'investment_count'  => (int) $investment_stats['count'],
             'count_reports'     => (int) $total_reports,
             'latest_at'         => $latest_at,
@@ -1168,7 +1168,7 @@ class BKJA_Database {
 
         $results = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT id, title, income, investment, income_num, investment_num, experience_years, employment_type, hours_per_day, days_per_week, source, city, gender, advantages, disadvantages, details, created_at
+                "SELECT id, title, income, investment, income_num, investment_num, income_toman, investment_toman, income_min_toman, income_max_toman, experience_years, employment_type, hours_per_day, days_per_week, source, city, gender, advantages, disadvantages, details, created_at
                  FROM {$table}
                  WHERE title = %s
                  ORDER BY created_at DESC
@@ -1184,8 +1184,12 @@ class BKJA_Database {
                     'job_title'              => $row->title,
                     'income'                 => $row->income,
                     'income_num'             => isset( $row->income_num ) ? (int) $row->income_num : 0,
+                    'income_toman'           => isset( $row->income_toman ) ? (int) $row->income_toman : null,
+                    'income_min_toman'       => isset( $row->income_min_toman ) ? (int) $row->income_min_toman : null,
+                    'income_max_toman'       => isset( $row->income_max_toman ) ? (int) $row->income_max_toman : null,
                     'investment'             => $row->investment,
                     'investment_num'         => isset( $row->investment_num ) ? (int) $row->investment_num : 0,
+                    'investment_toman'       => isset( $row->investment_toman ) ? (int) $row->investment_toman : null,
                     'experience_years'       => isset( $row->experience_years ) ? (int) $row->experience_years : null,
                     'employment_type'        => isset( $row->employment_type ) ? $row->employment_type : null,
                     'employment_type_label'  => isset( $row->employment_type ) ? bkja_get_employment_label( $row->employment_type ) : null,

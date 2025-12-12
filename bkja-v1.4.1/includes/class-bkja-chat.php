@@ -388,16 +388,8 @@ class BKJA_Chat {
         ];
     }
 
-    protected static function format_amount_label( $value ) {
-        if ( ! is_numeric( $value ) || $value <= 0 ) {
-            return 'نامشخص';
-        }
-
-        $number    = (float) $value;
-        $rounded   = abs( $number - round( $number ) ) < 0.1 ? round( $number ) : round( $number, 1 );
-        $formatted = is_float( $rounded ) ? rtrim( rtrim( number_format( $rounded, 1, '.', '' ), '0' ), '.' ) : $rounded;
-
-        return $formatted . ' میلیون تومان';
+    protected static function format_amount_label( $toman_value ) {
+        return bkja_format_toman_as_million( $toman_value );
     }
 
     protected static function format_range_label( $min, $max ) {
@@ -411,7 +403,21 @@ class BKJA_Chat {
             $max = $tmp;
         }
 
-        return self::format_amount_label( $min ) . ' تا ' . self::format_amount_label( $max );
+        $unit           = ' میلیون تومان';
+        $min_formatted  = self::format_amount_label( $min );
+        $max_formatted  = self::format_amount_label( $max );
+
+        if ( in_array( 'نامشخص', array( $min_formatted, $max_formatted ), true ) ) {
+            return '';
+        }
+        $min_compact    = str_replace( $unit, '', $min_formatted );
+        $max_compact    = str_replace( $unit, '', $max_formatted );
+
+        if ( $min_formatted && $max_formatted ) {
+            return $min_compact . ' تا ' . $max_compact . $unit;
+        }
+
+        return $min_formatted && $max_formatted ? $min_formatted . ' تا ' . $max_formatted : '';
     }
 
     protected static function trim_snippet( $text, $length = 140 ) {
@@ -590,15 +596,19 @@ class BKJA_Chat {
                     continue;
                 }
                 $parts = array();
-                if ( ! empty( $record['income_num'] ) ) {
-                    $parts[] = 'درآمد: ' . self::format_amount_label( $record['income_num'] );
-                } elseif ( ! empty( $record['income'] ) ) {
+                if ( ! empty( $record['income'] ) ) {
                     $parts[] = 'درآمد: ' . $record['income'];
+                } elseif ( ! empty( $record['income_toman'] ) ) {
+                    $parts[] = 'درآمد: ' . self::format_amount_label( $record['income_toman'] );
+                } elseif ( ! empty( $record['income_num'] ) ) {
+                    $parts[] = 'درآمد: ' . self::format_amount_label( (int) $record['income_num'] * 1000000 );
                 }
-                if ( ! empty( $record['investment_num'] ) ) {
-                    $parts[] = 'سرمایه: ' . self::format_amount_label( $record['investment_num'] );
-                } elseif ( ! empty( $record['investment'] ) ) {
+                if ( ! empty( $record['investment'] ) ) {
                     $parts[] = 'سرمایه: ' . $record['investment'];
+                } elseif ( isset( $record['investment_toman'] ) && $record['investment_toman'] >= 0 ) {
+                    $parts[] = 'سرمایه: ' . self::format_amount_label( $record['investment_toman'] );
+                } elseif ( ! empty( $record['investment_num'] ) ) {
+                    $parts[] = 'سرمایه: ' . self::format_amount_label( (int) $record['investment_num'] * 1000000 );
                 }
                 if ( ! empty( $record['city'] ) ) {
                     $parts[] = 'شهر: ' . $record['city'];

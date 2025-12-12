@@ -759,6 +759,12 @@
             return text;
         }
 
+        function isSameJobLabel(a, b){
+            var na = normalizeJobToken(a);
+            var nb = normalizeJobToken(b);
+            return na.length > 0 && na === nb;
+        }
+
         function buildQuickActionsForMessage($message) {
             if(!quickActionsEnabled){
                 return null;
@@ -805,26 +811,29 @@
             return wrap;
         }
 
-        function applyAssistantMeta($message, meta){
-            if(!$message || !$message.length){
-                return;
-            }
-            var data = meta || {};
-            var el = $message.get(0);
-            if(!el){
-                return;
-            }
-            var categoryValue = data.category ? String(data.category) : '';
-            var jobTitleValue = data.job_title ? String(data.job_title) : '';
-            var jobSlugValue = data.job_slug ? String(data.job_slug) : '';
-
-            function appendJobMetaNote(){
-                $message.find('.bkja-job-meta-note').remove();
-                var count = parseInt(data.job_report_count, 10);
-                if(isNaN(count) || count <= 0){
+            function applyAssistantMeta($message, meta){
+                if(!$message || !$message.length){
                     return;
                 }
-                var title = jobTitleValue || data.jobTitle || '';
+                var data = meta || {};
+                var el = $message.get(0);
+                if(!el){
+                    return;
+                }
+                var categoryValue = data.category ? String(data.category) : '';
+                var jobTitleValue = data.job_title ? String(data.job_title) : '';
+                var jobSlugValue = data.job_slug ? String(data.job_slug) : '';
+
+                function appendJobMetaNote(){
+                    $message.find('.bkja-job-meta-note').remove();
+                    if(!data.context_used){
+                        return;
+                    }
+                    var count = parseInt(data.job_report_count, 10);
+                    if(isNaN(count) || count <= 0){
+                        return;
+                    }
+                    var title = jobTitleValue || data.jobTitle || '';
                 if(!title){
                     return;
                 }
@@ -1236,6 +1245,78 @@
                 return String(text).replace(/[\s‌]+/g,' ').trim().toLowerCase();
             }
 
+            function normalizeJobToken(text){
+                if(text === null || text === undefined){
+                    return '';
+                }
+                var t = String(text);
+                t = t.replace(/[\u200c‌]/g,'');
+                t = t.replace(/برق\s*کشی?/g,'برقکش');
+                t = t.replace(/برقکش(?:ی)?/g,'برقکش');
+                t = t.replace(/مکانیکی/g,'مکانیک');
+                t = t.replace(/مکانیک\s*ی$/,'مکانیک');
+                t = t.replace(/\s+/g,' ').toLowerCase();
+                return $.trim(t);
+            }
+
+            function isFollowupPronoun(text){
+                var normalized = normalizeForMatch(text);
+                if(!normalized){
+                    return false;
+                }
+                var pronouns = ['این شغل','همین','همونه','همون','اون شغل','اون'];
+                for(var i=0;i<pronouns.length;i++){
+                    if(normalized.indexOf(pronouns[i]) !== -1){
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            function resolveJobContextFromQuery(message){
+                var normalized = normalizeForMatch(message);
+                if(!normalized){
+                    return '';
+                }
+
+                if(isFollowupPronoun(normalized) && lastKnownJobTitle){
+                    return cleanJobHint(lastKnownJobTitle);
+                }
+
+                var candidate = '';
+                var match = message ? message.match(/(?:شغل|کار|حرفه)\s*(?:«|"|\')?\s*([^»"'؟\?\n]+?)(?:»|"|\'|\s|\?|؟|$)/) : null;
+                if(match && match[1]){
+                    candidate = match[1];
+                }
+
+                if(!candidate){
+                    var alt = message ? message.match(/(?:درباره|در مورد|راجع(?:ه)?|حوزه|برای)\s+([^\?\!\n]+?)(?:\s*(?:چی|چیه|است|می|؟|\?|$))/) : null;
+                    if(alt && alt[1]){
+                        candidate = alt[1];
+                    }
+                }
+
+                var normalizedCandidate = normalizeJobToken(candidate);
+                if(!normalizedCandidate){
+                    return '';
+                }
+
+                var compactCandidate = normalizedCandidate.replace(/\s+/g,'');
+                var compactQuery = normalizeJobToken(normalized).replace(/\s+/g,'');
+                var matchLen = compactCandidate.length;
+                var ratio = 0;
+                if(compactCandidate && compactQuery){
+                    var pos = compactQuery.indexOf(compactCandidate);
+                    ratio = pos !== -1 ? (compactCandidate.length / compactQuery.length) : (compactCandidate.length / (compactQuery.length + compactCandidate.length));
+                }
+
+                if(matchLen < 2 || ratio < 0.35){
+                    return '';
+                }
+
+                return cleanJobHint(normalizedCandidate);
+            }
+
             function shouldStartPersonalityFlow(message){
                 if(personalityFlow.active || personalityFlow.awaitingResult){
                     return false;
@@ -1409,17 +1490,15 @@
                 }
 
                 var explicitJobTitle = cleanJobHint(options.jobTitle);
-                var fallbackJobTitle = cleanJobHint(lastKnownJobTitle);
-                if(explicitJobTitle){
-                    sendOptions.jobTitle = explicitJobTitle;
-                } else if(fallbackJobTitle){
-                    sendOptions.jobTitle = fallbackJobTitle;
+                var resolvedJobTitle = explicitJobTitle || resolveJobContextFromQuery(text);
+                if(resolvedJobTitle){
+                    sendOptions.jobTitle = resolvedJobTitle;
                 }
 
                 var explicitJobSlug = cleanJobHint(options.jobSlug);
                 if(explicitJobSlug){
                     sendOptions.jobSlug = explicitJobSlug;
-                } else if(lastReplyMeta && cleanJobHint(lastReplyMeta.job_slug)){
+                } else if(lastReplyMeta && cleanJobHint(lastReplyMeta.job_slug) && resolvedJobTitle && isSameJobLabel(resolvedJobTitle, lastReplyMeta.job_title)){
                     sendOptions.jobSlug = cleanJobHint(lastReplyMeta.job_slug);
                 }
 
@@ -1527,7 +1606,7 @@
                         var suggestions = Array.isArray(res.data.suggestions) ? res.data.suggestions : [];
                         var fromCache = !!res.data.from_cache;
                         var meta = res.data.meta || {};
-                        if(meta.job_title){
+                        if(meta.job_title && meta.context_used){
                             lastKnownJobTitle = meta.job_title;
                         }
                         lastReplyMeta = meta;
@@ -1823,11 +1902,26 @@
                     if(isNaN(num) || num <= 0){
                         return '';
                     }
-                    var rounded = Math.round(num * 10) / 10;
-                    if(Math.abs(rounded - Math.round(rounded)) < 0.1){
+                    var million = num / 1000000;
+                    var precision = Math.abs(million) < 20 ? 1 : 0;
+                    var rounded = Math.round(million * Math.pow(10, precision)) / Math.pow(10, precision);
+                    if(precision === 0){
                         rounded = Math.round(rounded);
                     }
-                    return rounded + ' میلیون تومان';
+                    return String(rounded).replace(/\.0+$/, '') + ' میلیون تومان';
+                }
+
+                function fmtMillionRange(minVal, maxVal){
+                    var minLabel = fmtMillion(minVal);
+                    var maxLabel = fmtMillion(maxVal);
+                    var unit = ' میلیون تومان';
+                    if(!minLabel || !maxLabel){
+                        return '';
+                    }
+                    if(minLabel.indexOf(unit) !== -1 && maxLabel.indexOf(unit) !== -1){
+                        return minLabel.replace(unit,'') + ' تا ' + maxLabel.replace(unit,'') + unit;
+                    }
+                    return minLabel + ' تا ' + maxLabel;
                 }
 
                 var html = '<div class="bkja-job-summary-card">';
@@ -1851,8 +1945,9 @@
                     if(s.avg_income){
                         incomeText += 'میانگین: ' + esc(fmtMillion(s.avg_income));
                     }
-                    if(s.min_income && s.max_income){
-                        incomeText += (incomeText ? ' | ' : '') + 'بازه: ' + esc(fmtMillion(s.min_income)) + ' تا ' + esc(fmtMillion(s.max_income));
+                    var incomeRange = fmtMillionRange(s.min_income, s.max_income);
+                    if(incomeRange){
+                        incomeText += (incomeText ? ' | ' : '') + 'بازه: ' + esc(incomeRange);
                     }
                     if(incomeText){
                         html += '<p>💵 درآمد کاربران: ' + incomeText + '</p>';
@@ -1862,8 +1957,9 @@
                     if(s.avg_investment){
                         investText += 'میانگین: ' + esc(fmtMillion(s.avg_investment));
                     }
-                    if(s.min_investment && s.max_investment){
-                        investText += (investText ? ' | ' : '') + 'بازه: ' + esc(fmtMillion(s.min_investment)) + ' تا ' + esc(fmtMillion(s.max_investment));
+                    var investRange = fmtMillionRange(s.min_investment, s.max_investment);
+                    if(investRange){
+                        investText += (investText ? ' | ' : '') + 'بازه: ' + esc(investRange);
                     }
                     if(investText){
                         html += '<p>💰 سرمایه لازم: ' + investText + '</p>';

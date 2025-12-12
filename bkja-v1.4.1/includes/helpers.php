@@ -40,6 +40,27 @@ if ( ! function_exists( 'bkja_get_employment_label' ) ) {
     }
 }
 
+if ( ! function_exists( 'bkja_format_toman_as_million' ) ) {
+    /**
+     * Canonical money formatter. Accepts a Toman integer and returns a «میلیون تومان» label.
+     */
+    function bkja_format_toman_as_million( $toman ) {
+        if ( ! is_numeric( $toman ) || $toman <= 0 ) {
+            return 'نامشخص';
+        }
+
+        $million   = (float) $toman / 1000000;
+        $precision = ( $million < 20 && $million > -20 ) ? 1 : 0;
+        $rounded   = round( $million, $precision );
+
+        $formatted = $precision > 0
+            ? rtrim( rtrim( number_format( $rounded, $precision, '.', '' ), '0' ), '.' )
+            : (int) $rounded;
+
+        return $formatted . ' میلیون تومان';
+    }
+}
+
 if ( ! function_exists( 'bkja_format_job_date' ) ) {
     function bkja_format_job_date( $datetime, $format = 'Y/m/d' ) {
         if ( empty( $datetime ) ) {
