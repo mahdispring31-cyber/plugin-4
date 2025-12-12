@@ -137,12 +137,18 @@ function bkja_ajax_get_job_summary(){
         if ( ! wp_verify_nonce( $nonce, 'bkja_nonce' ) ) {
                 wp_send_json_error( array( 'error' => 'invalid_nonce' ), 403 );
         }
-        $job_title = isset($_POST['job_title']) ? sanitize_text_field( wp_unslash( $_POST['job_title'] ) ) : '';
-	if(!$job_title) wp_send_json_error(['error'=>'empty_title'],400);
-	$summary = BKJA_Jobs::get_job_summary($job_title);
-	$free_messages = get_option('bkja_free_messages_per_day', 5);
-	if(!$summary) wp_send_json_error(['error'=>'not_found'],404);
-	wp_send_json_success(['summary'=>$summary]);
+        $job_title     = isset($_POST['job_title']) ? sanitize_text_field( wp_unslash( $_POST['job_title'] ) ) : '';
+        $job_title_id  = isset($_POST['job_title_id']) ? intval($_POST['job_title_id']) : 0;
+        $group_key     = isset($_POST['group_key']) ? sanitize_text_field( wp_unslash( $_POST['group_key'] ) ) : '';
+        if(!$job_title && !$job_title_id && !$group_key) wp_send_json_error(['error'=>'empty_title'],400);
+        $summary = BKJA_Jobs::get_job_summary(array(
+            'label' => $job_title,
+            'job_title_id' => $job_title_id,
+            'group_key' => $group_key,
+        ));
+        $free_messages = get_option('bkja_free_messages_per_day', 5);
+        if(!$summary) wp_send_json_error(['error'=>'not_found'],404);
+        wp_send_json_success(['summary'=>$summary]);
 }
 
 // AJAX: دریافت رکوردهای شغل بر اساس عنوان (limit, offset)
@@ -154,12 +160,18 @@ function bkja_ajax_get_job_records(){
                 wp_send_json_error( array( 'error' => 'invalid_nonce' ), 403 );
         }
         $job_title = isset($_POST['job_title']) ? sanitize_text_field( wp_unslash( $_POST['job_title'] ) ) : '';
-	$limit = isset($_POST['limit']) ? intval($_POST['limit']) : 5;
-	$offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
-	if(!$job_title) wp_send_json_error(['error'=>'empty_title'],400);
-	$records = BKJA_Jobs::get_job_records($job_title, $limit, $offset);
-	$free_messages = get_option('bkja_free_messages_per_day', 5);
-	wp_send_json_success(['records'=>$records]);
+        $job_title_id  = isset($_POST['job_title_id']) ? intval($_POST['job_title_id']) : 0;
+        $group_key     = isset($_POST['group_key']) ? sanitize_text_field( wp_unslash( $_POST['group_key'] ) ) : '';
+        $limit = isset($_POST['limit']) ? intval($_POST['limit']) : 5;
+        $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
+        if(!$job_title && !$job_title_id && !$group_key) wp_send_json_error(['error'=>'empty_title'],400);
+        $records = BKJA_Jobs::get_job_records(array(
+            'label' => $job_title,
+            'job_title_id' => $job_title_id,
+            'group_key' => $group_key,
+        ), $limit, $offset);
+        $free_messages = get_option('bkja_free_messages_per_day', 5);
+        wp_send_json_success(['records'=>$records]);
 }
 define( 'BKJA_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'BKJA_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
@@ -171,6 +183,7 @@ require_once BKJA_PLUGIN_DIR . 'admin/settings.php';
 add_action( 'plugins_loaded', array( 'BKJA_Database', 'maybe_migrate_chat_created_at_default' ) );
 add_action( 'plugins_loaded', array( 'BKJA_Database', 'maybe_migrate_numeric_job_fields' ) );
 add_action( 'plugins_loaded', array( 'BKJA_Database', 'maybe_backfill_job_titles' ) );
+add_action( 'plugins_loaded', array( 'BKJA_Database', 'maybe_run_job_title_integrity' ) );
 register_activation_hook( __FILE__, array( 'BKJA_Database', 'activate' ) );
 register_activation_hook( __FILE__, 'bkja_cleanup_legacy_free_limit_option' );
 add_action('plugins_loaded', function(){

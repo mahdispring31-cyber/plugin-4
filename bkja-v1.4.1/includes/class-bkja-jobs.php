@@ -53,6 +53,7 @@ class BKJA_Jobs {
                 'slug'       => $title->slug,
                 'group_key'  => isset( $title->group_key ) ? $title->group_key : '',
                 'jobs_count' => isset( $title->jobs_count ) ? (int) $title->jobs_count : 0,
+                'job_title_ids' => isset( $title->job_title_ids ) ? array_map( 'intval', array_filter( explode( ',', $title->job_title_ids ) ) ) : array(),
             );
         }
 
