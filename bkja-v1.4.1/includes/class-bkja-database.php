@@ -1532,7 +1532,7 @@ class BKJA_Database {
     /**
      * جدید: خلاصه شغل (میانگین و ترکیب داده‌ها)
      */
-    public static function get_job_summary($job_title) {
+    public static function get_job_summary($job_title, $filters = array()) {
         global $wpdb;
         $table        = $wpdb->prefix . 'bkja_jobs';
         $table_titles = $wpdb->prefix . 'bkja_job_titles';
@@ -1553,18 +1553,9 @@ class BKJA_Database {
 
         $job_ids = ! empty( $context['job_title_ids'] ) ? array_map( 'intval', $context['job_title_ids'] ) : array();
 
-        if ( ! empty( $context['group_key'] ) && empty( $job_ids ) ) {
-            $job_ids = self::get_job_title_ids_for_group( $context['group_key'] );
-        }
-
-        if ( ! empty( $job_ids ) ) {
-            $placeholders = implode( ',', array_fill( 0, count( $job_ids ), '%d' ) );
-            $where_clause = "job_title_id IN ({$placeholders}) AND created_at >= DATE_SUB(NOW(), INTERVAL {$window_months} MONTH)";
-            $where_params = $job_ids;
-        } else {
-            $where_clause = "title = %s AND created_at >= DATE_SUB(NOW(), INTERVAL {$window_months} MONTH)";
-            $where_params = array( $job_title );
-        }
+        $where        = self::build_job_where_clause( $context, $job_title, $window_months, $filters, 'j' );
+        $where_clause = $where['where_clause'];
+        $where_params = $where['where_params'];
 
         $prepare_with_params = function( $sql, $extra_params = array() ) use ( $wpdb, $where_params ) {
             $params = array_merge( $where_params, (array) $extra_params );
@@ -1577,19 +1568,19 @@ class BKJA_Database {
             $prepare_with_params(
                 "SELECT
                     COUNT(*) AS total_reports,
-                    MAX(created_at) AS latest_at,
-                    AVG(CASE WHEN income_num > 0 THEN income_num END) AS avg_income,
-                    MIN(CASE WHEN income_num > 0 THEN income_num END) AS min_income,
-                    MAX(CASE WHEN income_num > 0 THEN income_num END) AS max_income,
-                    SUM(CASE WHEN income_num > 0 THEN 1 ELSE 0 END) AS income_count,
-                    AVG(CASE WHEN investment_num > 0 THEN investment_num END) AS avg_investment,
-                    MIN(CASE WHEN investment_num > 0 THEN investment_num END) AS min_investment,
-                    MAX(CASE WHEN investment_num > 0 THEN investment_num END) AS max_investment,
-                    SUM(CASE WHEN investment_num > 0 THEN 1 ELSE 0 END) AS investment_count,
-                    AVG(CASE WHEN experience_years > 0 THEN experience_years END) AS avg_experience_years,
-                    AVG(CASE WHEN hours_per_day > 0 THEN hours_per_day END) AS avg_hours_per_day,
-                    AVG(CASE WHEN days_per_week > 0 THEN days_per_week END) AS avg_days_per_week
-                 FROM {$table}
+                    MAX(j.created_at) AS latest_at,
+                    AVG(CASE WHEN j.income_num > 0 THEN j.income_num END) AS avg_income,
+                    MIN(CASE WHEN j.income_num > 0 THEN j.income_num END) AS min_income,
+                    MAX(CASE WHEN j.income_num > 0 THEN j.income_num END) AS max_income,
+                    SUM(CASE WHEN j.income_num > 0 THEN 1 ELSE 0 END) AS income_count,
+                    AVG(CASE WHEN j.investment_num > 0 THEN j.investment_num END) AS avg_investment,
+                    MIN(CASE WHEN j.investment_num > 0 THEN j.investment_num END) AS min_investment,
+                    MAX(CASE WHEN j.investment_num > 0 THEN j.investment_num END) AS max_investment,
+                    SUM(CASE WHEN j.investment_num > 0 THEN 1 ELSE 0 END) AS investment_count,
+                    AVG(CASE WHEN j.experience_years > 0 THEN j.experience_years END) AS avg_experience_years,
+                    AVG(CASE WHEN j.hours_per_day > 0 THEN j.hours_per_day END) AS avg_hours_per_day,
+                    AVG(CASE WHEN j.days_per_week > 0 THEN j.days_per_week END) AS avg_days_per_week
+                 FROM {$table} j
                  WHERE {$where_clause}"
             )
         );
@@ -1598,18 +1589,18 @@ class BKJA_Database {
 
         $cities = $wpdb->get_col(
             $prepare_with_params(
-                "SELECT city FROM {$table} WHERE {$where_clause} AND city <> '' GROUP BY city ORDER BY COUNT(*) DESC, city ASC LIMIT 5"
+                "SELECT city FROM {$table} j WHERE {$where_clause} AND city <> '' GROUP BY city ORDER BY COUNT(*) DESC, city ASC LIMIT 5"
             )
         );
 
         $adv_rows = $wpdb->get_col(
             $prepare_with_params(
-                "SELECT advantages FROM {$table} WHERE {$where_clause} AND advantages IS NOT NULL AND advantages <> '' ORDER BY created_at DESC LIMIT 50"
+                "SELECT advantages FROM {$table} j WHERE {$where_clause} AND advantages IS NOT NULL AND advantages <> '' ORDER BY created_at DESC LIMIT 50"
             )
         );
         $dis_rows = $wpdb->get_col(
             $prepare_with_params(
-                "SELECT disadvantages FROM {$table} WHERE {$where_clause} AND disadvantages IS NOT NULL AND disadvantages <> '' ORDER BY created_at DESC LIMIT 50"
+                "SELECT disadvantages FROM {$table} j WHERE {$where_clause} AND disadvantages IS NOT NULL AND disadvantages <> '' ORDER BY created_at DESC LIMIT 50"
             )
         );
 
@@ -1643,7 +1634,7 @@ class BKJA_Database {
         $dominant_employment_type = $wpdb->get_var(
             $prepare_with_params(
                 "SELECT employment_type
-                 FROM {$table}
+                 FROM {$table} j
                  WHERE {$where_clause} AND employment_type IS NOT NULL AND employment_type <> ''
                  GROUP BY employment_type
                  ORDER BY COUNT(*) DESC
@@ -1654,7 +1645,7 @@ class BKJA_Database {
         $gender_rows = $wpdb->get_results(
             $prepare_with_params(
                 "SELECT gender, COUNT(*) AS c
-                 FROM {$table}
+                 FROM {$table} j
                  WHERE {$where_clause}
                  GROUP BY gender"
             )
@@ -1699,6 +1690,8 @@ class BKJA_Database {
             'job_title_id'      => $job_title_id,
             'job_title_label'   => $job_label ?: $job_title,
             'job_title_slug'    => $job_slug ?: sanitize_title( $job_title ),
+            'group_key'         => isset( $context['group_key'] ) ? $context['group_key'] : null,
+            'job_title_ids'     => $job_ids,
             'avg_income'        => $row->avg_income ? round( (float) $row->avg_income, 1 ) : null,
             'min_income'        => $row->min_income ? (float) $row->min_income : null,
             'max_income'        => $row->max_income ? (float) $row->max_income : null,
@@ -1726,7 +1719,7 @@ class BKJA_Database {
     /**
      * جدید: رکوردهای واقعی کاربران برای یک شغل
      */
-    public static function get_job_records($job_title, $limit = 5, $offset = 0) {
+    public static function get_job_records($job_title, $limit = 5, $offset = 0, $filters = array()) {
         global $wpdb;
         $table        = $wpdb->prefix . 'bkja_jobs';
         $table_titles = $wpdb->prefix . 'bkja_job_titles';
@@ -1741,18 +1734,9 @@ class BKJA_Database {
 
         $job_ids = ! empty( $context['job_title_ids'] ) ? array_map( 'intval', $context['job_title_ids'] ) : array();
 
-        if ( ! empty( $context['group_key'] ) && empty( $job_ids ) ) {
-            $job_ids = self::get_job_title_ids_for_group( $context['group_key'] );
-        }
-
-        if ( ! empty( $job_ids ) ) {
-            $placeholders = implode( ',', array_fill( 0, count( $job_ids ), '%d' ) );
-            $where_clause = "j.job_title_id IN ({$placeholders})";
-            $where_params = $job_ids;
-        } else {
-            $where_clause = 'j.title = %s';
-            $where_params = array( $job_title );
-        }
+        $where        = self::build_job_where_clause( $context, $job_title, null, $filters, 'j' );
+        $where_clause = $where['where_clause'];
+        $where_params = $where['where_params'];
 
         $prepare_with_params = function( $sql, $extra_params = array() ) use ( $wpdb, $where_params ) {
             $params = array_merge( $where_params, (array) $extra_params );
@@ -1760,6 +1744,10 @@ class BKJA_Database {
 
             return call_user_func_array( array( $wpdb, 'prepare' ), $params );
         };
+
+        $limit     = max( 1, (int) $limit );
+        $offset    = max( 0, (int) $offset );
+        $limit_cap = $limit + 1;
 
         $results = $wpdb->get_results(
             $prepare_with_params(
@@ -1769,7 +1757,7 @@ class BKJA_Database {
                  WHERE {$where_clause}
                  ORDER BY j.created_at DESC
                  LIMIT %d OFFSET %d",
-                array( $limit, $offset )
+                array( $limit_cap, $offset )
             )
         );
 
@@ -1801,11 +1789,25 @@ class BKJA_Database {
                     'created_at_display'     => bkja_format_job_date( $row->created_at ),
                 );
         }
-        return $records;
+
+        $has_more    = count( $records ) > $limit;
+        if ( $has_more ) {
+            array_pop( $records );
+        }
+
+        return array(
+            'records'       => $records,
+            'has_more'      => $has_more,
+            'next_offset'   => $has_more ? $offset + $limit : null,
+            'limit'         => $limit,
+            'offset'        => $offset,
+            'group_key'     => isset( $context['group_key'] ) ? $context['group_key'] : null,
+            'job_title_ids' => $job_ids,
+        );
     }
 
     /**
-     * Return job titles grouped by category with counts.
+     * Return base job titles grouped by category with counts aggregated across variants.
      */
     public static function get_job_titles_by_category( $category_id ) {
         global $wpdb;
@@ -1814,7 +1816,10 @@ class BKJA_Database {
 
         return $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT primary_rows.id, COALESCE(primary_rows.base_label, primary_rows.label) AS label, COALESCE(primary_rows.base_slug, primary_rows.slug) AS slug, primary_rows.group_key,
+                "SELECT primary_rows.id,
+                        COALESCE(primary_rows.base_label, primary_rows.label) AS label,
+                        COALESCE(primary_rows.base_slug, primary_rows.slug) AS slug,
+                        primary_rows.group_key,
                         SUM(COALESCE(j_counts.cnt, 0)) AS jobs_count,
                         GROUP_CONCAT(DISTINCT other_titles.id) AS job_title_ids
                  FROM {$table_titles} primary_rows
@@ -1823,10 +1828,78 @@ class BKJA_Database {
                     SELECT job_title_id, COUNT(*) AS cnt FROM {$table_jobs} GROUP BY job_title_id
                  ) j_counts ON j_counts.job_title_id = other_titles.id
                  WHERE primary_rows.category_id = %d AND primary_rows.is_visible = 1 AND primary_rows.is_primary = 1
-                 GROUP BY primary_rows.id, label, slug, primary_rows.group_key
+                 GROUP BY primary_rows.group_key, primary_rows.id, label, slug
                  ORDER BY label ASC",
                 $category_id
             )
+        );
+    }
+
+    /**
+     * Build a WHERE clause and params for job queries using group context and optional filters.
+     */
+    protected static function build_job_where_clause( $context, $job_title, $window_months = null, $filters = array(), $table_alias = 'j' ) {
+        global $wpdb;
+        $clauses       = array();
+        $params        = array();
+        $prefix        = $table_alias ? $table_alias . '.' : '';
+        $job_ids       = ! empty( $context['job_title_ids'] ) ? array_map( 'intval', $context['job_title_ids'] ) : array();
+        $window_months = $window_months ? absint( $window_months ) : 0;
+
+        if ( empty( $job_ids ) && ! empty( $context['group_key'] ) ) {
+            $job_ids = self::get_job_title_ids_for_group( $context['group_key'] );
+        }
+
+        if ( ! empty( $job_ids ) ) {
+            $placeholders = implode( ',', array_fill( 0, count( $job_ids ), '%d' ) );
+            $clauses[]    = "{$prefix}job_title_id IN ({$placeholders})";
+            $params       = array_merge( $params, $job_ids );
+        } else {
+            $clauses[] = "{$prefix}title = %s";
+            $params[]  = $job_title;
+        }
+
+        if ( $window_months > 0 ) {
+            $clauses[] = "{$prefix}created_at >= DATE_SUB(NOW(), INTERVAL {$window_months} MONTH)";
+        }
+
+        $filters = is_array( $filters ) ? $filters : array();
+
+        if ( ! empty( $filters['gender'] ) ) {
+            $clauses[] = "{$prefix}gender = %s";
+            $params[]  = sanitize_text_field( $filters['gender'] );
+        }
+
+        if ( ! empty( $filters['city'] ) ) {
+            $clauses[] = "{$prefix}city LIKE %s";
+            $params[]  = '%' . $wpdb->esc_like( $filters['city'] ) . '%';
+        }
+
+        if ( isset( $filters['income_min'] ) && is_numeric( $filters['income_min'] ) && $filters['income_min'] > 0 ) {
+            $clauses[] = "{$prefix}income_num >= %d";
+            $params[]  = (int) $filters['income_min'];
+        }
+
+        if ( isset( $filters['income_max'] ) && is_numeric( $filters['income_max'] ) && $filters['income_max'] > 0 ) {
+            $clauses[] = "{$prefix}income_num <= %d";
+            $params[]  = (int) $filters['income_max'];
+        }
+
+        if ( isset( $filters['investment_min'] ) && is_numeric( $filters['investment_min'] ) && $filters['investment_min'] > 0 ) {
+            $clauses[] = "{$prefix}investment_num >= %d";
+            $params[]  = (int) $filters['investment_min'];
+        }
+
+        if ( isset( $filters['investment_max'] ) && is_numeric( $filters['investment_max'] ) && $filters['investment_max'] > 0 ) {
+            $clauses[] = "{$prefix}investment_num <= %d";
+            $params[]  = (int) $filters['investment_max'];
+        }
+
+        $where_clause = ! empty( $clauses ) ? implode( ' AND ', $clauses ) : '1=1';
+
+        return array(
+            'where_clause' => $where_clause,
+            'where_params' => $params,
         );
     }
 
