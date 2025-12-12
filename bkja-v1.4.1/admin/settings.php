@@ -21,14 +21,21 @@
 		echo '<div class="updated"><p>تنظیمات ذخیره شد.</p></div>';
 	}
 
-	// Manage tab: filters
-	$bkja_action = isset($_GET['bkja_action']) ? sanitize_text_field($_GET['bkja_action']) : '';
-	$edit_id     = isset($_GET['id']) ? intval($_GET['id']) : 0;
-	$bkja_q      = isset($_GET['bkja_q']) ? sanitize_text_field($_GET['bkja_q']) : '';
-	$bkja_p      = isset($_GET['bkja_p']) ? max(1, intval($_GET['bkja_p'])) : 1;
-	$per_page    = 20;
-	$offset      = ($bkja_p - 1) * $per_page;
-	?>
+        // Manage tab: filters
+        $bkja_action = isset($_GET['bkja_action']) ? sanitize_text_field($_GET['bkja_action']) : '';
+        $edit_id     = isset($_GET['id']) ? intval($_GET['id']) : 0;
+        $bkja_q      = isset($_GET['bkja_q']) ? sanitize_text_field($_GET['bkja_q']) : '';
+        $bkja_p      = isset($_GET['bkja_p']) ? max(1, intval($_GET['bkja_p'])) : 1;
+        $per_page    = 20;
+        $offset      = ($bkja_p - 1) * $per_page;
+        $repair_nonce = wp_create_nonce('bkja_repair_db');
+        global $wpdb;
+        $jobs_table_exists = $wpdb->get_var( $wpdb->prepare( "SHOW TABLES LIKE %s", $wpdb->prefix . 'bkja_jobs' ) );
+        $repair_total = 0;
+        if ( $jobs_table_exists === $wpdb->prefix . 'bkja_jobs' ) {
+                $repair_total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$jobs_table_exists}" );
+        }
+        ?>
 
 	<style>
 		.bkja-tabs { display:flex; gap:12px; margin-bottom:18px; flex-wrap:wrap; }
@@ -90,10 +97,13 @@
                         active = 1;
                 } else if (tabParam === 'jobs') {
                         active = 2;
+                } else if (tabParam === 'repair') {
+                        active = 3;
                 } else if (location.hash) {
                         const h = location.hash.replace('#','');
                         if(h==='import') active = 1;
                         if(h==='manage') active = 2;
+                        if(h==='repair') active = 3;
                 }
                 activate(active);
         });
@@ -110,8 +120,40 @@
 	echo '<div class="notice notice-success"><p>ایمپورت CSV با موفقیت انجام شد.</p></div>';
 	} else {
 	echo '<div class="notice notice-error"><p>ایمپورت CSV با خطا مواجه شد. لطفاً فایل را بررسی کنید.</p></div>';
-	}
-	}
+        }
+        }
+
+        // AJAX: Repair database batches
+        if ( is_admin() ) {
+        add_action('wp_ajax_bkja_repair_db_batch', function(){
+                if ( ! current_user_can('manage_options') ) {
+                        wp_send_json_error( array( 'error' => 'forbidden' ), 403 );
+                }
+                check_ajax_referer('bkja_repair_db','nonce');
+                $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
+                $limit  = isset($_POST['limit']) ? max(10, intval($_POST['limit'])) : 100;
+                $dry    = isset($_POST['dry_run']) && $_POST['dry_run'] === '0' ? false : true;
+
+                $result = class_exists('BKJA_Database') ? BKJA_Database::repair_batch( $offset, $limit, $dry ) : array();
+
+                wp_send_json_success( $result );
+        });
+
+        add_action('wp_ajax_bkja_repair_db_download_unresolved', function(){
+                if ( ! current_user_can('manage_options') ) {
+                        wp_die('forbidden');
+                }
+                check_ajax_referer('bkja_repair_db','nonce');
+                $path = get_option('bkja_repair_unresolved_path');
+                if ( $path && file_exists( $path ) ) {
+                        header('Content-Type: text/csv');
+                        header('Content-Disposition: attachment; filename="bkja-unresolved.csv"');
+                        readfile( $path );
+                        exit;
+                }
+                wp_die('not_found');
+        });
+        }
 
 		if(isset($_GET['bkja_manage_msg'])){
 			$m = sanitize_text_field($_GET['bkja_manage_msg']);
@@ -121,11 +163,12 @@
 		}
 		?>
 
-		<div class="bkja-tabs">
-			<div class="bkja-tab">تنظیمات عمومی</div>
-			<div class="bkja-tab">ایمپورت مشاغل</div>
-			<div class="bkja-tab">مدیریت مشاغل</div>
-		</div>
+                <div class="bkja-tabs">
+                        <div class="bkja-tab">تنظیمات عمومی</div>
+                        <div class="bkja-tab">ایمپورت مشاغل</div>
+                        <div class="bkja-tab">مدیریت مشاغل</div>
+                        <div class="bkja-tab">تعمیر دیتابیس</div>
+                </div>
 
 		<!-- Panel 1: Settings -->
 		<div class="bkja-panel">
@@ -198,8 +241,8 @@
 </div>
 
 		<!-- Panel 3: Manage Jobs -->
-		<div class="bkja-panel">
-			<h2>مدیریت مشاغل</h2>
+                <div class="bkja-panel">
+                        <h2>مدیریت مشاغل</h2>
 			<p>لیست مشاغل در این بخش نمایش داده می‌شود.</p>
 
 			<?php
@@ -440,12 +483,110 @@
 					echo '<p>هیچ شغلی برای نمایش وجود ندارد.</p>';
 				}
 			}
-			?>
-		</div>
-	</div>
+                        ?>
+                </div>
 
-	<?php
-	} // bkja_admin_page
+                <!-- Panel 4: Repair Database -->
+                <div class="bkja-panel">
+                        <h2>تعمیر دیتابیس</h2>
+                        <p class="bkja-help">این ابزار لینک‌های نادرست، عنوان‌های اشتباه و مقادیر مالی غیرواقعی را اصلاح می‌کند. داده‌ای حذف نمی‌شود و می‌توانید ابتدا در حالت آزمایشی اجرا کنید.</p>
+
+                        <div class="bkja-form-row">
+                                <label for="bkja-repair-dry-run">اجرای آزمایشی (Dry-run)</label>
+                                <input type="checkbox" id="bkja-repair-dry-run" checked />
+                        </div>
+
+                        <div class="bkja-actions">
+                                <button type="button" class="bkja-button" id="bkja-repair-start">شروع تعمیر</button>
+                                <a href="#" class="bkja-button secondary" id="bkja-repair-download" style="display:none;">دانلود CSV موارد حل‌نشده</a>
+                        </div>
+
+                        <div id="bkja-repair-progress" class="bkja-note" style="margin-top:12px;"></div>
+                        <div id="bkja-repair-log" class="bkja-note" style="margin-top:8px; white-space:pre-wrap; max-height:220px; overflow:auto;"></div>
+                </div>
+        </div>
+
+        <script>
+        (function(){
+                const ajaxUrl = <?php echo wp_json_encode( admin_url('admin-ajax.php') ); ?>;
+                const nonce = <?php echo wp_json_encode( $repair_nonce ); ?>;
+                const total = <?php echo (int) $repair_total; ?>;
+                const startBtn = document.getElementById('bkja-repair-start');
+                const dryRun = document.getElementById('bkja-repair-dry-run');
+                const progressBox = document.getElementById('bkja-repair-progress');
+                const logBox = document.getElementById('bkja-repair-log');
+                const downloadLink = document.getElementById('bkja-repair-download');
+                if(!startBtn) return;
+                let offset = 0;
+                let running = false;
+                let unresolvedCount = 0;
+
+                function log(msg){
+                        if(!msg) return;
+                        logBox.textContent = (logBox.textContent ? logBox.textContent + "\n" : '') + msg;
+                }
+
+                function updateProgress(processed, updated){
+                        const pct = total ? Math.min(100, Math.round((processed/total)*100)) : 0;
+                        progressBox.innerHTML = 'پردازش شده: ' + processed + ' / ' + (total || '...') + ' | به‌روزرسانی: ' + updated +
+                                '<div style="margin-top:6px; background:#e5e7eb; border-radius:6px; height:12px; overflow:hidden;">'+
+                                '<div style="width:'+pct+'%; background:#0ea5e9; height:12px;"></div></div>';
+                }
+
+                function runBatch(){
+                        if(!running) return;
+                        const form = new FormData();
+                        form.append('action','bkja_repair_db_batch');
+                        form.append('nonce', nonce);
+                        form.append('offset', offset);
+                        form.append('limit', 100);
+                        form.append('dry_run', dryRun && dryRun.checked ? '1':'0');
+
+                        fetch(ajaxUrl, {method:'POST', credentials:'same-origin', body:form})
+                        .then(r=>r.json())
+                        .then(data=>{
+                                if(!data || !data.success){
+                                        running=false; startBtn.disabled=false; startBtn.textContent='شروع تعمیر';
+                                        log('خطا در اجرای تعمیر');
+                                        return;
+                                }
+                                const payload = data.data || {};
+                                offset = payload.next_offset || (offset+100);
+                                unresolvedCount = payload.unresolved_count || 0;
+                                updateProgress(payload.processed || 0, payload.updated || 0);
+                                if(payload.errors && payload.errors.length){
+                                        payload.errors.forEach(e=>log(e));
+                                }
+                                if(payload.done){
+                                        running=false; startBtn.disabled=false; startBtn.textContent='شروع تعمیر';
+                                        if(unresolvedCount>0){
+                                                downloadLink.style.display='inline-block';
+                                                downloadLink.href = ajaxUrl + '?action=bkja_repair_db_download_unresolved&nonce='+encodeURIComponent(nonce);
+                                        }
+                                        log('پایان عملیات.');
+                                }else{
+                                        setTimeout(runBatch,200);
+                                }
+                        })
+                        .catch(()=>{
+                                running=false; startBtn.disabled=false; startBtn.textContent='شروع تعمیر';
+                                log('ارتباط با سرور قطع شد');
+                        });
+                }
+
+                startBtn.addEventListener('click', function(){
+                        if(running) return;
+                        running=true; offset=0; unresolvedCount=0; logBox.textContent='';
+                        startBtn.disabled=true; startBtn.textContent='در حال پردازش...';
+                        downloadLink.style.display='none';
+                        updateProgress(0,0);
+                        runBatch();
+                });
+        })();
+        </script>
+
+        <?php
+        } // bkja_admin_page
 
 	/**
 	 * Register settings

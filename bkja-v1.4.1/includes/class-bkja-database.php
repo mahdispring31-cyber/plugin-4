@@ -139,6 +139,80 @@ if ( ! function_exists( 'bkja_parse_money_to_toman' ) ) {
     }
 }
 
+if ( ! function_exists( 'bkja_parse_money_to_toman_safe' ) ) {
+    /**
+     * Safer toman parser with Iran-focused caps and million/billion guards.
+     *
+     * @param string $raw Raw income/investment text.
+     * @return array{value:?int,min:?int,max:?int,invalid:bool}
+     */
+    function bkja_parse_money_to_toman_safe( $raw ) {
+        $base = bkja_parse_money_to_toman( $raw );
+
+        if ( ! is_array( $base ) ) {
+            return array( 'value' => null, 'min' => null, 'max' => null, 'invalid' => true );
+        }
+
+        $normalized = is_string( $raw ) ? mb_strtolower( trim( wp_strip_all_tags( $raw ) ) ) : '';
+        $normalized = str_replace( array( 'ي', 'ك' ), array( 'ی', 'ک' ), $normalized );
+        $has_million = false !== strpos( $normalized, 'میلیون' ) || false !== strpos( $normalized, 'ميليون' );
+        $has_billion = false !== strpos( $normalized, 'میلیارد' ) || false !== strpos( $normalized, 'ميليارد' );
+
+        preg_match_all( '/([0-9]+(?:[\.\/][0-9]+)?)/', $normalized, $matches );
+        $numbers = array();
+        if ( ! empty( $matches[1] ) ) {
+            foreach ( $matches[1] as $match ) {
+                $numbers[] = floatval( str_replace( array( '/', '\\' ), '.', $match ) );
+            }
+        }
+
+        $first = isset( $numbers[0] ) ? (float) $numbers[0] : 0.0;
+
+        // Guard against extra multipliers like "20000000 میلیون"
+        if ( $has_million && $first >= 10000 ) {
+            $base = array( 'value' => (int) round( $first ), 'min' => null, 'max' => null );
+        }
+
+        if ( $has_billion && $first >= 1000 ) {
+            $base = array( 'value' => (int) round( $first ), 'min' => null, 'max' => null );
+        }
+
+        $value = isset( $base['value'] ) ? (int) $base['value'] : null;
+        $min   = isset( $base['min'] ) ? (int) $base['min'] : null;
+        $max   = isset( $base['max'] ) ? (int) $base['max'] : null;
+
+        $invalid = false;
+        $cap     = 5000000000; // 5 میلیارد تومان
+        $hard_allow = $has_billion ? 20000000000 : $cap;
+
+        $check_value = function( $val ) use ( $cap, $hard_allow, &$invalid, $has_billion ) {
+            if ( null === $val ) {
+                return null;
+            }
+            if ( $val > $cap && ( ! $has_billion || $val > $hard_allow ) ) {
+                $invalid = true;
+                return null;
+            }
+            return $val;
+        };
+
+        $value = $check_value( $value );
+        $min   = $check_value( $min );
+        $max   = $check_value( $max );
+
+        if ( $value && $min && $max ) {
+            $value = (int) round( ( $min + $max ) / 2 );
+        }
+
+        return array(
+            'value'   => $value,
+            'min'     => $min,
+            'max'     => $max,
+            'invalid' => $invalid,
+        );
+    }
+}
+
 /**
  * BKJA_Database
  * - مدیریت جداول (activate)
@@ -1129,5 +1203,265 @@ class BKJA_Database {
                 );
         }
         return $records;
+    }
+
+    /**
+     * Batch repair helper used by admin UI.
+     */
+    public static function repair_batch( $offset = 0, $limit = 100, $dry_run = true ) {
+        global $wpdb;
+
+        $jobs_table   = $wpdb->prefix . 'bkja_jobs';
+        $titles_table = $wpdb->prefix . 'bkja_job_titles';
+
+        $exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $jobs_table ) );
+        if ( $exists !== $jobs_table ) {
+            return array( 'done' => true, 'processed' => 0, 'total' => 0, 'updated' => 0, 'errors' => array(), 'unresolved_count' => 0, 'next_offset' => $offset );
+        }
+
+        $total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$jobs_table}" );
+        $rows  = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$jobs_table} ORDER BY id ASC LIMIT %d OFFSET %d", $limit, $offset ) );
+
+        $processed = 0;
+        $updated   = 0;
+        $errors    = array();
+        $unresolved_rows = array();
+
+        $titles_cache = self::load_job_titles_cache( $titles_table );
+
+        foreach ( (array) $rows as $row ) {
+            $processed++;
+            $updates = array();
+            $job_unresolved = false;
+            $matched_title = self::resolve_job_title_row( $row, $titles_cache );
+
+            if ( $matched_title ) {
+                if ( empty( $row->job_title_id ) || (int) $row->job_title_id !== (int) $matched_title['id'] ) {
+                    $updates['job_title_id'] = (int) $matched_title['id'];
+                }
+
+                if ( isset( $matched_title['category_id'] ) && (int) $row->category_id !== (int) $matched_title['category_id'] ) {
+                    $updates['category_id'] = (int) $matched_title['category_id'];
+                }
+
+                if ( empty( $matched_title['group_key'] ) && ! $dry_run ) {
+                    $group_key = $matched_title['category_id'] . ':' . $matched_title['base_slug'];
+                    $wpdb->update( $titles_table, array( 'group_key' => $group_key ), array( 'id' => (int) $matched_title['id'] ) );
+                }
+
+                // Normalize title base/visibility
+                $normalized = self::extract_base_label( $matched_title['label'] );
+                if ( $normalized['base_label'] && ( $normalized['base_label'] !== $matched_title['base_label'] || $normalized['base_slug'] !== $matched_title['base_slug'] ) && ! $dry_run ) {
+                    $wpdb->update( $titles_table, array(
+                        'base_label' => $normalized['base_label'],
+                        'base_slug'  => $normalized['base_slug'],
+                        'label'      => $matched_title['label'] ?: $normalized['base_label'],
+                        'is_visible' => $normalized['is_visible'],
+                    ), array( 'id' => (int) $matched_title['id'] ) );
+                }
+
+                if ( ! $normalized['is_visible'] ) {
+                    $job_unresolved = true;
+                }
+            } else {
+                $job_unresolved = true;
+            }
+
+            // Income parsing
+            $income_money = bkja_parse_money_to_toman_safe( $row->income );
+            if ( $income_money['invalid'] ) {
+                $updates['income_toman']      = null;
+                $updates['income_min_toman']  = null;
+                $updates['income_max_toman']  = null;
+                $job_unresolved = true;
+            } else {
+                if ( isset( $income_money['value'] ) && $income_money['value'] > 0 && (int) $row->income_toman !== (int) $income_money['value'] ) {
+                    $updates['income_toman'] = (int) $income_money['value'];
+                }
+                if ( isset( $income_money['min'] ) && $income_money['min'] !== null && (int) $row->income_min_toman !== (int) $income_money['min'] ) {
+                    $updates['income_min_toman'] = (int) $income_money['min'];
+                }
+                if ( isset( $income_money['max'] ) && $income_money['max'] !== null && (int) $row->income_max_toman !== (int) $income_money['max'] ) {
+                    $updates['income_max_toman'] = (int) $income_money['max'];
+                }
+            }
+
+            $investment_money = bkja_parse_money_to_toman_safe( $row->investment );
+            if ( $investment_money['invalid'] ) {
+                $updates['investment_toman'] = null;
+                $job_unresolved = true;
+            } else {
+                if ( isset( $investment_money['value'] ) && $investment_money['value'] >= 0 && (int) $row->investment_toman !== (int) $investment_money['value'] ) {
+                    $updates['investment_toman'] = (int) $investment_money['value'];
+                }
+            }
+
+            if ( ! empty( $updates ) && ! $dry_run ) {
+                $wpdb->update( $jobs_table, $updates, array( 'id' => (int) $row->id ) );
+                $updated++;
+            } elseif ( ! empty( $updates ) ) {
+                $updated++;
+            }
+
+            if ( $job_unresolved ) {
+                $unresolved_rows[] = array(
+                    'id'    => (int) $row->id,
+                    'title' => $row->title,
+                    'income'=> $row->income,
+                );
+            }
+        }
+
+        $new_offset = $offset + $limit;
+        $done       = $new_offset >= $total || empty( $rows );
+
+        if ( ! $dry_run && $done ) {
+            self::write_unresolved_csv( $unresolved_rows );
+        }
+
+        update_option( 'bkja_repair_total', $total );
+        update_option( 'bkja_repair_processed', $offset + $processed );
+        update_option( 'bkja_repair_updated', $updated );
+        update_option( 'bkja_repair_last_run', current_time( 'mysql' ) );
+        update_option( 'bkja_repair_unresolved_path', get_option( 'bkja_repair_unresolved_path', '' ) );
+
+        return array(
+            'done'             => $done,
+            'processed'        => $offset + $processed,
+            'total'            => $total,
+            'updated'          => $updated,
+            'errors'           => $errors,
+            'unresolved_count' => count( $unresolved_rows ),
+            'next_offset'      => $done ? $total : $new_offset,
+        );
+    }
+
+    private static function load_job_titles_cache( $titles_table ) {
+        global $wpdb;
+        $exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $titles_table ) );
+        if ( $exists !== $titles_table ) {
+            return array();
+        }
+
+        $rows = $wpdb->get_results( "SELECT id, label, base_label, base_slug, category_id, group_key FROM {$titles_table}" );
+        $cache = array();
+        foreach ( (array) $rows as $row ) {
+            $cache[] = array(
+                'id'          => (int) $row->id,
+                'label'       => $row->label,
+                'base_label'  => $row->base_label,
+                'base_slug'   => $row->base_slug,
+                'category_id' => (int) $row->category_id,
+                'group_key'   => isset( $row->group_key ) ? $row->group_key : '',
+                'slug'        => sanitize_title( $row->label ),
+            );
+        }
+        return $cache;
+    }
+
+    private static function resolve_job_title_row( $job_row, $titles_cache ) {
+        if ( empty( $titles_cache ) ) {
+            return null;
+        }
+
+        $existing = null;
+        if ( ! empty( $job_row->job_title_id ) ) {
+            foreach ( $titles_cache as $title_row ) {
+                if ( (int) $title_row['id'] === (int) $job_row->job_title_id ) {
+                    $existing = $title_row;
+                    break;
+                }
+            }
+        }
+        if ( $existing ) {
+            return $existing;
+        }
+
+        $text = ! empty( $job_row->variant_title ) ? $job_row->variant_title : $job_row->title;
+        $normalized = self::normalize_job_title_text( $text );
+        $slug = sanitize_title( $normalized );
+
+        foreach ( $titles_cache as $title_row ) {
+            if ( $slug && ( $slug === $title_row['slug'] || $slug === $title_row['base_slug'] ) ) {
+                return $title_row;
+            }
+            if ( $normalized && ( self::normalize_job_title_text( $title_row['label'] ) === $normalized || self::normalize_job_title_text( $title_row['base_label'] ) === $normalized ) ) {
+                return $title_row;
+            }
+        }
+
+        // Fallback prefix match
+        foreach ( $titles_cache as $title_row ) {
+            $candidate = self::normalize_job_title_text( $title_row['label'] );
+            if ( $candidate && 0 === strpos( $normalized, $candidate ) ) {
+                return $title_row;
+            }
+        }
+        return null;
+    }
+
+    private static function normalize_job_title_text( $text ) {
+        if ( ! is_string( $text ) ) {
+            return '';
+        }
+        $text = wp_strip_all_tags( $text );
+        $text = preg_replace( '/[\x{1F300}-\x{1FAFF}]/u', '', $text );
+        $text = str_replace( array( 'ي', 'ك' ), array( 'ی', 'ک' ), $text );
+        $text = preg_replace( '/\d+ ?سال/', '', $text );
+        $text = preg_replace( '/[\p{P}\p{S}]+/u', ' ', $text );
+        $text = preg_replace( '/\s+/u', ' ', $text );
+        $stop = array( 'سلام','دوستم','البته','ولی','هر','روزانه','درآمد','سرمایه','خالص','درمیاد','تلفات','ارزش','تهران','کرمان','میشه','هستم','هست','هستمش' );
+        $words = array();
+        foreach ( explode( ' ', trim( $text ) ) as $w ) {
+            if ( '' === $w ) {
+                continue;
+            }
+            if ( in_array( $w, $stop, true ) ) {
+                continue;
+            }
+            if ( is_numeric( $w ) ) {
+                continue;
+            }
+            $words[] = $w;
+        }
+        $text = implode( ' ', array_slice( $words, 0, 6 ) );
+        return mb_strtolower( trim( $text ) );
+    }
+
+    private static function extract_base_label( $raw ) {
+        $normalized = self::normalize_job_title_text( $raw );
+        $words = array_filter( explode( ' ', $normalized ) );
+        $base_words = array_slice( $words, 0, 3 );
+        $base_label = implode( ' ', $base_words );
+        if ( '' === $base_label ) {
+            $base_label = 'سایر';
+        }
+        return array(
+            'base_label' => $base_label,
+            'base_slug'  => sanitize_title( $base_label ),
+            'is_visible' => ( $base_label !== 'سایر' && strlen( $base_label ) >= 2 ) ? 1 : 0,
+        );
+    }
+
+    private static function write_unresolved_csv( $rows ) {
+        if ( empty( $rows ) ) {
+            return;
+        }
+        $upload = wp_upload_dir();
+        $dir = trailingslashit( $upload['basedir'] ) . 'bkja_repair';
+        if ( ! file_exists( $dir ) ) {
+            wp_mkdir_p( $dir );
+        }
+        $file = trailingslashit( $dir ) . 'unresolved-' . time() . '.csv';
+        $h = fopen( $file, 'w' );
+        if ( ! $h ) {
+            return;
+        }
+        fputcsv( $h, array( 'id', 'title', 'income' ) );
+        foreach ( $rows as $row ) {
+            fputcsv( $h, array( $row['id'], $row['title'], $row['income'] ) );
+        }
+        fclose( $h );
+        update_option( 'bkja_repair_unresolved_path', $file );
     }
 }
