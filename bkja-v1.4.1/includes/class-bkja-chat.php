@@ -660,6 +660,7 @@ class BKJA_Chat {
             'job_slug'  => '' !== $job_slug ? $job_slug : null,
             'job_title_ids' => $resolved_ids,
             'group_key' => $resolved_for_db && is_array( $resolved_for_db ) && isset( $resolved_for_db['group_key'] ) ? $resolved_for_db['group_key'] : null,
+            'stats_executed' => is_array( $summary ),
         ];
     }
 
@@ -1082,9 +1083,41 @@ class BKJA_Chat {
         );
     }
 
+    protected static function refresh_job_stats_payload( array $payload, $context = array() ) {
+        $summary = ( ! empty( $context['summary'] ) && is_array( $context['summary'] ) ) ? $context['summary'] : array();
+        $stats_executed = ( is_array( $context ) && ! empty( $context['stats_executed'] ) ) || ! empty( $summary );
+
+        $job_report_count     = $stats_executed && isset( $summary['count_reports'] ) ? (int) $summary['count_reports'] : 0;
+        $job_avg_income       = $stats_executed && isset( $summary['avg_income'] ) ? (float) $summary['avg_income'] : null;
+        $job_income_range     = $stats_executed ? array( $summary['min_income'] ?? null, $summary['max_income'] ?? null ) : array( null, null );
+        $job_avg_investment   = $stats_executed && isset( $summary['avg_investment'] ) ? (float) $summary['avg_investment'] : null;
+        $job_investment_range = $stats_executed ? array( $summary['min_investment'] ?? null, $summary['max_investment'] ?? null ) : array( null, null );
+
+        $used_job_stats = $stats_executed && $job_report_count > 0;
+
+        $payload['job_report_count']     = $stats_executed ? $job_report_count : null;
+        $payload['job_avg_income']       = $stats_executed ? $job_avg_income : null;
+        $payload['job_income_range']     = $job_income_range;
+        $payload['job_avg_investment']   = $stats_executed ? $job_avg_investment : null;
+        $payload['job_investment_range'] = $job_investment_range;
+        $payload['used_job_stats']       = $used_job_stats;
+
+        if ( ! isset( $payload['meta'] ) || ! is_array( $payload['meta'] ) ) {
+            $payload['meta'] = array();
+        }
+
+        $payload['meta']['job_report_count']     = $payload['job_report_count'];
+        $payload['meta']['job_avg_income']       = $payload['job_avg_income'];
+        $payload['meta']['job_income_range']     = $payload['job_income_range'];
+        $payload['meta']['job_avg_investment']   = $payload['job_avg_investment'];
+        $payload['meta']['job_investment_range'] = $payload['job_investment_range'];
+        $payload['meta']['used_job_stats']       = $payload['used_job_stats'];
+
+        return $payload;
+    }
+
     protected static function build_response_payload( $text, $context, $message, $from_cache = false, $source = 'openai', $extra = array() ) {
         $context_used = ! empty( $context['job_title'] );
-        $used_job_stats = false;
 
         $payload = array(
             'text'         => (string) $text,
@@ -1095,22 +1128,6 @@ class BKJA_Chat {
             'job_title'    => ! empty( $context['job_title'] ) ? $context['job_title'] : '',
             'job_slug'     => isset( $context['job_slug'] ) ? $context['job_slug'] : '',
         );
-
-        $summary               = ( ! empty( $context['summary'] ) && is_array( $context['summary'] ) ) ? $context['summary'] : array();
-        $job_report_count      = isset( $summary['count_reports'] ) ? (int) $summary['count_reports'] : null;
-        $job_avg_income        = isset( $summary['avg_income'] ) ? (float) $summary['avg_income'] : null;
-        $job_income_range      = array( $summary['min_income'] ?? null, $summary['max_income'] ?? null );
-        $job_avg_investment    = isset( $summary['avg_investment'] ) ? (float) $summary['avg_investment'] : null;
-        $job_investment_range  = array( $summary['min_investment'] ?? null, $summary['max_investment'] ?? null );
-        if ( $context_used && ! empty( $summary ) && $job_report_count && $job_report_count > 0 ) {
-            $used_job_stats = true;
-        }
-        $payload['job_report_count']     = $job_report_count;
-        $payload['job_avg_income']       = $job_avg_income;
-        $payload['job_income_range']     = $job_income_range;
-        $payload['job_avg_investment']   = $job_avg_investment;
-        $payload['job_investment_range'] = $job_investment_range;
-        $payload['used_job_stats']       = $used_job_stats;
 
         if ( ! empty( $extra ) && is_array( $extra ) ) {
             $payload = array_merge( $payload, $extra );
@@ -1144,15 +1161,9 @@ class BKJA_Chat {
             'category'     => $resolved_category,
             'job_title'    => $resolved_job_title,
             'job_slug'     => $resolved_job_slug,
-            'job_report_count'     => $job_report_count,
-            'job_avg_income'       => $job_avg_income,
-            'job_income_range'     => $job_income_range,
-            'job_avg_investment'   => $job_avg_investment,
-            'job_investment_range' => $job_investment_range,
-            'used_job_stats'       => $used_job_stats,
         );
 
-        return $payload;
+        return self::refresh_job_stats_payload( $payload, $context );
     }
 
     public static function delete_cache_for( $message, $category = '', $model = '', $job_title = '' ) {
@@ -1300,6 +1311,7 @@ class BKJA_Chat {
                         $cached['meta']['job_title']  = $context['job_title'] ?? ( $cached['meta']['job_title'] ?? null );
                         $cached['meta']['job_slug']   = $context['job_slug'] ?? ( $cached['meta']['job_slug'] ?? null );
                     }
+                    $cached = self::refresh_job_stats_payload( $cached, $context );
                     return $cached;
                 }
 

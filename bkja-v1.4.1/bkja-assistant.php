@@ -152,6 +152,23 @@ function bkja_ajax_get_job_summary(){
         }
         if(!$job_title && !$job_title_id && !$group_key && empty($job_title_ids)) wp_send_json_error(['error'=>'empty_title'],400);
 
+        if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+                $window_months = (int) get_option( 'bkja_stats_window_months', 12 );
+                if ( $window_months <= 0 ) {
+                        $window_months = 12;
+                }
+
+                error_log( 'BKJA AJAX bkja_get_job_summary payload: ' . wp_json_encode( array(
+                        'job_title'      => $job_title,
+                        'job_label'      => $job_label,
+                        'job_title_id'   => $job_title_id,
+                        'group_key'      => $group_key,
+                        'job_title_ids'  => $job_title_ids,
+                        'raw_ids'        => $job_title_ids_raw,
+                        'window_months'  => $window_months,
+                ) ) );
+        }
+
         $filters = array(
             'gender'          => isset($_POST['gender']) ? sanitize_text_field( wp_unslash( $_POST['gender'] ) ) : '',
             'city'            => isset($_POST['city']) ? sanitize_text_field( wp_unslash( $_POST['city'] ) ) : '',
@@ -196,6 +213,25 @@ function bkja_ajax_get_job_records(){
         $limit = isset($_POST['limit']) ? intval($_POST['limit']) : 5;
         $offset = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
         if(!$job_title && !$job_title_id && !$group_key && empty($job_title_ids)) wp_send_json_error(['error'=>'empty_title'],400);
+
+        if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+                $window_months = (int) get_option( 'bkja_stats_window_months', 12 );
+                if ( $window_months <= 0 ) {
+                        $window_months = 12;
+                }
+
+                error_log( 'BKJA AJAX bkja_get_job_records payload: ' . wp_json_encode( array(
+                        'job_title'      => $job_title,
+                        'job_label'      => $job_label,
+                        'job_title_id'   => $job_title_id,
+                        'group_key'      => $group_key,
+                        'job_title_ids'  => $job_title_ids,
+                        'raw_ids'        => $job_title_ids_raw,
+                        'limit'          => $limit,
+                        'offset'         => $offset,
+                        'window_months'  => $window_months,
+                ) ) );
+        }
 
         $filters = array(
             'gender'          => isset($_POST['gender']) ? sanitize_text_field( wp_unslash( $_POST['gender'] ) ) : '',

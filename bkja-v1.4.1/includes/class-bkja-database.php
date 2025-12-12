@@ -1073,9 +1073,9 @@ class BKJA_Database {
         if ( is_array( $job_title ) || is_object( $job_title ) ) {
             $incoming_group_key = isset( $job_title['group_key'] ) ? sanitize_text_field( $job_title['group_key'] ) : ( isset( $job_title->group_key ) ? sanitize_text_field( $job_title->group_key ) : '' );
             if ( isset( $job_title['job_title_ids'] ) && is_array( $job_title['job_title_ids'] ) ) {
-                $incoming_ids = array_map( 'intval', $job_title['job_title_ids'] );
+                $incoming_ids = array_filter( array_map( 'intval', $job_title['job_title_ids'] ) );
             } elseif ( isset( $job_title->job_title_ids ) && is_array( $job_title->job_title_ids ) ) {
-                $incoming_ids = array_map( 'intval', $job_title->job_title_ids );
+                $incoming_ids = array_filter( array_map( 'intval', $job_title->job_title_ids ) );
             }
             if ( isset( $job_title['job_title_id'] ) ) {
                 $incoming_id = (int) $job_title['job_title_id'];
@@ -1099,7 +1099,7 @@ class BKJA_Database {
                     )
                 );
 
-                $context['job_title_ids'] = array_map( 'intval', $ids );
+                $context['job_title_ids'] = array_values( array_unique( array_filter( array_map( 'intval', $ids ) ) ) );
                 $context['group_key']     = $incoming_group_key;
                 $context['label']         = $primary ? $primary->label : $incoming_label;
                 $context['slug']          = $primary ? $primary->slug : '';
@@ -1109,12 +1109,12 @@ class BKJA_Database {
         }
 
         if ( ! empty( $incoming_ids ) ) {
-            $incoming_ids   = array_filter( array_map( 'intval', $incoming_ids ) );
+            $incoming_ids   = array_values( array_unique( array_filter( array_map( 'intval', $incoming_ids ) ) ) );
             $placeholders   = implode( ',', array_fill( 0, count( $incoming_ids ), '%d' ) );
             $row            = $wpdb->get_row( $wpdb->prepare( "SELECT id, group_key, COALESCE(base_label, label) AS label, COALESCE(base_slug, slug) AS slug FROM {$table_job_titles} WHERE id IN ({$placeholders}) ORDER BY is_primary DESC, id ASC LIMIT 1", $incoming_ids ) );
             if ( $row ) {
                 $ids                  = $row->group_key ? self::get_job_title_ids_for_group( $row->group_key ) : $incoming_ids;
-                $context['job_title_ids'] = array_unique( array_map( 'intval', $ids ) );
+                $context['job_title_ids'] = array_values( array_unique( array_filter( array_map( 'intval', $ids ) ) ) );
                 $context['group_key']     = $row->group_key ? $row->group_key : null;
                 $context['label']         = $row->label;
                 $context['slug']          = $row->slug;
@@ -1138,7 +1138,7 @@ class BKJA_Database {
                     $ids = array( (int) $row->id );
                 }
 
-                $context['job_title_ids'] = array_map( 'intval', $ids );
+                $context['job_title_ids'] = array_values( array_unique( array_filter( array_map( 'intval', $ids ) ) ) );
                 $context['group_key']     = $group_key ? $group_key : null;
                 $context['label']         = $row->label;
                 $context['slug']          = $row->slug;
@@ -1229,6 +1229,9 @@ class BKJA_Database {
         }
 
         if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+            if ( ( $incoming_group_key || $incoming_id || $incoming_ids ) && empty( $context['job_title_ids'] ) ) {
+                error_log( 'BKJA resolve_job_group_context WARNING: incoming identifiers present but no job_title_ids resolved. input=' . print_r( $job_title, true ) );
+            }
             error_log( 'BKJA resolve_job_group_context input: ' . print_r( $job_title, true ) . ' -> ' . print_r( $context, true ) );
         }
 
@@ -1576,10 +1579,6 @@ class BKJA_Database {
         $where_clause = $where['where_clause'];
         $where_params = $where['where_params'];
 
-        if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
-            error_log( 'BKJA get_job_summary context: ' . print_r( $context, true ) . ' WHERE ' . $where_clause . ' params ' . print_r( $where_params, true ) );
-        }
-
         $prepare_with_params = function( $sql, $extra_params = array() ) use ( $wpdb, $where_params ) {
             $params = array_merge( $where_params, (array) $extra_params );
             array_unshift( $params, $sql );
@@ -1587,9 +1586,8 @@ class BKJA_Database {
             return call_user_func_array( array( $wpdb, 'prepare' ), $params );
         };
 
-        $row = $wpdb->get_row(
-            $prepare_with_params(
-                "SELECT
+        $summary_sql = $prepare_with_params(
+            "SELECT
                     COUNT(*) AS total_reports,
                     MAX(j.created_at) AS latest_at,
                     AVG(CASE WHEN j.income_num > 0 THEN j.income_num END) AS avg_income,
@@ -1605,8 +1603,27 @@ class BKJA_Database {
                     AVG(CASE WHEN j.days_per_week > 0 THEN j.days_per_week END) AS avg_days_per_week
                  FROM {$table} j
                  WHERE {$where_clause}"
-            )
         );
+
+        $row = $wpdb->get_row( $summary_sql );
+
+        if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+            error_log( 'BKJA get_job_summary context: ' . wp_json_encode( $context ) . ' WHERE ' . $where_clause . ' params ' . wp_json_encode( $where_params ) . ' SQL ' . $summary_sql . ' count=' . ( $row ? (int) $row->total_reports : 0 ) );
+        }
+
+        if ( defined( 'WP_DEBUG' ) && WP_DEBUG && ! empty( $job_ids ) ) {
+            $count_placeholders = implode( ',', array_fill( 0, count( $job_ids ), '%d' ) );
+            $count_params       = $job_ids;
+            $count_sql_all      = $wpdb->prepare( "SELECT COUNT(*) FROM {$table} j WHERE j.job_title_id IN ({$count_placeholders})", $count_params );
+            $count_sql_window   = $wpdb->prepare( "SELECT COUNT(*) FROM {$table} j WHERE j.job_title_id IN ({$count_placeholders}) AND j.created_at >= DATE_SUB(NOW(), INTERVAL %d MONTH)", array_merge( $job_ids, array( $window_months ) ) );
+            $minmax_sql         = $wpdb->prepare( "SELECT MIN(j.created_at) AS min_created_at, MAX(j.created_at) AS max_created_at FROM {$table} j WHERE j.job_title_id IN ({$count_placeholders})", $count_params );
+
+            $count_all    = (int) $wpdb->get_var( $count_sql_all );
+            $count_window = (int) $wpdb->get_var( $count_sql_window );
+            $minmax       = $wpdb->get_row( $minmax_sql );
+
+            error_log( 'BKJA get_job_summary date diagnostics: ids=' . implode( ',', $job_ids ) . ' all_time=' . $count_all . ' window=' . $count_window . ' min_created_at=' . ( $minmax ? $minmax->min_created_at : 'n/a' ) . ' max_created_at=' . ( $minmax ? $minmax->max_created_at : 'n/a' ) );
+        }
 
         if ( ! $row ) return null;
 
@@ -1766,10 +1783,6 @@ class BKJA_Database {
         $where_clause = $where['where_clause'];
         $where_params = $where['where_params'];
 
-        if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
-            error_log( 'BKJA get_job_records context: ' . print_r( $context, true ) . ' WHERE ' . $where_clause . ' params ' . print_r( $where_params, true ) );
-        }
-
         $prepare_with_params = function( $sql, $extra_params = array() ) use ( $wpdb, $where_params ) {
             $params = array_merge( $where_params, (array) $extra_params );
             array_unshift( $params, $sql );
@@ -1781,17 +1794,17 @@ class BKJA_Database {
         $offset    = max( 0, (int) $offset );
         $limit_cap = $limit + 1;
 
-        $results = $wpdb->get_results(
-            $prepare_with_params(
-                "SELECT j.id, j.title, j.variant_title, j.income, j.investment, j.income_num, j.investment_num, j.experience_years, j.employment_type, j.hours_per_day, j.days_per_week, j.source, j.city, j.gender, j.advantages, j.disadvantages, j.details, j.created_at, jt.label AS job_title_label, jt.slug AS job_title_slug
+        $records_sql = $prepare_with_params(
+            "SELECT j.id, j.title, j.variant_title, j.income, j.investment, j.income_num, j.investment_num, j.experience_years, j.employment_type, j.hours_per_day, j.days_per_week, j.source, j.city, j.gender, j.advantages, j.disadvantages, j.details, j.created_at, jt.label AS job_title_label, jt.slug AS job_title_slug
                  FROM {$table} j
                  LEFT JOIN {$table_titles} jt ON jt.id = j.job_title_id
                  WHERE {$where_clause}
                  ORDER BY j.created_at DESC
                  LIMIT %d OFFSET %d",
-                array( $limit_cap, $offset )
-            )
+            array( $limit_cap, $offset )
         );
+
+        $results = $wpdb->get_results( $records_sql );
 
         $records = array();
         foreach ( $results as $row ) {
@@ -1825,6 +1838,10 @@ class BKJA_Database {
         $has_more    = count( $records ) > $limit;
         if ( $has_more ) {
             array_pop( $records );
+        }
+
+        if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+            error_log( 'BKJA get_job_records context: ' . wp_json_encode( $context ) . ' WHERE ' . $where_clause . ' params ' . wp_json_encode( $where_params ) . ' SQL ' . $records_sql . ' result_count=' . count( $records ) . ' has_more=' . ( $has_more ? '1' : '0' ) );
         }
 
         return array(
@@ -1875,7 +1892,7 @@ class BKJA_Database {
         $clauses       = array();
         $params        = array();
         $prefix        = $table_alias ? $table_alias . '.' : '';
-        $job_ids       = ! empty( $context['job_title_ids'] ) ? array_map( 'intval', $context['job_title_ids'] ) : array();
+        $job_ids       = ! empty( $context['job_title_ids'] ) ? array_values( array_unique( array_filter( array_map( 'intval', $context['job_title_ids'] ) ) ) ) : array();
         $window_months = $window_months ? absint( $window_months ) : 0;
         $fallback_title = $job_title;
 
@@ -1897,7 +1914,8 @@ class BKJA_Database {
         }
 
         if ( $window_months > 0 ) {
-            $clauses[] = "{$prefix}created_at >= DATE_SUB(NOW(), INTERVAL {$window_months} MONTH)";
+            $clauses[] = "{$prefix}created_at >= DATE_SUB(NOW(), INTERVAL %d MONTH)";
+            $params[]  = $window_months;
         }
 
         $filters = is_array( $filters ) ? $filters : array();
