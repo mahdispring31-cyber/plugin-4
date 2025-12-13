@@ -503,10 +503,10 @@ class BKJA_Chat {
                 }
                 $parts = array();
                 $income_value = isset( $record['income_num'] ) && $record['income_num'] > 0
-                    ? self::format_amount_label( $record['income_num'] )
+                    ? self::format_amount_label( (int) $record['income_num'] * 1000000 )
                     : ( ! empty( $record['income'] ) ? $record['income'] : 'نامشخص' );
                 $investment_value = isset( $record['investment_num'] ) && $record['investment_num'] > 0
-                    ? self::format_amount_label( $record['investment_num'] )
+                    ? self::format_amount_label( (int) $record['investment_num'] * 1000000 )
                     : ( ! empty( $record['investment'] ) ? $record['investment'] : 'نامشخص' );
 
                 $parts[] = 'درآمد: ' . $income_value;

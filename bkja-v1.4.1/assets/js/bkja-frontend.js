@@ -1251,7 +1251,7 @@
                 }
                 var t = String(text);
                 t = t.replace(/[\u200c‌]/g,'');
-                t = t.replace(/برق\s*کشی?/g,'برقکش');
+                t = t.replace(/برق\s*[-\s‌]*کش(?:ی)?/g,'برقکش');
                 t = t.replace(/برقکش(?:ی)?/g,'برقکش');
                 t = t.replace(/مکانیکی/g,'مکانیک');
                 t = t.replace(/مکانیک\s*ی$/,'مکانیک');
@@ -1283,38 +1283,68 @@
                     return cleanJobHint(lastKnownJobTitle);
                 }
 
-                var candidate = '';
-                var match = message ? message.match(/(?:شغل|کار|حرفه)\s*(?:«|"|\')?\s*([^»"'؟\?\n]+?)(?:»|"|\'|\s|\?|؟|$)/) : null;
-                if(match && match[1]){
-                    candidate = match[1];
+                var normalizedMessage = normalizeJobToken(normalized);
+                var compactMessage = normalizedMessage.replace(/\s+/g,'');
+                var candidates = [];
+
+                var direct = message ? message.match(/(?:شغل|کار|حرفه)\s*(?:«|"|\')?\s*([^»"'؟\?\n]+?)(?:»|"|\'|\s|\?|؟|$)/) : null;
+                if(direct && direct[1]){
+                    candidates.push(direct[1]);
                 }
 
-                if(!candidate){
-                    var alt = message ? message.match(/(?:درباره|در مورد|راجع(?:ه)?|حوزه|برای)\s+([^\?\!\n]+?)(?:\s*(?:چی|چیه|است|می|؟|\?|$))/) : null;
-                    if(alt && alt[1]){
-                        candidate = alt[1];
+                var alt = message ? message.match(/(?:درباره|در مورد|راجع(?:ه)?|حوزه|برای)\s+([^\?\!\n]+?)(?:\s*(?:چی|چیه|است|می|؟|\?|$))/) : null;
+                if(alt && alt[1]){
+                    candidates.push(alt[1]);
+                }
+
+                var tokens = normalizedMessage.split(/[,،؛\|\n]+/);
+                tokens.forEach(function(token){
+                    var parts = token.split(/\s+/).filter(function(p){ return p && p.length >= 2; });
+                    for(var len=Math.min(parts.length,3); len>=1; len--){
+                        for(var i=0;i<=parts.length-len;i++){
+                            var chunk = parts.slice(i,i+len).join(' ');
+                            if(chunk && candidates.indexOf(chunk) === -1){
+                                candidates.push(chunk);
+                            }
+                        }
                     }
-                }
+                });
 
-                var normalizedCandidate = normalizeJobToken(candidate);
-                if(!normalizedCandidate){
+                var scored = candidates.map(function(raw){
+                    var token = normalizeJobToken(raw);
+                    var compactToken = token.replace(/\s+/g,'');
+                    var matchLen = compactToken.length;
+                    if(!token || matchLen < 2){
+                        return null;
+                    }
+                    var ratio = 0;
+                    if(compactMessage){
+                        var pos = compactMessage.indexOf(compactToken);
+                        ratio = pos !== -1 ? (matchLen / compactMessage.length) : (matchLen / (compactMessage.length + matchLen));
+                    }
+                    return {
+                        token: token,
+                        matchLen: matchLen,
+                        ratio: ratio
+                    };
+                }).filter(Boolean);
+
+                scored = scored.filter(function(item){
+                    return item.matchLen >= 2 && item.ratio >= 0.35;
+                });
+
+                scored.sort(function(a,b){
+                    if(a.matchLen === b.matchLen){
+                        return b.ratio - a.ratio;
+                    }
+                    return b.matchLen - a.matchLen;
+                });
+
+                if(!scored.length){
                     return '';
                 }
 
-                var compactCandidate = normalizedCandidate.replace(/\s+/g,'');
-                var compactQuery = normalizeJobToken(normalized).replace(/\s+/g,'');
-                var matchLen = compactCandidate.length;
-                var ratio = 0;
-                if(compactCandidate && compactQuery){
-                    var pos = compactQuery.indexOf(compactCandidate);
-                    ratio = pos !== -1 ? (compactCandidate.length / compactQuery.length) : (compactCandidate.length / (compactQuery.length + compactCandidate.length));
-                }
-
-                if(matchLen < 2 || ratio < 0.35){
-                    return '';
-                }
-
-                return cleanJobHint(normalizedCandidate);
+                return cleanJobHint(scored[0].token);
             }
 
             function shouldStartPersonalityFlow(message){
@@ -1900,7 +1930,7 @@
                 function fmtMillion(val){
                     var num = parseFloat(val);
                     if(isNaN(num) || num <= 0){
-                        return '';
+                        return 'نامشخص';
                     }
                     var million = num / 1000000;
                     var precision = Math.abs(million) < 20 ? 1 : 0;
@@ -1908,14 +1938,15 @@
                     if(precision === 0){
                         rounded = Math.round(rounded);
                     }
-                    return String(rounded).replace(/\.0+$/, '') + ' میلیون تومان';
+                    var formatted = String(rounded).replace(/\.0+$/, '');
+                    return formatted + ' میلیون تومان';
                 }
 
                 function fmtMillionRange(minVal, maxVal){
                     var minLabel = fmtMillion(minVal);
                     var maxLabel = fmtMillion(maxVal);
                     var unit = ' میلیون تومان';
-                    if(!minLabel || !maxLabel){
+                    if(!minLabel || !maxLabel || minLabel === 'نامشخص' || maxLabel === 'نامشخص'){
                         return '';
                     }
                     if(minLabel.indexOf(unit) !== -1 && maxLabel.indexOf(unit) !== -1){
