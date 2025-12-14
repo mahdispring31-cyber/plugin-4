@@ -50,7 +50,7 @@ if ( ! function_exists( 'bkja_format_toman_as_million' ) ) {
         }
 
         $million   = (float) $toman / 1000000;
-        $precision = ( $million < 20 && $million > -20 ) ? 1 : 0;
+        $precision = ( abs( $million ) < 20 ) ? 1 : 0;
         $rounded   = round( $million, $precision );
 
         $formatted = $precision > 0
