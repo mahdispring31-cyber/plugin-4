@@ -729,8 +729,8 @@ class BKJA_Database {
         $days_per_week        = isset( $data['days_per_week'] ) ? intval( $data['days_per_week'] ) : null;
 
         $experience_years = ( $experience_years && $experience_years > 0 ) ? $experience_years : null;
-        $hours_per_day    = ( $hours_per_day && $hours_per_day > 0 ) ? $hours_per_day : null;
-        $days_per_week    = ( $days_per_week && $days_per_week > 0 ) ? $days_per_week : null;
+        $hours_per_day    = ( $hours_per_day && $hours_per_day >= 1 && $hours_per_day <= 18 ) ? $hours_per_day : null;
+        $days_per_week    = ( $days_per_week && $days_per_week >= 1 && $days_per_week <= 7 ) ? $days_per_week : null;
 
         $row = [
             'category_id'        => isset( $data['category_id'] ) ? sanitize_text_field( $data['category_id'] ) : 0,
@@ -989,7 +989,7 @@ class BKJA_Database {
 
         $rows = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT income_toman, investment_toman, created_at FROM {$table} WHERE {$where_clause}",
+                "SELECT income_toman, investment_toman, hours_per_day, days_per_week, created_at FROM {$table} WHERE {$where_clause}",
                 $job_title
             )
         );
@@ -1003,6 +1003,9 @@ class BKJA_Database {
         $incomes       = array();
         $investments   = array();
 
+        $hours_per_day    = array();
+        $days_per_week    = array();
+
         foreach ( $rows as $row ) {
             if ( $row->income_toman && $row->income_toman > 0 && $row->income_toman < 1000000000000 ) {
                 $incomes[] = (int) $row->income_toman;
@@ -1012,6 +1015,14 @@ class BKJA_Database {
                 $investments[] = (int) $row->investment_toman;
             }
 
+            if ( isset( $row->hours_per_day ) && $row->hours_per_day >= 1 && $row->hours_per_day <= 18 ) {
+                $hours_per_day[] = (int) $row->hours_per_day;
+            }
+
+            if ( isset( $row->days_per_week ) && $row->days_per_week >= 1 && $row->days_per_week <= 7 ) {
+                $days_per_week[] = (int) $row->days_per_week;
+            }
+
             if ( empty( $latest_at ) || $row->created_at > $latest_at ) {
                 $latest_at = $row->created_at;
             }
@@ -1019,6 +1030,8 @@ class BKJA_Database {
 
         $income_stats     = self::prepare_money_stats( $incomes );
         $investment_stats = self::prepare_money_stats( $investments );
+        $hours_stats      = self::prepare_simple_average( $hours_per_day );
+        $days_stats       = self::prepare_simple_average( $days_per_week );
 
         $cities = $wpdb->get_col(
             $wpdb->prepare(
@@ -1088,6 +1101,32 @@ class BKJA_Database {
             'advantages'        => $advantages,
             'disadvantages'     => $disadvantages,
             'window_months'     => $window_months,
+            'avg_hours_per_day' => $hours_stats['avg'],
+            'hours_count'       => $hours_stats['count'],
+            'avg_days_per_week' => $days_stats['avg'],
+            'days_count'        => $days_stats['count'],
+        );
+    }
+
+    private static function prepare_simple_average( $values ) {
+        if ( empty( $values ) || ! is_array( $values ) ) {
+            return array( 'avg' => null, 'count' => 0 );
+        }
+
+        $valid = array();
+        foreach ( $values as $val ) {
+            if ( is_numeric( $val ) ) {
+                $valid[] = (float) $val;
+            }
+        }
+
+        if ( empty( $valid ) ) {
+            return array( 'avg' => null, 'count' => 0 );
+        }
+
+        return array(
+            'avg'   => array_sum( $valid ) / count( $valid ),
+            'count' => count( $valid ),
         );
     }
 
@@ -1193,8 +1232,8 @@ class BKJA_Database {
                     'experience_years'       => isset( $row->experience_years ) ? (int) $row->experience_years : null,
                     'employment_type'        => isset( $row->employment_type ) ? $row->employment_type : null,
                     'employment_type_label'  => isset( $row->employment_type ) ? bkja_get_employment_label( $row->employment_type ) : null,
-                    'hours_per_day'          => isset( $row->hours_per_day ) ? (int) $row->hours_per_day : null,
-                    'days_per_week'          => isset( $row->days_per_week ) ? (int) $row->days_per_week : null,
+                    'hours_per_day'          => ( isset( $row->hours_per_day ) && $row->hours_per_day >= 1 && $row->hours_per_day <= 18 ) ? (int) $row->hours_per_day : null,
+                    'days_per_week'          => ( isset( $row->days_per_week ) && $row->days_per_week >= 1 && $row->days_per_week <= 7 ) ? (int) $row->days_per_week : null,
                     'source'                 => isset( $row->source ) ? $row->source : null,
                     'city'                   => $row->city,
                     'gender'                 => $row->gender,

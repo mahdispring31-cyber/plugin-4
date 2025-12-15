@@ -186,9 +186,10 @@ class BKJA_Frontend {
             $reply        = isset( $ai_response['text'] ) ? (string) $ai_response['text'] : '';
             $suggestions  = ! empty( $ai_response['suggestions'] ) && is_array( $ai_response['suggestions'] ) ? $ai_response['suggestions'] : array();
             $from_cache   = ! empty( $ai_response['from_cache'] );
+            $context_used = ! empty( $ai_response['context_used'] );
             $meta_payload = array(
                 'suggestions'        => $suggestions,
-                'context_used'       => ! empty( $ai_response['context_used'] ),
+                'context_used'       => $context_used,
                 'from_cache'         => $from_cache,
                 'source'             => isset( $ai_response['source'] ) ? $ai_response['source'] : 'openai',
                 'model'              => isset( $ai_response['model'] ) ? $ai_response['model'] : $resolved_model,
@@ -205,20 +206,30 @@ class BKJA_Frontend {
                 $meta_payload['category'] = $category;
             }
 
-            if ( ! isset( $meta_payload['job_title'] ) || '' === $meta_payload['job_title'] ) {
-                if ( ! empty( $ai_response['job_title'] ) ) {
-                    $meta_payload['job_title'] = $ai_response['job_title'];
-                } elseif ( ! empty( $job_title_hint ) ) {
-                    $meta_payload['job_title'] = $job_title_hint;
+            if ( $context_used ) {
+                if ( ! isset( $meta_payload['job_title'] ) || '' === $meta_payload['job_title'] ) {
+                    if ( ! empty( $ai_response['job_title'] ) ) {
+                        $meta_payload['job_title'] = $ai_response['job_title'];
+                    } elseif ( ! empty( $job_title_hint ) ) {
+                        $meta_payload['job_title'] = $job_title_hint;
+                    }
                 }
-            }
 
-            if ( ! isset( $meta_payload['job_slug'] ) ) {
-                if ( isset( $ai_response['job_slug'] ) ) {
-                    $meta_payload['job_slug'] = $ai_response['job_slug'];
-                } elseif ( ! empty( $job_slug ) ) {
-                    $meta_payload['job_slug'] = $job_slug;
+                if ( ! isset( $meta_payload['job_slug'] ) ) {
+                    if ( isset( $ai_response['job_slug'] ) ) {
+                        $meta_payload['job_slug'] = $ai_response['job_slug'];
+                    } elseif ( ! empty( $job_slug ) ) {
+                        $meta_payload['job_slug'] = $job_slug;
+                    }
                 }
+            } else {
+                $meta_payload['job_title'] = '';
+                $meta_payload['job_slug']  = '';
+                $meta_payload['job_report_count']    = null;
+                $meta_payload['job_avg_income']      = null;
+                $meta_payload['job_income_range']    = array( null, null );
+                $meta_payload['job_avg_investment']  = null;
+                $meta_payload['job_investment_range']= array( null, null );
             }
         }
 
