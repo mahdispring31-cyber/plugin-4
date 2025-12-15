@@ -4,15 +4,30 @@
 	/**
 	 * Admin Menu
 	 */
-	add_action('admin_menu', function(){
-	add_menu_page('BKJA Assistant', 'BKJA Assistant', 'manage_options', 'bkja-assistant', 'bkja_admin_page', 'dashicons-admin-comments', 60);
-	});
+add_action('admin_menu', function(){
+add_menu_page('BKJA Assistant', 'BKJA Assistant', 'manage_options', 'bkja-assistant', 'bkja_admin_page', 'dashicons-admin-comments', 60);
+});
 
-	/**
-	 * Admin Page
-	 */
-	function bkja_admin_page(){
-	if(!current_user_can('manage_options')) return;
+add_action('admin_post_bkja_clear_response_cache', function(){
+        if ( ! current_user_can( 'manage_options' ) ) {
+                wp_die( 'forbidden' );
+        }
+
+        check_admin_referer( 'bkja_clear_response_cache' );
+
+        if ( class_exists( 'BKJA_Database' ) ) {
+                BKJA_Database::flush_plugin_caches();
+        }
+
+        wp_safe_redirect( add_query_arg( 'bkja_manage_msg', 'cache_cleared', admin_url( 'admin.php?page=bkja-assistant' ) ) );
+        exit;
+});
+
+        /**
+         * Admin Page
+         */
+        function bkja_admin_page(){
+        if(!current_user_can('manage_options')) return;
 
 	// Back-compat local save (kept if some places still post here)
 	if(isset($_POST['bkja_save']) && check_admin_referer('bkja_save_settings')) {
@@ -157,11 +172,12 @@
 
 		if(isset($_GET['bkja_manage_msg'])){
 			$m = sanitize_text_field($_GET['bkja_manage_msg']);
-			if($m==='deleted') echo '<div class="notice notice-success"><p>رکورد حذف شد.</p></div>';
-			if($m==='edited')  echo '<div class="notice notice-success"><p>رکورد ویرایش شد.</p></div>';
-			if($m==='added')   echo '<div class="notice notice-success"><p>شغل جدید افزوده شد.</p></div>';
-		}
-		?>
+                if($m==='deleted') echo '<div class="notice notice-success"><p>رکورد حذف شد.</p></div>';
+                        if($m==='edited')  echo '<div class="notice notice-success"><p>رکورد ویرایش شد.</p></div>';
+                        if($m==='added')   echo '<div class="notice notice-success"><p>شغل جدید افزوده شد.</p></div>';
+                        if($m==='cache_cleared') echo '<div class="notice notice-success"><p>کش پاسخ‌ها پاک شد.</p></div>';
+                }
+                ?>
 
                 <div class="bkja-tabs">
                         <div class="bkja-tab">تنظیمات عمومی</div>
@@ -189,15 +205,23 @@
 	                                                <option value="gpt-5" <?php selected($m,'gpt-5'); ?>>gpt-5</option>
 	                                        </select>
 	                                </div>
-	                                <div class="bkja-form-row">
-	                                        <label>کش پاسخ‌ها</label>
-	                                        <?php $cache = get_option('bkja_enable_cache','1'); ?>
-	                                        <select name="bkja_enable_cache">
-	                                                <option value="1" <?php selected($cache,'1'); ?>>فعال</option>
-	                                                <option value="0" <?php selected($cache,'0'); ?>>غیرفعال</option>
-	                                        </select>
-	                                        <div class="bkja-note">در صورت فعال بودن، پاسخ‌های تکراری برای مدت کوتاه در حافظه نگهداری می‌شوند تا سرعت بیشتر شود.</div>
-	                                </div>
+                                        <div class="bkja-form-row">
+                                                <label>کش پاسخ‌ها</label>
+                                                <?php $cache = get_option('bkja_enable_cache','1'); ?>
+                                                <select name="bkja_enable_cache">
+                                                        <option value="1" <?php selected($cache,'1'); ?>>فعال</option>
+                                                        <option value="0" <?php selected($cache,'0'); ?>>غیرفعال</option>
+                                                </select>
+                                                <div class="bkja-note">در صورت فعال بودن، پاسخ‌های تکراری برای مدت کوتاه در حافظه نگهداری می‌شوند تا سرعت بیشتر شود.</div>
+                                                <div class="bkja-actions">
+                                                        <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:inline-flex; gap:8px; align-items:center;">
+                                                                <?php wp_nonce_field('bkja_clear_response_cache'); ?>
+                                                                <input type="hidden" name="action" value="bkja_clear_response_cache" />
+                                                                <button class="bkja-button secondary" type="submit">پاکسازی کش پاسخ‌ها</button>
+                                                                <span class="bkja-note">در هر لحظه می‌توانید کش پاسخ را خالی کنید تا قالب‌بندی‌های جدید اعمال شوند.</span>
+                                                        </form>
+                                                </div>
+                                        </div>
 	                                <div class="bkja-form-row">
 	                                        <label>دکمه «قدم بعدی منطقی»</label>
 	                                        <?php $quick_actions = get_option('bkja_enable_quick_actions','0'); ?>

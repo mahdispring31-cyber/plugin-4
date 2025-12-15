@@ -16,6 +16,32 @@ if ( ! defined( 'BKJA_PLUGIN_VERSION' ) ) {
         define( 'BKJA_PLUGIN_VERSION', '1.5.10' );
 }
 
+add_action(
+        'update_option_bkja_enable_cache',
+        function ( $old_value, $value ) {
+                if ( (string) $value === '0' && class_exists( 'BKJA_Database' ) ) {
+                        BKJA_Database::flush_plugin_caches();
+                }
+        },
+        10,
+        2
+);
+
+add_action( 'plugins_loaded', function() {
+        $current_version   = BKJA_PLUGIN_VERSION;
+        $current_format    = class_exists( 'BKJA_Chat' ) ? BKJA_Chat::FORMATTING_VERSION : '';
+        $stored_version    = get_option( 'bkja_cached_plugin_version', '' );
+        $stored_formatting = get_option( 'bkja_cached_formatting_version', '' );
+
+        if ( $current_version !== $stored_version || $current_format !== $stored_formatting ) {
+                if ( class_exists( 'BKJA_Database' ) ) {
+                        BKJA_Database::flush_plugin_caches();
+                }
+                update_option( 'bkja_cached_plugin_version', $current_version );
+                update_option( 'bkja_cached_formatting_version', $current_format );
+        }
+} );
+
 if ( ! function_exists( 'bkja_get_free_message_limit' ) ) {
         function bkja_get_free_message_limit() {
                 $raw = get_option( 'bkja_free_messages_per_day', null );
