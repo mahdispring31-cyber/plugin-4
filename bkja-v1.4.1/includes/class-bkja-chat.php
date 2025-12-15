@@ -188,6 +188,12 @@ class BKJA_Chat {
         return 'gpt-4o-mini';
     }
 
+    const FORMATTING_VERSION = '2';
+
+    protected static function get_formatting_version() {
+        return self::FORMATTING_VERSION;
+    }
+
     public static function build_cache_key( $message, $category = '', $model = '', $job_title = '' ) {
         $normalized = self::normalize_message( $message );
         $category   = is_string( $category ) ? trim( $category ) : '';
@@ -199,6 +205,12 @@ class BKJA_Chat {
             'cat:' . $category,
             'm:' . $model,
         );
+
+        if ( defined( 'BKJA_PLUGIN_VERSION' ) ) {
+            $parts[] = 'pv:' . BKJA_PLUGIN_VERSION;
+        }
+
+        $parts[] = 'fmt:' . self::get_formatting_version();
 
         if ( '' !== $job_title ) {
             $parts[] = 'job:' . self::normalize_message( $job_title );
@@ -238,6 +250,10 @@ class BKJA_Chat {
             $source = isset( $payload['source'] ) ? $payload['source'] : '';
             if ( empty( $source ) && isset( $payload['meta'] ) && is_array( $payload['meta'] ) ) {
                 $source = isset( $payload['meta']['source'] ) ? $payload['meta']['source'] : '';
+            }
+
+            if ( empty( $payload['text'] ) && isset( $payload['meta']['context_snapshot'] ) ) {
+                return true;
             }
 
             if ( in_array( $source, array( 'database', 'job_context' ), true ) ) {
@@ -857,6 +873,49 @@ class BKJA_Chat {
         $payload['job_avg_investment']   = $job_avg_investment;
         $payload['job_investment_range'] = $job_investment_range;
 
+        $context_snapshot = array();
+        if ( $context_used ) {
+            $context_snapshot = array(
+                'job_title'    => $context['job_title'],
+                'job_slug'     => isset( $context['job_slug'] ) ? $context['job_slug'] : '',
+                'summary'      => array(
+                    'count_reports'       => $job_report_count,
+                    'avg_income_toman'    => $summary['avg_income'] ?? null,
+                    'min_income_toman'    => $summary['min_income'] ?? null,
+                    'max_income_toman'    => $summary['max_income'] ?? null,
+                    'avg_investment_toman'=> $summary['avg_investment'] ?? null,
+                    'min_investment_toman'=> $summary['min_investment'] ?? null,
+                    'max_investment_toman'=> $summary['max_investment'] ?? null,
+                    'cities'              => $summary['cities'] ?? array(),
+                    'advantages'          => $summary['advantages'] ?? array(),
+                    'disadvantages'       => $summary['disadvantages'] ?? array(),
+                ),
+            );
+
+            if ( ! empty( $context['records'] ) && is_array( $context['records'] ) ) {
+                $records = array();
+                foreach ( array_slice( $context['records'], 0, 3 ) as $record ) {
+                    if ( ! is_array( $record ) ) {
+                        continue;
+                    }
+                    $records[] = array(
+                        'id'                     => isset( $record['id'] ) ? (int) $record['id'] : null,
+                        'income_toman_canonical' => isset( $record['income_toman_canonical'] ) ? (int) $record['income_toman_canonical'] : null,
+                        'income_toman'           => isset( $record['income_toman'] ) ? (int) $record['income_toman'] : null,
+                        'income_num'             => isset( $record['income_num'] ) ? (int) $record['income_num'] : null,
+                        'investment_toman'       => isset( $record['investment_toman'] ) ? (int) $record['investment_toman'] : null,
+                        'investment_num'         => isset( $record['investment_num'] ) ? (int) $record['investment_num'] : null,
+                        'city'                   => $record['city'] ?? '',
+                        'details'                => $record['details'] ?? '',
+                    );
+                }
+
+                if ( $records ) {
+                    $context_snapshot['records'] = $records;
+                }
+            }
+        }
+
         if ( ! empty( $extra ) && is_array( $extra ) ) {
             $payload = array_merge( $payload, $extra );
         }
@@ -890,6 +949,9 @@ class BKJA_Chat {
             'job_income_range'     => $job_income_range,
             'job_avg_investment'   => $job_avg_investment,
             'job_investment_range' => $job_investment_range,
+            'plugin_version'       => defined( 'BKJA_PLUGIN_VERSION' ) ? BKJA_PLUGIN_VERSION : '',
+            'formatting_version'   => self::get_formatting_version(),
+            'context_snapshot'     => $context_snapshot,
         );
 
         return $payload;
@@ -930,6 +992,77 @@ class BKJA_Chat {
         }
 
         set_transient( $key, $payload, $ttl );
+    }
+
+    protected static function prepare_payload_for_cache( $payload ) {
+        if ( ! is_array( $payload ) ) {
+            return $payload;
+        }
+
+        $prepared = $payload;
+        if ( in_array( $prepared['source'] ?? '', array( 'database', 'job_context' ), true ) ) {
+            $prepared['text']        = '';
+            $prepared['suggestions'] = array();
+        }
+
+        return $prepared;
+    }
+
+    protected static function render_cached_text( $payload, $context ) {
+        if ( ! empty( $payload['text'] ) ) {
+            return $payload['text'];
+        }
+
+        $snapshot = array();
+        if ( isset( $payload['meta']['context_snapshot'] ) && is_array( $payload['meta']['context_snapshot'] ) ) {
+            $snapshot = $payload['meta']['context_snapshot'];
+        }
+
+        if ( empty( $snapshot ) && is_array( $context ) ) {
+            return self::format_job_context_reply( $context );
+        }
+
+        $rebuilt_context = array(
+            'job_title' => $snapshot['job_title'] ?? '',
+            'job_slug'  => $snapshot['job_slug'] ?? '',
+            'summary'   => array(),
+            'records'   => array(),
+        );
+
+        if ( isset( $snapshot['summary'] ) && is_array( $snapshot['summary'] ) ) {
+            $rebuilt_context['summary'] = array(
+                'count_reports'  => $snapshot['summary']['count_reports'] ?? null,
+                'avg_income'     => $snapshot['summary']['avg_income_toman'] ?? null,
+                'min_income'     => $snapshot['summary']['min_income_toman'] ?? null,
+                'max_income'     => $snapshot['summary']['max_income_toman'] ?? null,
+                'avg_investment' => $snapshot['summary']['avg_investment_toman'] ?? null,
+                'min_investment' => $snapshot['summary']['min_investment_toman'] ?? null,
+                'max_investment' => $snapshot['summary']['max_investment_toman'] ?? null,
+                'cities'         => $snapshot['summary']['cities'] ?? array(),
+                'advantages'     => $snapshot['summary']['advantages'] ?? array(),
+                'disadvantages'  => $snapshot['summary']['disadvantages'] ?? array(),
+            );
+        }
+
+        if ( isset( $snapshot['records'] ) && is_array( $snapshot['records'] ) ) {
+            foreach ( $snapshot['records'] as $record ) {
+                if ( ! is_array( $record ) ) {
+                    continue;
+                }
+                $rebuilt_context['records'][] = array(
+                    'id'                     => $record['id'] ?? null,
+                    'income_toman_canonical' => $record['income_toman_canonical'] ?? null,
+                    'income_toman'           => $record['income_toman'] ?? null,
+                    'income_num'             => $record['income_num'] ?? null,
+                    'investment_toman'       => $record['investment_toman'] ?? null,
+                    'investment_num'         => $record['investment_num'] ?? null,
+                    'city'                   => $record['city'] ?? '',
+                    'details'                => $record['details'] ?? '',
+                );
+            }
+        }
+
+        return self::format_job_context_reply( $rebuilt_context );
     }
 
     public static function flush_cache_prefix( $prefix = 'bkja_cache_' ) {
@@ -1015,8 +1148,10 @@ class BKJA_Chat {
                     if ( ! isset( $cached['meta'] ) || ! is_array( $cached['meta'] ) ) {
                         $cached['meta'] = array();
                     }
-                    $cached['meta']['category'] = $resolved_category;
-                    $cached['meta']['job_title'] = $cached_job_title;
+                    $cached['meta']['category']           = $resolved_category;
+                    $cached['meta']['job_title']          = $cached_job_title;
+                    $cached['meta']['plugin_version']     = defined( 'BKJA_PLUGIN_VERSION' ) ? BKJA_PLUGIN_VERSION : '';
+                    $cached['meta']['formatting_version'] = self::get_formatting_version();
                     $job_slug_value = '';
                     if ( ! empty( $context['job_slug'] ) ) {
                         $job_slug_value = $context['job_slug'];
@@ -1036,6 +1171,11 @@ class BKJA_Chat {
                         $cached['meta']['job_title']  = $context['job_title'] ?? ( $cached['meta']['job_title'] ?? null );
                         $cached['meta']['job_slug']   = $context['job_slug'] ?? ( $cached['meta']['job_slug'] ?? null );
                     }
+                    $cached['text'] = self::render_cached_text( $cached, $context );
+                    if ( empty( $cached['suggestions'] ) && isset( $cached['text'] ) ) {
+                        $cached['suggestions'] = self::build_followup_suggestions( $normalized_message, $context, $cached['text'] );
+                    }
+
                     return $cached;
                 }
 
@@ -1064,7 +1204,7 @@ class BKJA_Chat {
                 $db_payload['normalized_message'] = $normalized_message;
 
                 if ( $cache_enabled ) {
-                    set_transient( $cache_key, $db_payload, self::get_cache_ttl( $model ) );
+                    set_transient( $cache_key, self::prepare_payload_for_cache( $db_payload ), self::get_cache_ttl( $model ) );
                 }
 
                 return $db_payload;
@@ -1086,7 +1226,7 @@ class BKJA_Chat {
                     )
                 );
                 if ( $cache_enabled ) {
-                    set_transient( $cache_key, $fallback, self::get_cache_ttl( $model ) );
+                    set_transient( $cache_key, self::prepare_payload_for_cache( $fallback ), self::get_cache_ttl( $model ) );
                 }
                 return $fallback;
             }
@@ -1172,7 +1312,7 @@ class BKJA_Chat {
                     )
                 );
                 if ( $cache_enabled ) {
-                    set_transient( $cache_key, $fallback, self::get_cache_ttl( $model ) );
+                    set_transient( $cache_key, self::prepare_payload_for_cache( $fallback ), self::get_cache_ttl( $model ) );
                 }
                 return $fallback;
             }
@@ -1201,7 +1341,7 @@ class BKJA_Chat {
                     )
                 );
                 if ( $cache_enabled ) {
-                    set_transient( $cache_key, $fallback, self::get_cache_ttl( $model ) );
+                    set_transient( $cache_key, self::prepare_payload_for_cache( $fallback ), self::get_cache_ttl( $model ) );
                 }
                 return $fallback;
             }
@@ -1251,7 +1391,7 @@ class BKJA_Chat {
                 }
             }
 
-            set_transient( $cache_key, $result, self::get_cache_ttl( $model ) );
+            set_transient( $cache_key, self::prepare_payload_for_cache( $result ), self::get_cache_ttl( $model ) );
         }
 
         return $result;
