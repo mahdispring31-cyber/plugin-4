@@ -1927,12 +1927,12 @@
                 var s = summaryRes[0] && summaryRes[0].success && summaryRes[0].data && summaryRes[0].data.summary ? summaryRes[0].data.summary : null;
                 var records = recordsRes[0] && recordsRes[0].success && recordsRes[0].data && recordsRes[0].data.records ? recordsRes[0].data.records : [];
                 var totalCount = recordsRes[0] && recordsRes[0].success && recordsRes[0].data && typeof recordsRes[0].data.total_count !== 'undefined' ? recordsRes[0].data.total_count : records.length;
-                function fmtMillion(val){
-                    var num = parseFloat(val);
+                function fmtTomanMillion(val){
+                    var num = Number(val);
                     if(isNaN(num) || num <= 0){
-                        return 'نامشخص';
+                        return val ? $.trim(String(val)) : 'نامشخص';
                     }
-                    var million = num / 1000000;
+                    var million = num >= 1000000 ? num / 1000000 : num;
                     var precision = Math.abs(million) < 20 ? 1 : 0;
                     var rounded = Math.round(million * Math.pow(10, precision)) / Math.pow(10, precision);
                     if(precision === 0){
@@ -1942,9 +1942,9 @@
                     return formatted + ' میلیون تومان';
                 }
 
-                function fmtMillionRange(minVal, maxVal){
-                    var minLabel = fmtMillion(minVal);
-                    var maxLabel = fmtMillion(maxVal);
+                function fmtTomanMillionRange(minVal, maxVal){
+                    var minLabel = fmtTomanMillion(minVal);
+                    var maxLabel = fmtTomanMillion(maxVal);
                     var unit = ' میلیون تومان';
                     if(!minLabel || !maxLabel || minLabel === 'نامشخص' || maxLabel === 'نامشخص'){
                         return '';
@@ -1974,9 +1974,9 @@
 
                     var incomeText = '';
                     if(s.avg_income){
-                        incomeText += 'میانگین: ' + esc(fmtMillion(s.avg_income));
+                        incomeText += 'میانگین: ' + esc(fmtTomanMillion(s.avg_income));
                     }
-                    var incomeRange = fmtMillionRange(s.min_income, s.max_income);
+                    var incomeRange = fmtTomanMillionRange(s.min_income, s.max_income);
                     if(incomeRange){
                         incomeText += (incomeText ? ' | ' : '') + 'بازه: ' + esc(incomeRange);
                     }
@@ -1986,9 +1986,9 @@
 
                     var investText = '';
                     if(s.avg_investment){
-                        investText += 'میانگین: ' + esc(fmtMillion(s.avg_investment));
+                        investText += 'میانگین: ' + esc(fmtTomanMillion(s.avg_investment));
                     }
-                    var investRange = fmtMillionRange(s.min_investment, s.max_investment);
+                    var investRange = fmtTomanMillionRange(s.min_investment, s.max_investment);
                     if(investRange){
                         investText += (investText ? ' | ' : '') + 'بازه: ' + esc(investRange);
                     }
@@ -2016,8 +2016,8 @@
                         var employmentLabel = r.employment_type_label || r.employment_type;
                         var createdAtLabel = r.created_at_display || r.created_at;
                         recHtml += '<h5>🧑‍💼 تجربه کاربر</h5>';
-                        if (r.income) recHtml += '<p>💵 درآمد: ' + esc(r.income) + '</p>';
-                        if (r.investment) recHtml += '<p>💰 سرمایه: ' + esc(r.investment) + '</p>';
+                        if (r.income) recHtml += '<p>💵 درآمد: ' + esc(fmtTomanMillion(r.income)) + '</p>';
+                        if (r.investment) recHtml += '<p>💰 سرمایه: ' + esc(fmtTomanMillion(r.investment)) + '</p>';
                         if (r.city) recHtml += '<p>📍 شهر: ' + esc(r.city) + '</p>';
                         if (employmentLabel) recHtml += '<p>💼 نوع اشتغال: ' + esc(employmentLabel) + '</p>';
                         if (genderLabel) recHtml += '<p>👤 جنسیت: ' + esc(genderLabel) + '</p>';
@@ -2073,8 +2073,8 @@
                         var employmentLabel = r.employment_type_label || r.employment_type;
                         var createdAtLabel = r.created_at_display || r.created_at;
                         html += '<h5>🧑‍💼 تجربه کاربر</h5>';
-                        if (r.income) html += '<p>💵 درآمد: ' + esc(r.income) + '</p>';
-                        if (r.investment) html += '<p>💰 سرمایه: ' + esc(r.investment) + '</p>';
+                        if (r.income) html += '<p>💵 درآمد: ' + esc(fmtTomanMillion(r.income)) + '</p>';
+                        if (r.investment) html += '<p>💰 سرمایه: ' + esc(fmtTomanMillion(r.investment)) + '</p>';
                         if (r.city) html += '<p>📍 شهر: ' + esc(r.city) + '</p>';
                         if (employmentLabel) html += '<p>💼 نوع اشتغال: ' + esc(employmentLabel) + '</p>';
                         if (genderLabel) html += '<p>👤 جنسیت: ' + esc(genderLabel) + '</p>';
