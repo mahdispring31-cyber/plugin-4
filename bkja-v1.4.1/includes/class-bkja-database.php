@@ -55,6 +55,43 @@ if ( ! function_exists( 'bkja_parse_numeric_amount' ) ) {
     }
 }
 
+if ( ! function_exists( 'bkja_normalize_numeric_money_to_toman' ) ) {
+    /**
+     * Normalize a parsed numeric value into toman based on the strict rules:
+     * - If value <= 1000 treat it as «million toman»
+     * - If value  > 1000 treat it as raw toman
+     * - Explicit million/billion units are honored but guarded against double multipliers
+     *
+     * @param float     $num        Parsed numeric value.
+     * @param int|null  $multiplier Explicit multiplier derived from the text (1e6, 1e9, etc.)
+     * @return int|null Normalized toman value or null when invalid.
+     */
+    function bkja_normalize_numeric_money_to_toman( $num, $multiplier = null ) {
+        $num = (float) $num;
+        if ( $num <= 0 ) {
+            return null;
+        }
+
+        // Default / toman path follows strict million-vs-toman rule.
+        $apply_strict_rule = function( $value ) {
+            return ( $value <= 1000 )
+                ? (int) round( $value * 1000000 )
+                : (int) round( $value );
+        };
+
+        if ( null === $multiplier || 1 === $multiplier ) {
+            return $apply_strict_rule( $num );
+        }
+
+        // Guard against inputs like "38000000 میلیون" which should be treated as toman.
+        if ( $multiplier >= 1000000 && $num > 1000 ) {
+            return (int) round( $num );
+        }
+
+        return (int) round( $num * $multiplier );
+    }
+}
+
 if ( ! function_exists( 'bkja_parse_money_to_toman' ) ) {
     /**
      * Parse a free-form money string and convert it to Tomans.
@@ -62,7 +99,7 @@ if ( ! function_exists( 'bkja_parse_money_to_toman' ) ) {
      * - Supports Persian/Arabic digits
      * - Handles ranges like "بین X تا Y" or "X تا Y"
      * - Detects units: میلیارد، میلیون، هزار، تومان/تومن
-     * - When no unit is present: numbers >= 1,000,000 are treated as toman; smaller numbers are treated as million toman.
+     * - Strict normalization rule: values <= 1,000 are treated as «million toman», larger values are treated as toman.
      *
      * @param string $raw Raw input value.
      * @return array{value:?int,min:?int,max:?int}
@@ -113,9 +150,13 @@ if ( ! function_exists( 'bkja_parse_money_to_toman' ) ) {
             $multiplier = ( $numbers[0] >= 1000000 ) ? 1 : 1000000;
         }
 
-        $amounts = array_map( function( $num ) use ( $multiplier ) {
-            return (int) round( $num * $multiplier );
-        }, $numbers );
+        $amounts = array();
+        foreach ( $numbers as $num ) {
+            $normalized = bkja_normalize_numeric_money_to_toman( $num, $multiplier );
+            if ( null !== $normalized ) {
+                $amounts[] = $normalized;
+            }
+        }
 
         $min = isset( $amounts[0] ) ? $amounts[0] : null;
         $max = isset( $amounts[1] ) ? $amounts[1] : null;
@@ -182,15 +223,18 @@ if ( ! function_exists( 'bkja_parse_money_to_toman_safe' ) ) {
         $max   = isset( $base['max'] ) ? (int) $base['max'] : null;
 
         $invalid = false;
-        $cap     = 5000000000; // 5 میلیارد تومان
-        $hard_allow = $has_billion ? 20000000000 : $cap;
+        $hard_min = 1000000; // 1 میلیون تومان
+        $hard_max = 1000000000000; // 1 تریلیون تومان
 
-        $check_value = function( $val ) use ( $cap, $hard_allow, &$invalid, $has_billion ) {
+        $check_value = function( $val ) use ( $hard_min, $hard_max, &$invalid ) {
             if ( null === $val ) {
                 return null;
             }
-            if ( $val > $cap && ( ! $has_billion || $val > $hard_allow ) ) {
+            if ( $val > $hard_max ) {
                 $invalid = true;
+                return null;
+            }
+            if ( $val < $hard_min ) {
                 return null;
             }
             return $val;
@@ -256,6 +300,7 @@ class BKJA_Database {
             `income_num` BIGINT NULL,
             `investment_num` BIGINT NULL,
             `income_toman` BIGINT NULL,
+            `income_toman_canonical` BIGINT NULL,
             `income_min_toman` BIGINT NULL,
             `income_max_toman` BIGINT NULL,
             `investment_toman` BIGINT NULL,
@@ -584,7 +629,8 @@ class BKJA_Database {
         $add_column( 'income_num', 'BIGINT NULL', 'investment' );
         $add_column( 'investment_num', 'BIGINT NULL', 'income_num' );
         $add_column( 'income_toman', 'BIGINT NULL', 'investment_num' );
-        $add_column( 'income_min_toman', 'BIGINT NULL', 'income_toman' );
+        $add_column( 'income_toman_canonical', 'BIGINT NULL', 'income_toman' );
+        $add_column( 'income_min_toman', 'BIGINT NULL', 'income_toman_canonical' );
         $add_column( 'income_max_toman', 'BIGINT NULL', 'income_min_toman' );
         $add_column( 'investment_toman', 'BIGINT NULL', 'income_max_toman' );
         $add_column( 'experience_years', 'TINYINT NULL', 'investment_num' );
@@ -669,9 +715,10 @@ class BKJA_Database {
         do {
             $rows = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT id, income, investment, income_toman, investment_toman, income_min_toman, income_max_toman
+                    "SELECT id, income, investment, income_toman, income_toman_canonical, investment_toman, income_min_toman, income_max_toman
                      FROM {$table}
-                     WHERE (income_toman IS NULL OR income_toman <= 0 OR income_toman > 1000000000000)
+                     WHERE (income_toman_canonical IS NULL OR income_toman_canonical <= 0 OR income_toman_canonical > 1000000000000)
+                        OR (income_toman IS NULL OR income_toman <= 0 OR income_toman > 1000000000000)
                         OR (investment_toman IS NULL OR investment_toman < 0 OR investment_toman > 1000000000000)
                      ORDER BY id ASC
                      LIMIT %d",
@@ -686,15 +733,17 @@ class BKJA_Database {
             foreach ( $rows as $row ) {
                 $updates = array();
 
-                $income = bkja_parse_money_to_toman( $row->income );
-                if ( isset( $income['value'] ) && $income['value'] > 0 && $income['value'] < 1000000000000 ) {
-                    $updates['income_toman']      = $income['value'];
-                    $updates['income_min_toman']  = ( isset( $income['min'] ) && $income['min'] > 0 ) ? $income['min'] : null;
-                    $updates['income_max_toman']  = ( isset( $income['max'] ) && $income['max'] > 0 ) ? $income['max'] : null;
-                } elseif ( $row->income_toman && $row->income_toman > 1000000000000 ) {
-                    $updates['income_toman']     = null;
-                    $updates['income_min_toman'] = null;
-                    $updates['income_max_toman'] = null;
+                $income = bkja_parse_money_to_toman_safe( $row->income );
+                if ( ! $income['invalid'] && isset( $income['value'] ) ) {
+                    $updates['income_toman']            = $income['value'];
+                    $updates['income_toman_canonical']  = $income['value'];
+                    $updates['income_min_toman']        = ( isset( $income['min'] ) ) ? $income['min'] : null;
+                    $updates['income_max_toman']        = ( isset( $income['max'] ) ) ? $income['max'] : null;
+                } else {
+                    $updates['income_toman']            = null;
+                    $updates['income_toman_canonical']  = null;
+                    $updates['income_min_toman']        = null;
+                    $updates['income_max_toman']        = null;
                 }
 
                 $investment = bkja_parse_money_to_toman( $row->investment );
@@ -741,6 +790,7 @@ class BKJA_Database {
             'income_num'         => 0,
             'investment_num'     => 0,
             'income_toman'       => null,
+            'income_toman_canonical' => null,
             'income_min_toman'   => null,
             'income_max_toman'   => null,
             'investment_toman'   => null,
@@ -756,13 +806,24 @@ class BKJA_Database {
             'details'            => isset( $data['details'] ) ? sanitize_textarea_field( $data['details'] ) : '',
         ];
 
-        $income_money           = bkja_parse_money_to_toman( $row['income'] );
+        $income_money           = bkja_parse_money_to_toman_safe( $row['income'] );
         $investment_money       = bkja_parse_money_to_toman( $row['investment'] );
 
-        $row['income_toman']       = ( isset( $income_money['value'] ) && $income_money['value'] > 0 ) ? $income_money['value'] : null;
-        $row['income_min_toman']   = ( isset( $income_money['min'] ) && $income_money['min'] > 0 ) ? $income_money['min'] : null;
-        $row['income_max_toman']   = ( isset( $income_money['max'] ) && $income_money['max'] > 0 ) ? $income_money['max'] : null;
+        $row['income_toman']            = ( isset( $income_money['value'] ) ) ? $income_money['value'] : null;
+        $row['income_toman_canonical']  = $row['income_toman'];
+        $row['income_min_toman']        = ( isset( $income_money['min'] ) ) ? $income_money['min'] : null;
+        $row['income_max_toman']        = ( isset( $income_money['max'] ) ) ? $income_money['max'] : null;
         $row['investment_toman']   = ( isset( $investment_money['value'] ) && $investment_money['value'] > 0 ) ? $investment_money['value'] : null;
+
+        if ( empty( $row['income_toman_canonical'] ) && $income_num_input && $income_num_input > 0 ) {
+            $candidate_canonical = (int) round( $income_num_input * 1000000 );
+            if ( $candidate_canonical >= 1000000 && $candidate_canonical <= 1000000000000 ) {
+                $row['income_toman_canonical'] = $candidate_canonical;
+                if ( empty( $row['income_toman'] ) ) {
+                    $row['income_toman'] = $candidate_canonical;
+                }
+            }
+        }
 
         $row['income_num']     = ( $income_num_input && $income_num_input > 0 )
             ? $income_num_input
@@ -989,7 +1050,7 @@ class BKJA_Database {
 
         $rows = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT income_toman, investment_toman, hours_per_day, days_per_week, created_at FROM {$table} WHERE {$where_clause}",
+                "SELECT income_toman_canonical, income_toman, investment_toman, hours_per_day, days_per_week, created_at FROM {$table} WHERE {$where_clause}",
                 $job_title
             )
         );
@@ -1007,8 +1068,9 @@ class BKJA_Database {
         $days_per_week    = array();
 
         foreach ( $rows as $row ) {
-            if ( $row->income_toman && $row->income_toman > 0 && $row->income_toman < 1000000000000 ) {
-                $incomes[] = (int) $row->income_toman;
+            $income_canonical = isset( $row->income_toman_canonical ) ? (int) $row->income_toman_canonical : null;
+            if ( $income_canonical && $income_canonical >= 1000000 && $income_canonical <= 1000000000000 ) {
+                $incomes[] = $income_canonical;
             }
 
             if ( $row->investment_toman && $row->investment_toman >= 0 && $row->investment_toman < 1000000000000 ) {
@@ -1080,12 +1142,23 @@ class BKJA_Database {
         $advantages    = $split_terms( $adv_rows );
         $disadvantages = $split_terms( $dis_rows );
 
+        $income_debug = null;
+        if ( self::is_money_debug_enabled() ) {
+            $income_debug = array(
+                'used_count'     => $income_stats['count'],
+                'raw_count'      => $income_stats['raw_count'],
+                'min_canonical'  => $income_stats['used_min'],
+                'max_canonical'  => $income_stats['used_max'],
+            );
+        }
+
         return array(
             'job_title'         => $job_title,
             'avg_income'        => $income_stats['avg'] ? (int) round( $income_stats['avg'] ) : null,
             'min_income'        => $income_stats['min'] ? (int) round( $income_stats['min'] ) : null,
             'max_income'        => $income_stats['max'] ? (int) round( $income_stats['max'] ) : null,
             'income_count'      => (int) $income_stats['count'],
+            'income_debug'      => $income_debug,
             'avg_investment'    => $investment_stats['avg'] ? (int) round( $investment_stats['avg'] ) : null,
             'min_investment'    => $investment_stats['min'] ? (int) round( $investment_stats['min'] ) : null,
             'max_investment'    => $investment_stats['max'] ? (int) round( $investment_stats['max'] ) : null,
@@ -1140,20 +1213,27 @@ class BKJA_Database {
             );
         }
 
-        sort( $values );
-        $filtered = self::filter_money_outliers( $values );
+        $guarded = array_values( array_filter( $values, function( $value ) {
+            return is_numeric( $value ) && $value >= 1000000 && $value <= 1000000000000;
+        } ) );
+
+        sort( $guarded );
+        $filtered = self::filter_money_outliers( $guarded );
 
         if ( empty( $filtered ) ) {
-            $filtered = $values;
+            $filtered = $guarded;
         }
 
         $count = count( $filtered );
 
         return array(
-            'avg'   => $count ? array_sum( $filtered ) / $count : null,
-            'min'   => $count ? min( $filtered ) : null,
-            'max'   => $count ? max( $filtered ) : null,
-            'count' => $count,
+            'avg'       => $count ? array_sum( $filtered ) / $count : null,
+            'min'       => $count ? min( $filtered ) : null,
+            'max'       => $count ? max( $filtered ) : null,
+            'count'     => $count,
+            'raw_count' => count( $guarded ),
+            'used_min'  => $count ? min( $filtered ) : null,
+            'used_max'  => $count ? max( $filtered ) : null,
         );
     }
 
@@ -1198,6 +1278,18 @@ class BKJA_Database {
         } ) );
     }
 
+    private static function is_money_debug_enabled() {
+        if ( ! function_exists( 'current_user_can' ) || ! is_user_logged_in() ) {
+            return false;
+        }
+
+        if ( ! current_user_can( 'manage_options' ) ) {
+            return false;
+        }
+
+        return isset( $_GET['bkja_debug_money'] ) || '1' === (string) get_option( 'bkja_debug_money', '0' );
+    }
+
     /**
      * جدید: رکوردهای واقعی کاربران برای یک شغل
      */
@@ -1207,7 +1299,7 @@ class BKJA_Database {
 
         $results = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT id, title, income, investment, income_num, investment_num, income_toman, investment_toman, income_min_toman, income_max_toman, experience_years, employment_type, hours_per_day, days_per_week, source, city, gender, advantages, disadvantages, details, created_at
+                "SELECT id, title, income, investment, income_num, investment_num, income_toman, income_toman_canonical, investment_toman, income_min_toman, income_max_toman, experience_years, employment_type, hours_per_day, days_per_week, source, city, gender, advantages, disadvantages, details, created_at
                  FROM {$table}
                  WHERE title = %s
                  ORDER BY created_at DESC
@@ -1224,6 +1316,7 @@ class BKJA_Database {
                     'income'                 => $row->income,
                     'income_num'             => isset( $row->income_num ) ? (int) $row->income_num : 0,
                     'income_toman'           => isset( $row->income_toman ) ? (int) $row->income_toman : null,
+                    'income_toman_canonical' => isset( $row->income_toman_canonical ) ? (int) $row->income_toman_canonical : null,
                     'income_min_toman'       => isset( $row->income_min_toman ) ? (int) $row->income_min_toman : null,
                     'income_max_toman'       => isset( $row->income_max_toman ) ? (int) $row->income_max_toman : null,
                     'investment'             => $row->investment,
@@ -1313,13 +1406,17 @@ class BKJA_Database {
             // Income parsing
             $income_money = bkja_parse_money_to_toman_safe( $row->income );
             if ( $income_money['invalid'] ) {
-                $updates['income_toman']      = null;
-                $updates['income_min_toman']  = null;
-                $updates['income_max_toman']  = null;
+                $updates['income_toman']            = null;
+                $updates['income_toman_canonical']  = null;
+                $updates['income_min_toman']        = null;
+                $updates['income_max_toman']        = null;
                 $job_unresolved = true;
             } else {
                 if ( isset( $income_money['value'] ) && $income_money['value'] > 0 && (int) $row->income_toman !== (int) $income_money['value'] ) {
                     $updates['income_toman'] = (int) $income_money['value'];
+                }
+                if ( isset( $income_money['value'] ) && $income_money['value'] > 0 && (int) $row->income_toman_canonical !== (int) $income_money['value'] ) {
+                    $updates['income_toman_canonical'] = (int) $income_money['value'];
                 }
                 if ( isset( $income_money['min'] ) && $income_money['min'] !== null && (int) $row->income_min_toman !== (int) $income_money['min'] ) {
                     $updates['income_min_toman'] = (int) $income_money['min'];
@@ -1327,16 +1424,20 @@ class BKJA_Database {
                 if ( isset( $income_money['max'] ) && $income_money['max'] !== null && (int) $row->income_max_toman !== (int) $income_money['max'] ) {
                     $updates['income_max_toman'] = (int) $income_money['max'];
                 }
+
+                if ( ! isset( $income_money['value'] ) || $income_money['value'] <= 0 ) {
+                    if ( $row->income_toman ) {
+                        $updates['income_toman'] = null;
+                    }
+                    if ( $row->income_toman_canonical ) {
+                        $updates['income_toman_canonical'] = null;
+                    }
+                }
             }
 
-            $investment_money = bkja_parse_money_to_toman_safe( $row->investment );
-            if ( $investment_money['invalid'] ) {
-                $updates['investment_toman'] = null;
-                $job_unresolved = true;
-            } else {
-                if ( isset( $investment_money['value'] ) && $investment_money['value'] >= 0 && (int) $row->investment_toman !== (int) $investment_money['value'] ) {
-                    $updates['investment_toman'] = (int) $investment_money['value'];
-                }
+            $investment_money = bkja_parse_money_to_toman( $row->investment );
+            if ( isset( $investment_money['value'] ) && $investment_money['value'] >= 0 && (int) $row->investment_toman !== (int) $investment_money['value'] ) {
+                $updates['investment_toman'] = (int) $investment_money['value'];
             }
 
             if ( ! empty( $updates ) && ! $dry_run ) {
@@ -1360,6 +1461,9 @@ class BKJA_Database {
 
         if ( ! $dry_run && $done ) {
             self::write_unresolved_csv( $unresolved_rows );
+            if ( class_exists( 'BKJA_Chat' ) ) {
+                BKJA_Chat::flush_cache_prefix();
+            }
         }
 
         update_option( 'bkja_repair_total', $total );

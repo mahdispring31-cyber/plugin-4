@@ -24,6 +24,7 @@ class BKJA_Migrations {
             `income` VARCHAR(255) DEFAULT NULL,
             `investment` VARCHAR(255) DEFAULT NULL,
             `income_num` BIGINT NULL,
+            `income_toman_canonical` BIGINT NULL,
             `investment_num` BIGINT NULL,
             `experience_years` TINYINT NULL,
             `employment_type` VARCHAR(50) NULL,

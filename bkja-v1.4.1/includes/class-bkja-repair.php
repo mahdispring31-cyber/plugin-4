@@ -467,7 +467,7 @@ class BKJA_Repair_Tool {
             'job_title_null'   => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$jobs_table} WHERE job_title_id IS NULL" ),
             'category_zero'    => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$jobs_table} WHERE category_id = 0" ),
             'category_mismatch'=> 0,
-            'income_invalid'   => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$jobs_table} WHERE income_toman IS NULL OR income_toman <= 0 OR income_toman > 1000000000000" ),
+            'income_invalid'   => (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$jobs_table} WHERE income_toman_canonical IS NULL OR income_toman_canonical < 1000000 OR income_toman_canonical > 1000000000000" ),
         );
 
         $exists_titles = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $titles_table ) );
