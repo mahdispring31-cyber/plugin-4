@@ -57,6 +57,7 @@ class BKJA_Frontend {
             'enable_feedback' => get_option('bkja_enable_feedback','0') === '1' ? 1 : 0,
             'enable_quick_actions' => get_option('bkja_enable_quick_actions','0') === '1' ? 1 : 0,
             'server_session' => isset( $_COOKIE['bkja_session'] ) ? sanitize_text_field( wp_unslash( $_COOKIE['bkja_session'] ) ) : '',
+            'is_admin' => current_user_can('manage_options') ? 1 : 0,
         );
         wp_localize_script('bkja-frontend','bkja_vars',$data);
         wp_localize_script('bkja-frontend','BKJA',$data);

@@ -843,9 +843,7 @@ class BKJA_Database {
         $wpdb->insert( $table, $row );
         $insert_id = $wpdb->insert_id;
 
-        if ( class_exists( 'BKJA_Chat' ) ) {
-            BKJA_Chat::flush_cache_prefix();
-        }
+        self::flush_plugin_caches();
 
         return $insert_id;
     }
@@ -1152,22 +1150,29 @@ class BKJA_Database {
             );
         }
 
-        return array(
+        $avg_income_toman = self::sanitize_money_value( $income_stats['avg'] );
+        $min_income_toman = self::sanitize_money_value( $income_stats['min'] );
+        $max_income_toman = self::sanitize_money_value( $income_stats['max'] );
+        $avg_investment_toman = self::sanitize_money_value( $investment_stats['avg'] );
+        $min_investment_toman = self::sanitize_money_value( $investment_stats['min'] );
+        $max_investment_toman = self::sanitize_money_value( $investment_stats['max'] );
+
+        $summary = array(
             'job_title'         => $job_title,
-            'avg_income'        => $income_stats['avg'] ? (int) round( $income_stats['avg'] ) : null,
-            'min_income'        => $income_stats['min'] ? (int) round( $income_stats['min'] ) : null,
-            'max_income'        => $income_stats['max'] ? (int) round( $income_stats['max'] ) : null,
-            'avg_income_toman'  => $income_stats['avg'] ? (int) round( $income_stats['avg'] ) : null,
-            'min_income_toman'  => $income_stats['min'] ? (int) round( $income_stats['min'] ) : null,
-            'max_income_toman'  => $income_stats['max'] ? (int) round( $income_stats['max'] ) : null,
+            'avg_income'        => $avg_income_toman,
+            'min_income'        => $min_income_toman,
+            'max_income'        => $max_income_toman,
+            'avg_income_toman'  => $avg_income_toman,
+            'min_income_toman'  => $min_income_toman,
+            'max_income_toman'  => $max_income_toman,
             'income_count'      => (int) $income_stats['count'],
             'income_debug'      => $income_debug,
-            'avg_investment'    => $investment_stats['avg'] ? (int) round( $investment_stats['avg'] ) : null,
-            'min_investment'    => $investment_stats['min'] ? (int) round( $investment_stats['min'] ) : null,
-            'max_investment'    => $investment_stats['max'] ? (int) round( $investment_stats['max'] ) : null,
-            'avg_investment_toman' => $investment_stats['avg'] ? (int) round( $investment_stats['avg'] ) : null,
-            'min_investment_toman' => $investment_stats['min'] ? (int) round( $investment_stats['min'] ) : null,
-            'max_investment_toman' => $investment_stats['max'] ? (int) round( $investment_stats['max'] ) : null,
+            'avg_investment'    => $avg_investment_toman,
+            'min_investment'    => $min_investment_toman,
+            'max_investment'    => $max_investment_toman,
+            'avg_investment_toman' => $avg_investment_toman,
+            'min_investment_toman' => $min_investment_toman,
+            'max_investment_toman' => $max_investment_toman,
             'investment_count'  => (int) $investment_stats['count'],
             'count_reports'     => (int) $total_reports,
             'latest_at'         => $latest_at,
@@ -1185,6 +1190,21 @@ class BKJA_Database {
             'avg_days_per_week' => $days_stats['avg'],
             'days_count'        => $days_stats['count'],
         );
+
+        if ( current_user_can( 'manage_options' ) ) {
+            $summary['debug'] = array(
+                'avg_income_toman_raw'       => $avg_income_toman,
+                'avg_income_label'           => bkja_format_toman_as_million( $avg_income_toman ),
+                'min_income_toman_raw'       => $min_income_toman,
+                'max_income_toman_raw'       => $max_income_toman,
+                'avg_investment_toman_raw'   => $avg_investment_toman,
+                'avg_investment_label'       => bkja_format_toman_as_million( $avg_investment_toman ),
+                'min_investment_toman_raw'   => $min_investment_toman,
+                'max_investment_toman_raw'   => $max_investment_toman,
+            );
+        }
+
+        return $summary;
     }
 
     private static function prepare_simple_average( $values ) {
@@ -1241,6 +1261,41 @@ class BKJA_Database {
             'used_min'  => $count ? min( $filtered ) : null,
             'used_max'  => $count ? max( $filtered ) : null,
         );
+    }
+
+    private static function sanitize_money_value( $value ) {
+        if ( is_numeric( $value ) ) {
+            return (int) round( $value );
+        }
+
+        if ( is_string( $value ) ) {
+            $digits = preg_replace( '/[^0-9]/', '', $value );
+            if ( '' !== $digits ) {
+                return (int) $digits;
+            }
+        }
+
+        return null;
+    }
+
+    public static function flush_plugin_caches() {
+        global $wpdb;
+
+        if ( class_exists( 'BKJA_Chat' ) ) {
+            BKJA_Chat::flush_cache_prefix();
+            BKJA_Chat::flush_cache_prefix( 'bkja_' );
+            BKJA_Chat::flush_cache_prefix( 'bkja_summary_' );
+        }
+
+        if ( empty( $wpdb ) || empty( $wpdb->options ) ) {
+            return;
+        }
+
+        $option_prefixes = array( 'bkja_summary_' );
+        foreach ( $option_prefixes as $prefix ) {
+            $like = $wpdb->esc_like( $prefix ) . '%';
+            $wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $like ) );
+        }
     }
 
     private static function calculate_percentile( $values, $percentile ) {
@@ -1467,9 +1522,7 @@ class BKJA_Database {
 
         if ( ! $dry_run && $done ) {
             self::write_unresolved_csv( $unresolved_rows );
-            if ( class_exists( 'BKJA_Chat' ) ) {
-                BKJA_Chat::flush_cache_prefix();
-            }
+            self::flush_plugin_caches();
         }
 
         update_option( 'bkja_repair_total', $total );

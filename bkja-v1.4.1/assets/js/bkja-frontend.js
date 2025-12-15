@@ -649,6 +649,27 @@
             return minLabel + ' تا ' + maxLabel;
         }
 
+        function normalize_toman_value(){
+            var args = Array.prototype.slice.call(arguments);
+            for(var i=0; i<args.length; i++){
+                var candidate = args[i];
+                if(candidate === undefined || candidate === null || candidate === '') continue;
+                if(typeof candidate === 'string'){
+                    var persianDigits = {'۰':0,'۱':1,'۲':2,'۳':3,'۴':4,'۵':5,'۶':6,'۷':7,'۸':8,'۹':9};
+                    candidate = candidate.replace(/[۰-۹]/g, function(d){ return persianDigits[d]; });
+                    var match = candidate.match(/-?\d+/g);
+                    if(match && match.length){
+                        candidate = match.join('');
+                    }
+                }
+                var num = Number(candidate);
+                if(!isNaN(num)){
+                    return num;
+                }
+            }
+            return null;
+        }
+
         function handleGuestLimit(loginUrl, limit, message){
             var $input = $('#bkja-user-message');
             var $send  = $('#bkja-send');
@@ -1974,11 +1995,14 @@
                     html += '<div class="bkja-job-summary-note">' + esc(noteText) + '</div>';
 
                     var incomeText = '';
-                    var avgIncome = (s.avg_income_toman || s.avg_income);
+                    var avgIncome = normalize_toman_value(s.avg_income_toman, s.avg_income);
                     if(avgIncome || avgIncome === 0){
                         incomeText += 'میانگین: ' + esc(format_toman_to_million_label(avgIncome));
                     }
-                    var incomeRange = format_toman_range_label((s.min_income_toman || s.min_income), (s.max_income_toman || s.max_income));
+                    var incomeRange = format_toman_range_label(
+                        normalize_toman_value(s.min_income_toman, s.min_income),
+                        normalize_toman_value(s.max_income_toman, s.max_income)
+                    );
                     if(incomeRange){
                         incomeText += (incomeText ? ' | ' : '') + 'بازه: ' + esc(incomeRange);
                     }
@@ -1987,16 +2011,34 @@
                     }
 
                     var investText = '';
-                    var avgInvestment = (s.avg_investment_toman || s.avg_investment);
+                    var avgInvestment = normalize_toman_value(s.avg_investment_toman, s.avg_investment);
                     if(avgInvestment || avgInvestment === 0){
                         investText += 'میانگین: ' + esc(format_toman_to_million_label(avgInvestment));
                     }
-                    var investRange = format_toman_range_label((s.min_investment_toman || s.min_investment), (s.max_investment_toman || s.max_investment));
+                    var investRange = format_toman_range_label(
+                        normalize_toman_value(s.min_investment_toman, s.min_investment),
+                        normalize_toman_value(s.max_investment_toman, s.max_investment)
+                    );
                     if(investRange){
                         investText += (investText ? ' | ' : '') + 'بازه: ' + esc(investRange);
                     }
                     if(investText){
                         html += '<p>💰 سرمایه لازم: ' + investText + '</p>';
+                    }
+
+                    if (config.is_admin && s.debug) {
+                        var debugLines = [];
+                        if (typeof s.debug.avg_income_toman_raw !== 'undefined') debugLines.push('avg_income_toman_raw: ' + s.debug.avg_income_toman_raw);
+                        if (typeof s.debug.avg_income_label !== 'undefined') debugLines.push('avg_income_label: ' + s.debug.avg_income_label);
+                        if (typeof s.debug.min_income_toman_raw !== 'undefined') debugLines.push('min_income_toman_raw: ' + s.debug.min_income_toman_raw);
+                        if (typeof s.debug.max_income_toman_raw !== 'undefined') debugLines.push('max_income_toman_raw: ' + s.debug.max_income_toman_raw);
+                        if (typeof s.debug.avg_investment_toman_raw !== 'undefined') debugLines.push('avg_investment_toman_raw: ' + s.debug.avg_investment_toman_raw);
+                        if (typeof s.debug.avg_investment_label !== 'undefined') debugLines.push('avg_investment_label: ' + s.debug.avg_investment_label);
+                        if (typeof s.debug.min_investment_toman_raw !== 'undefined') debugLines.push('min_investment_toman_raw: ' + s.debug.min_investment_toman_raw);
+                        if (typeof s.debug.max_investment_toman_raw !== 'undefined') debugLines.push('max_investment_toman_raw: ' + s.debug.max_investment_toman_raw);
+                        if (debugLines.length) {
+                            html += '<details class="bkja-debug-block"><summary>Debug</summary><pre>' + esc(debugLines.join('\n')) + '</pre></details>';
+                        }
                     }
 
                     if (s.cities && s.cities.length){
@@ -2019,10 +2061,18 @@
                         var employmentLabel = r.employment_type_label || r.employment_type;
                         var createdAtLabel = r.created_at_display || r.created_at;
                         recHtml += '<h5>🧑‍💼 تجربه کاربر</h5>';
-                        var incomeToman = r.income_toman_canonical || r.income_toman || r.income;
-                        var investmentToman = r.investment_toman || r.investment;
-                        if (incomeToman) recHtml += '<p>💵 درآمد: ' + esc(format_toman_to_million_label(incomeToman)) + '</p>';
-                        if (investmentToman || investmentToman === 0) recHtml += '<p>💰 سرمایه: ' + esc(format_toman_to_million_label(investmentToman)) + '</p>';
+                        var incomeToman = normalize_toman_value(r.income_toman_canonical, r.income_toman, r.income);
+                        var investmentToman = normalize_toman_value(r.investment_toman, r.investment);
+                        if (incomeToman || incomeToman === 0) {
+                            recHtml += '<p>💵 درآمد: ' + esc(format_toman_to_million_label(incomeToman)) + '</p>';
+                        } else if (r.income) {
+                            recHtml += '<p>💵 درآمد: ' + esc(r.income) + '</p>';
+                        }
+                        if (investmentToman || investmentToman === 0) {
+                            recHtml += '<p>💰 سرمایه: ' + esc(format_toman_to_million_label(investmentToman)) + '</p>';
+                        } else if (r.investment) {
+                            recHtml += '<p>💰 سرمایه: ' + esc(r.investment) + '</p>';
+                        }
                         if (r.city) recHtml += '<p>📍 شهر: ' + esc(r.city) + '</p>';
                         if (employmentLabel) recHtml += '<p>💼 نوع اشتغال: ' + esc(employmentLabel) + '</p>';
                         if (genderLabel) recHtml += '<p>👤 جنسیت: ' + esc(genderLabel) + '</p>';
