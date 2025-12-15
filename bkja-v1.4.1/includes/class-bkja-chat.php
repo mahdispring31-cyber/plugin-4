@@ -503,10 +503,12 @@ class BKJA_Chat {
                 }
                 $parts = array();
                 $income_value = 'نامشخص';
-                if ( isset( $record['income_num'] ) && $record['income_num'] > 0 ) {
-                    $income_value = self::format_amount_label( (int) $record['income_num'] * 1000000 );
+                if ( isset( $record['income_toman_canonical'] ) && $record['income_toman_canonical'] > 0 ) {
+                    $income_value = self::format_amount_label( (int) $record['income_toman_canonical'] );
                 } elseif ( isset( $record['income_toman'] ) && $record['income_toman'] > 0 ) {
                     $income_value = self::format_amount_label( (int) $record['income_toman'] );
+                } elseif ( isset( $record['income_num'] ) && $record['income_num'] > 0 ) {
+                    $income_value = self::format_amount_label( (int) $record['income_num'] * 1000000 );
                 } elseif ( ! empty( $record['income'] ) ) {
                     $income_value = $record['income'];
                 }
@@ -607,7 +609,9 @@ class BKJA_Chat {
                     continue;
                 }
                 $parts = array();
-                if ( ! empty( $record['income'] ) ) {
+                if ( isset( $record['income_toman_canonical'] ) && $record['income_toman_canonical'] > 0 ) {
+                    $parts[] = 'درآمد: ' . self::format_amount_label( (int) $record['income_toman_canonical'] );
+                } elseif ( ! empty( $record['income'] ) ) {
                     $parts[] = 'درآمد: ' . $record['income'];
                 } elseif ( ! empty( $record['income_toman'] ) ) {
                     $parts[] = 'درآمد: ' . self::format_amount_label( $record['income_toman'] );
