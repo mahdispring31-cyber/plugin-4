@@ -502,12 +502,23 @@ class BKJA_Chat {
                     continue;
                 }
                 $parts = array();
-                $income_value = isset( $record['income_num'] ) && $record['income_num'] > 0
-                    ? self::format_amount_label( (int) $record['income_num'] * 1000000 )
-                    : ( ! empty( $record['income'] ) ? $record['income'] : 'نامشخص' );
-                $investment_value = isset( $record['investment_num'] ) && $record['investment_num'] > 0
-                    ? self::format_amount_label( (int) $record['investment_num'] * 1000000 )
-                    : ( ! empty( $record['investment'] ) ? $record['investment'] : 'نامشخص' );
+                $income_value = 'نامشخص';
+                if ( isset( $record['income_num'] ) && $record['income_num'] > 0 ) {
+                    $income_value = self::format_amount_label( (int) $record['income_num'] * 1000000 );
+                } elseif ( isset( $record['income_toman'] ) && $record['income_toman'] > 0 ) {
+                    $income_value = self::format_amount_label( (int) $record['income_toman'] );
+                } elseif ( ! empty( $record['income'] ) ) {
+                    $income_value = $record['income'];
+                }
+
+                $investment_value = 'نامشخص';
+                if ( isset( $record['investment_num'] ) && $record['investment_num'] > 0 ) {
+                    $investment_value = self::format_amount_label( (int) $record['investment_num'] * 1000000 );
+                } elseif ( isset( $record['investment_toman'] ) && $record['investment_toman'] > 0 ) {
+                    $investment_value = self::format_amount_label( (int) $record['investment_toman'] );
+                } elseif ( ! empty( $record['investment'] ) ) {
+                    $investment_value = $record['investment'];
+                }
 
                 $parts[] = 'درآمد: ' . $income_value;
                 $parts[] = 'سرمایه: ' . $investment_value;
@@ -830,12 +841,12 @@ class BKJA_Chat {
             'job_slug'     => isset( $context['job_slug'] ) ? $context['job_slug'] : '',
         );
 
-        $summary               = ( ! empty( $context['summary'] ) && is_array( $context['summary'] ) ) ? $context['summary'] : array();
-        $job_report_count      = isset( $summary['count_reports'] ) ? (int) $summary['count_reports'] : null;
-        $job_avg_income        = isset( $summary['avg_income'] ) ? (float) $summary['avg_income'] : null;
-        $job_income_range      = array( $summary['min_income'] ?? null, $summary['max_income'] ?? null );
-        $job_avg_investment    = isset( $summary['avg_investment'] ) ? (float) $summary['avg_investment'] : null;
-        $job_investment_range  = array( $summary['min_investment'] ?? null, $summary['max_investment'] ?? null );
+        $summary = ( ! empty( $context['summary'] ) && is_array( $context['summary'] ) ) ? $context['summary'] : array();
+        $job_report_count     = $context_used && isset( $summary['count_reports'] ) ? (int) $summary['count_reports'] : null;
+        $job_avg_income       = $context_used && isset( $summary['avg_income'] ) ? (float) $summary['avg_income'] : null;
+        $job_income_range     = $context_used ? array( $summary['min_income'] ?? null, $summary['max_income'] ?? null ) : array( null, null );
+        $job_avg_investment   = $context_used && isset( $summary['avg_investment'] ) ? (float) $summary['avg_investment'] : null;
+        $job_investment_range = $context_used ? array( $summary['min_investment'] ?? null, $summary['max_investment'] ?? null ) : array( null, null );
         $payload['job_report_count']     = $job_report_count;
         $payload['job_avg_income']       = $job_avg_income;
         $payload['job_income_range']     = $job_income_range;
@@ -854,17 +865,13 @@ class BKJA_Chat {
         }
 
         $resolved_job_title = null;
-        if ( ! empty( $context['job_title'] ) ) {
+        if ( $context_used && ! empty( $context['job_title'] ) ) {
             $resolved_job_title = $context['job_title'];
-        } elseif ( isset( $payload['job_title'] ) && '' !== $payload['job_title'] ) {
-            $resolved_job_title = $payload['job_title'];
         }
 
         $resolved_job_slug = null;
-        if ( isset( $context['job_slug'] ) && '' !== $context['job_slug'] ) {
+        if ( $context_used && isset( $context['job_slug'] ) && '' !== $context['job_slug'] ) {
             $resolved_job_slug = $context['job_slug'];
-        } elseif ( isset( $payload['job_slug'] ) && '' !== $payload['job_slug'] ) {
-            $resolved_job_slug = $payload['job_slug'];
         }
 
         $payload['meta'] = array(
