@@ -193,6 +193,7 @@ class BKJA_Chat {
         $category   = is_string( $category ) ? trim( $category ) : '';
         $model      = self::resolve_model( $model );
         $job_title  = is_string( $job_title ) ? trim( $job_title ) : '';
+        $version    = self::get_cache_version();
 
         $parts = array(
             'msg:' . $normalized,
@@ -204,11 +205,29 @@ class BKJA_Chat {
             $parts[] = 'job:' . self::normalize_message( $job_title );
         }
 
-        return 'bkja_cache_' . md5( implode( '|', $parts ) );
+        return 'bkja_cache_v' . $version . '_' . md5( implode( '|', $parts ) );
     }
 
     protected static function is_cache_enabled() {
         return '1' === (string) get_option( 'bkja_enable_cache', '1' );
+    }
+
+    protected static function get_cache_version() {
+        $version = (int) get_option( 'bkja_cache_version', 1 );
+
+        if ( $version <= 0 ) {
+            $version = 1;
+            update_option( 'bkja_cache_version', $version );
+        }
+
+        return $version;
+    }
+
+    protected static function bump_cache_version() {
+        $version = self::get_cache_version() + 1;
+        update_option( 'bkja_cache_version', $version );
+
+        return $version;
     }
 
     protected static function get_cache_ttl( $model ) {
@@ -1232,18 +1251,71 @@ class BKJA_Chat {
     }
 
     public static function flush_cache_prefix( $prefix = 'bkja_cache_' ) {
+        self::clear_all_caches( array( $prefix ) );
+    }
+
+    protected static function delete_transients_by_prefix( $prefix ) {
         global $wpdb;
 
         if ( empty( $wpdb ) || empty( $wpdb->options ) ) {
-            return;
+            return 0;
         }
 
-        $like          = $wpdb->esc_like( $prefix ) . '%';
-        $transient_sql = $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", '_transient_' . $like );
-        $timeout_sql   = $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", '_transient_timeout_' . $like );
+        $like    = $wpdb->esc_like( $prefix ) . '%';
+        $count   = 0;
+        $queries = array(
+            $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", '_transient_' . $like ),
+            $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", '_transient_timeout_' . $like ),
+        );
 
-        $wpdb->query( $transient_sql );
-        $wpdb->query( $timeout_sql );
+        foreach ( $queries as $sql ) {
+            $rows = $wpdb->query( $sql );
+            if ( false !== $rows ) {
+                $count += (int) $rows;
+            }
+        }
+
+        return $count;
+    }
+
+    protected static function delete_options_by_prefix( $prefix ) {
+        global $wpdb;
+
+        if ( empty( $wpdb ) || empty( $wpdb->options ) ) {
+            return 0;
+        }
+
+        $like  = $wpdb->esc_like( $prefix ) . '%';
+        $sql   = $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $like );
+        $rows  = $wpdb->query( $sql );
+
+        return false === $rows ? 0 : (int) $rows;
+    }
+
+    public static function clear_all_caches( $transient_prefixes = array( 'bkja_cache_', 'bkja_summary_', 'bkja_answer_', 'bkja_' ) ) {
+        $transient_prefixes = (array) $transient_prefixes;
+
+        if ( empty( $transient_prefixes ) ) {
+            $transient_prefixes = array( 'bkja_cache_', 'bkja_summary_', 'bkja_answer_' );
+        }
+
+        $deleted = 0;
+
+        foreach ( $transient_prefixes as $prefix ) {
+            $deleted += self::delete_transients_by_prefix( $prefix );
+        }
+
+        // Clean up any option-based caches that may have been stored without the transient API.
+        foreach ( array( 'bkja_summary_', 'bkja_answer_' ) as $option_prefix ) {
+            $deleted += self::delete_options_by_prefix( $option_prefix );
+        }
+
+        $version = self::bump_cache_version();
+
+        return array(
+            'deleted' => $deleted,
+            'version' => $version,
+        );
     }
 
     public static function call_openai( $message, $args = array() ) {

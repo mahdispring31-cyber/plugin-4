@@ -292,6 +292,37 @@ add_action('wp_ajax_bkja_get_categories','bkja_ajax_get_categories');
 add_action('wp_ajax_nopriv_bkja_get_categories','bkja_ajax_get_categories');
 function bkja_ajax_get_categories(){ $nonce = isset($_POST['nonce']) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : ''; if ( ! wp_verify_nonce( $nonce, 'bkja_nonce' ) ) { wp_send_json_error(['error'=>'invalid_nonce'],403); } $cats = BKJA_Jobs::get_categories(); wp_send_json_success(['categories'=>$cats]); }
 
+add_action( 'wp_ajax_bkja_clear_cache', 'bkja_ajax_clear_cache' );
+function bkja_ajax_clear_cache() {
+    if ( ! current_user_can( 'manage_options' ) ) {
+        wp_send_json_error( array( 'error' => 'forbidden' ), 403 );
+    }
+
+    check_ajax_referer( 'bkja_clear_cache', 'nonce' );
+
+    if ( ! class_exists( 'BKJA_Chat' ) ) {
+        wp_send_json_error( array( 'error' => 'missing_class' ), 500 );
+    }
+
+    $result  = BKJA_Chat::clear_all_caches();
+    $deleted = isset( $result['deleted'] ) ? (int) $result['deleted'] : 0;
+    $version = isset( $result['version'] ) ? (int) $result['version'] : null;
+
+    $message = sprintf( 'پاکسازی کش انجام شد. %d رکورد حذف شد.', $deleted );
+
+    if ( null !== $version ) {
+        $message .= ' (نسخه کش فعلی: ' . $version . ')';
+    }
+
+    wp_send_json_success(
+        array(
+            'message' => $message,
+            'deleted' => $deleted,
+            'version' => $version,
+        )
+    );
+}
+
 add_action('wp_ajax_bkja_get_jobs','bkja_ajax_get_jobs');
 add_action('wp_ajax_nopriv_bkja_get_jobs','bkja_ajax_get_jobs');
 function bkja_ajax_get_jobs(){ $nonce = isset($_POST['nonce']) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : ''; if ( ! wp_verify_nonce( $nonce, 'bkja_nonce' ) ) { wp_send_json_error(['error'=>'invalid_nonce'],403); } $cat = isset($_POST['category_id'])? intval($_POST['category_id']):0; $jobs = BKJA_Jobs::get_jobs_by_category($cat); wp_send_json_success(['jobs'=>$jobs]); }
