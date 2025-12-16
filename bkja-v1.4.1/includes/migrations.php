@@ -32,7 +32,7 @@ class BKJA_Migrations {
             `days_per_week` TINYINT NULL,
             `source` VARCHAR(50) NULL,
             `city` VARCHAR(255) DEFAULT NULL,
-            `gender` ENUM('male','female','both') DEFAULT 'both',
+            `gender` ENUM('male','female','both','unknown') DEFAULT 'unknown',
             `advantages` TEXT DEFAULT NULL,
             `disadvantages` TEXT DEFAULT NULL,
             `details` TEXT DEFAULT NULL,

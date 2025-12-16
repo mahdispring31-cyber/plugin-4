@@ -304,13 +304,14 @@ class BKJA_Database {
             `income_min_toman` BIGINT NULL,
             `income_max_toman` BIGINT NULL,
             `investment_toman` BIGINT NULL,
+            `investment_toman_canonical` BIGINT NULL,
             `experience_years` TINYINT NULL,
             `employment_type` VARCHAR(50) NULL,
             `hours_per_day` TINYINT NULL,
             `days_per_week` TINYINT NULL,
             `source` VARCHAR(50) NULL,
             `city` VARCHAR(255) DEFAULT NULL,
-            `gender` ENUM('male','female','both') DEFAULT 'both',
+            `gender` ENUM('male','female','both','unknown') DEFAULT 'unknown',
             `advantages` TEXT DEFAULT NULL,
             `disadvantages` TEXT DEFAULT NULL,
             `details` TEXT DEFAULT NULL,
@@ -633,6 +634,7 @@ class BKJA_Database {
         $add_column( 'income_min_toman', 'BIGINT NULL', 'income_toman_canonical' );
         $add_column( 'income_max_toman', 'BIGINT NULL', 'income_min_toman' );
         $add_column( 'investment_toman', 'BIGINT NULL', 'income_max_toman' );
+        $add_column( 'investment_toman_canonical', 'BIGINT NULL', 'investment_toman' );
         $add_column( 'experience_years', 'TINYINT NULL', 'investment_num' );
         $add_column( 'employment_type', 'VARCHAR(50) NULL', 'experience_years' );
         $add_column( 'hours_per_day', 'TINYINT NULL', 'employment_type' );
@@ -640,7 +642,33 @@ class BKJA_Database {
         $add_column( 'source', 'VARCHAR(50) NULL', 'days_per_week' );
         $add_column( 'job_title_id', 'BIGINT UNSIGNED NULL', 'category_id' );
 
+        $gender_column = $wpdb->get_row( "SHOW COLUMNS FROM {$table} LIKE 'gender'" );
+        if ( $gender_column && isset( $gender_column->Type ) && false === strpos( $gender_column->Type, 'unknown' ) ) {
+            $wpdb->query( "ALTER TABLE {$table} MODIFY gender ENUM('male','female','both','unknown') DEFAULT 'unknown'" );
+        }
+
         $add_index( 'job_title_id', 'job_title_id' );
+    }
+
+    /**
+     * Normalize numeric income/investment fields to canonical toman values.
+     */
+    public static function normalize_numeric_to_canonical_toman( $numeric_value ) {
+        if ( ! is_numeric( $numeric_value ) ) {
+            return null;
+        }
+
+        $value = (int) $numeric_value;
+
+        if ( $value >= 1 && $value <= 1000 ) {
+            return (int) ( $value * 1000000 );
+        }
+
+        if ( $value >= 1001 && $value <= 1000000000000 ) {
+            return $value;
+        }
+
+        return null;
     }
 
     /**
@@ -715,11 +743,12 @@ class BKJA_Database {
         do {
             $rows = $wpdb->get_results(
                 $wpdb->prepare(
-                    "SELECT id, income, investment, income_toman, income_toman_canonical, investment_toman, income_min_toman, income_max_toman
+                    "SELECT id, income, investment, income_num, investment_num, income_toman, income_toman_canonical, investment_toman, investment_toman_canonical, income_min_toman, income_max_toman
                      FROM {$table}
                      WHERE (income_toman_canonical IS NULL OR income_toman_canonical <= 0 OR income_toman_canonical > 1000000000000)
                         OR (income_toman IS NULL OR income_toman <= 0 OR income_toman > 1000000000000)
                         OR (investment_toman IS NULL OR investment_toman < 0 OR investment_toman > 1000000000000)
+                        OR (investment_toman_canonical IS NULL OR investment_toman_canonical < 0 OR investment_toman_canonical > 1000000000000)
                      ORDER BY id ASC
                      LIMIT %d",
                     $limit
@@ -733,12 +762,27 @@ class BKJA_Database {
             foreach ( $rows as $row ) {
                 $updates = array();
 
-                $income = bkja_parse_money_to_toman_safe( $row->income );
-                if ( ! $income['invalid'] && isset( $income['value'] ) ) {
-                    $updates['income_toman']            = $income['value'];
-                    $updates['income_toman_canonical']  = $income['value'];
-                    $updates['income_min_toman']        = ( isset( $income['min'] ) ) ? $income['min'] : null;
-                    $updates['income_max_toman']        = ( isset( $income['max'] ) ) ? $income['max'] : null;
+                $income_canonical = self::normalize_numeric_to_canonical_toman( $row->income_num );
+                if ( null === $income_canonical ) {
+                    $income = bkja_parse_money_to_toman_safe( $row->income );
+                    if ( ! $income['invalid'] && isset( $income['value'] ) ) {
+                        $income_canonical = $income['value'];
+                        $updates['income_min_toman'] = ( isset( $income['min'] ) ) ? $income['min'] : null;
+                        $updates['income_max_toman'] = ( isset( $income['max'] ) ) ? $income['max'] : null;
+                    }
+                }
+
+                if ( $income_canonical && $income_canonical > 0 && $income_canonical <= 1000000000000 ) {
+                    $updates['income_toman_canonical'] = $income_canonical;
+                    if ( empty( $row->income_toman ) || $row->income_toman > 1000000000000 ) {
+                        $updates['income_toman'] = $income_canonical;
+                    }
+                    if ( empty( $updates['income_min_toman'] ) ) {
+                        $updates['income_min_toman'] = null;
+                    }
+                    if ( empty( $updates['income_max_toman'] ) ) {
+                        $updates['income_max_toman'] = null;
+                    }
                 } else {
                     $updates['income_toman']            = null;
                     $updates['income_toman_canonical']  = null;
@@ -746,11 +790,20 @@ class BKJA_Database {
                     $updates['income_max_toman']        = null;
                 }
 
-                $investment = bkja_parse_money_to_toman( $row->investment );
-                if ( isset( $investment['value'] ) && $investment['value'] > 0 && $investment['value'] < 1000000000000 ) {
-                    $updates['investment_toman'] = $investment['value'];
+                $investment_canonical = self::normalize_numeric_to_canonical_toman( $row->investment_num );
+                if ( null === $investment_canonical ) {
+                    $investment = bkja_parse_money_to_toman( $row->investment );
+                    if ( isset( $investment['value'] ) && $investment['value'] >= 0 && $investment['value'] < 1000000000000 ) {
+                        $investment_canonical = $investment['value'];
+                    }
+                }
+
+                if ( null !== $investment_canonical && $investment_canonical >= 0 && $investment_canonical <= 1000000000000 ) {
+                    $updates['investment_toman'] = $investment_canonical;
+                    $updates['investment_toman_canonical'] = $investment_canonical;
                 } elseif ( $row->investment_toman && $row->investment_toman > 1000000000000 ) {
                     $updates['investment_toman'] = null;
+                    $updates['investment_toman_canonical'] = null;
                 }
 
                 if ( ! empty( $updates ) ) {
@@ -794,13 +847,14 @@ class BKJA_Database {
             'income_min_toman'   => null,
             'income_max_toman'   => null,
             'investment_toman'   => null,
+            'investment_toman_canonical' => null,
             'experience_years'   => $experience_years,
             'employment_type'    => isset( $data['employment_type'] ) ? sanitize_text_field( $data['employment_type'] ) : null,
             'hours_per_day'      => $hours_per_day,
             'days_per_week'      => $days_per_week,
             'source'             => isset( $data['source'] ) ? sanitize_text_field( $data['source'] ) : null,
             'city'               => isset( $data['city'] ) ? sanitize_text_field( $data['city'] ) : '',
-            'gender'             => isset( $data['gender'] ) ? sanitize_text_field( $data['gender'] ) : 'both',
+            'gender'             => isset( $data['gender'] ) ? sanitize_text_field( $data['gender'] ) : 'unknown',
             'advantages'         => isset( $data['advantages'] ) ? sanitize_textarea_field( $data['advantages'] ) : '',
             'disadvantages'      => isset( $data['disadvantages'] ) ? sanitize_textarea_field( $data['disadvantages'] ) : '',
             'details'            => isset( $data['details'] ) ? sanitize_textarea_field( $data['details'] ) : '',
@@ -814,13 +868,24 @@ class BKJA_Database {
         $row['income_min_toman']        = ( isset( $income_money['min'] ) ) ? $income_money['min'] : null;
         $row['income_max_toman']        = ( isset( $income_money['max'] ) ) ? $income_money['max'] : null;
         $row['investment_toman']   = ( isset( $investment_money['value'] ) && $investment_money['value'] > 0 ) ? $investment_money['value'] : null;
+        $row['investment_toman_canonical'] = $row['investment_toman'];
 
         if ( empty( $row['income_toman_canonical'] ) && $income_num_input && $income_num_input > 0 ) {
-            $candidate_canonical = (int) round( $income_num_input * 1000000 );
-            if ( $candidate_canonical >= 1000000 && $candidate_canonical <= 1000000000000 ) {
+            $candidate_canonical = self::normalize_numeric_to_canonical_toman( $income_num_input );
+            if ( $candidate_canonical ) {
                 $row['income_toman_canonical'] = $candidate_canonical;
                 if ( empty( $row['income_toman'] ) ) {
                     $row['income_toman'] = $candidate_canonical;
+                }
+            }
+        }
+
+        if ( empty( $row['investment_toman_canonical'] ) && $investment_num_input && $investment_num_input > 0 ) {
+            $investment_candidate = self::normalize_numeric_to_canonical_toman( $investment_num_input );
+            if ( null !== $investment_candidate ) {
+                $row['investment_toman_canonical'] = $investment_candidate;
+                if ( empty( $row['investment_toman'] ) ) {
+                    $row['investment_toman'] = $investment_candidate;
                 }
             }
         }
@@ -1048,7 +1113,7 @@ class BKJA_Database {
 
         $rows = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT income_toman_canonical, income_toman, investment_toman, hours_per_day, days_per_week, created_at FROM {$table} WHERE {$where_clause}",
+                "SELECT income_toman_canonical, income_toman, investment_toman, investment_toman_canonical, hours_per_day, days_per_week, created_at FROM {$table} WHERE {$where_clause}",
                 $job_title
             )
         );
@@ -1071,8 +1136,9 @@ class BKJA_Database {
                 $incomes[] = $income_canonical;
             }
 
-            if ( $row->investment_toman && $row->investment_toman >= 0 && $row->investment_toman < 1000000000000 ) {
-                $investments[] = (int) $row->investment_toman;
+            $investment_canonical = isset( $row->investment_toman_canonical ) ? (int) $row->investment_toman_canonical : null;
+            if ( $investment_canonical !== null && $investment_canonical >= 0 && $investment_canonical < 1000000000000 ) {
+                $investments[] = $investment_canonical;
             }
 
             if ( isset( $row->hours_per_day ) && $row->hours_per_day >= 1 && $row->hours_per_day <= 18 ) {
@@ -1278,24 +1344,50 @@ class BKJA_Database {
         return null;
     }
 
-    public static function flush_plugin_caches() {
+    public static function flush_plugin_caches( $with_counts = false ) {
         global $wpdb;
 
+        $summary = array(
+            'transients_deleted' => 0,
+            'options_deleted'    => 0,
+            'cache_version'      => (int) get_option( 'bkja_cache_version', 0 ),
+        );
+
         if ( class_exists( 'BKJA_Chat' ) ) {
-            BKJA_Chat::flush_cache_prefix();
-            BKJA_Chat::flush_cache_prefix( 'bkja_' );
-            BKJA_Chat::flush_cache_prefix( 'bkja_summary_' );
+            $transient_prefixes = array( 'bkja_cache_', 'bkja_', 'bkja_summary_' );
+            if ( defined( 'BKJA_PLUGIN_VERSION' ) ) {
+                $transient_prefixes[] = 'bkja_cache_' . BKJA_PLUGIN_VERSION;
+                $transient_prefixes[] = 'bkja_summary_' . BKJA_PLUGIN_VERSION;
+            }
+
+            foreach ( $transient_prefixes as $prefix ) {
+                $summary['transients_deleted'] += (int) BKJA_Chat::flush_cache_prefix( $prefix );
+            }
         }
 
-        if ( empty( $wpdb ) || empty( $wpdb->options ) ) {
-            return;
+        if ( ! empty( $wpdb ) && ! empty( $wpdb->options ) ) {
+            $option_prefixes = array( 'bkja_cache_', 'bkja_summary_', 'bkja_answer_', 'bkja_response_' );
+            if ( defined( 'BKJA_PLUGIN_VERSION' ) ) {
+                $option_prefixes[] = 'bkja_cache_' . BKJA_PLUGIN_VERSION;
+                $option_prefixes[] = 'bkja_summary_' . BKJA_PLUGIN_VERSION;
+                $option_prefixes[] = 'bkja_answer_' . BKJA_PLUGIN_VERSION;
+                $option_prefixes[] = 'bkja_response_' . BKJA_PLUGIN_VERSION;
+            }
+            foreach ( $option_prefixes as $prefix ) {
+                $like    = $wpdb->esc_like( $prefix ) . '%';
+                $deleted = $wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $like ) );
+                if ( false !== $deleted ) {
+                    $summary['options_deleted'] += (int) $deleted;
+                }
+            }
         }
 
-        $option_prefixes = array( 'bkja_summary_' );
-        foreach ( $option_prefixes as $prefix ) {
-            $like = $wpdb->esc_like( $prefix ) . '%';
-            $wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $like ) );
+        if ( wp_using_ext_object_cache() ) {
+            $summary['cache_version'] = (int) $summary['cache_version'] + 1;
+            update_option( 'bkja_cache_version', $summary['cache_version'] );
         }
+
+        return $with_counts ? $summary : null;
     }
 
     private static function calculate_percentile( $values, $percentile ) {
@@ -1360,7 +1452,7 @@ class BKJA_Database {
 
         $results = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT id, title, income, investment, income_num, investment_num, income_toman, income_toman_canonical, investment_toman, income_min_toman, income_max_toman, experience_years, employment_type, hours_per_day, days_per_week, source, city, gender, advantages, disadvantages, details, created_at
+                "SELECT id, title, income, investment, income_num, investment_num, income_toman, income_toman_canonical, investment_toman, investment_toman_canonical, income_min_toman, income_max_toman, experience_years, employment_type, hours_per_day, days_per_week, source, city, gender, advantages, disadvantages, details, created_at
                  FROM {$table}
                  WHERE title = %s
                  ORDER BY created_at DESC
@@ -1383,6 +1475,7 @@ class BKJA_Database {
                     'investment'             => $row->investment,
                     'investment_num'         => isset( $row->investment_num ) ? (int) $row->investment_num : 0,
                     'investment_toman'       => isset( $row->investment_toman ) ? (int) $row->investment_toman : null,
+                    'investment_toman_canonical' => isset( $row->investment_toman_canonical ) ? (int) $row->investment_toman_canonical : null,
                     'experience_years'       => isset( $row->experience_years ) ? (int) $row->experience_years : null,
                     'employment_type'        => isset( $row->employment_type ) ? $row->employment_type : null,
                     'employment_type_label'  => isset( $row->employment_type ) ? bkja_get_employment_label( $row->employment_type ) : null,

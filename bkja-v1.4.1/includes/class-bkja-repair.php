@@ -9,6 +9,7 @@ class BKJA_Repair_Tool {
     public static function init() {
         add_action( 'admin_menu', array( __CLASS__, 'register_menu' ) );
         add_action( 'wp_ajax_bkja_repair_batch', array( __CLASS__, 'handle_batch' ) );
+        add_action( 'wp_ajax_bkja_repair_clear_cache', array( __CLASS__, 'handle_clear_cache' ) );
     }
 
     public static function register_menu() {
@@ -50,15 +51,15 @@ class BKJA_Repair_Tool {
 
                 <div class="bkja-repair-card">
                     <h2><?php esc_html_e( 'اجرای تعمیر', 'bkja-assistant' ); ?></h2>
-                    <label class="bkja-repair-toggle">
-                        <input type="checkbox" id="bkja-repair-dry-run" checked>
-                        <span><?php esc_html_e( 'اجرای آزمایشی (بدون اعمال تغییرات)', 'bkja-assistant' ); ?></span>
-                    </label>
                     <p class="description"><?php esc_html_e( 'هر مرحله حداکثر ۲۰۰ رکورد را پردازش می‌کند تا از تایم‌اوت جلوگیری شود. در پایان، خلاصه قبل و بعد نمایش داده می‌شود.', 'bkja-assistant' ); ?></p>
-                    <button class="button button-primary" id="bkja-repair-start"><?php esc_html_e( 'شروع تعمیر', 'bkja-assistant' ); ?></button>
-                    <button class="button" id="bkja-repair-download" style="display:none; margin-right:8px;">
-                        <?php esc_html_e( 'دانلود CSV موارد حل‌نشده', 'bkja-assistant' ); ?>
-                    </button>
+                    <div class="bkja-repair-actions">
+                        <button class="button" id="bkja-repair-start-dry"><?php esc_html_e( 'Dry Run', 'bkja-assistant' ); ?></button>
+                        <button class="button button-primary" id="bkja-repair-start-live"><?php esc_html_e( 'اجرای واقعی', 'bkja-assistant' ); ?></button>
+                        <button class="button" id="bkja-repair-clear-cache"><?php esc_html_e( 'حذف کش پاسخ‌ها', 'bkja-assistant' ); ?></button>
+                        <button class="button" id="bkja-repair-download" style="display:none; margin-right:8px;">
+                            <?php esc_html_e( 'دانلود CSV موارد حل‌نشده', 'bkja-assistant' ); ?>
+                        </button>
+                    </div>
                     <div id="bkja-repair-progress" class="bkja-repair-progress"></div>
                     <div id="bkja-repair-summary" class="bkja-repair-summary"></div>
                 </div>
@@ -72,6 +73,7 @@ class BKJA_Repair_Tool {
             .bkja-repair-toggle { display:flex; gap:8px; align-items:center; margin:12px 0; }
             .bkja-repair-progress { margin-top:12px; padding:10px; background:#f8fafc; border-radius:8px; border:1px solid #e5e7eb; }
             .bkja-repair-summary { margin-top:12px; }
+            .bkja-repair-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:12px 0; }
         </style>
 
         <script>
@@ -90,11 +92,12 @@ class BKJA_Repair_Tool {
                     dryRun: true,
                 };
 
-                const startBtn = document.getElementById('bkja-repair-start');
-                const dryRunToggle = document.getElementById('bkja-repair-dry-run');
+                const startBtnDry = document.getElementById('bkja-repair-start-dry');
+                const startBtnLive = document.getElementById('bkja-repair-start-live');
                 const progressBox = document.getElementById('bkja-repair-progress');
                 const summaryBox = document.getElementById('bkja-repair-summary');
                 const downloadBtn = document.getElementById('bkja-repair-download');
+                const clearCacheBtn = document.getElementById('bkja-repair-clear-cache');
 
                 function renderProgress() {
                     const pct = totalRows ? Math.min(100, Math.round((state.processed / totalRows) * 100)) : 0;
@@ -137,6 +140,24 @@ class BKJA_Repair_Tool {
 
                 downloadBtn.addEventListener('click', downloadCsv);
 
+                clearCacheBtn.addEventListener('click', function(){
+                    clearCacheBtn.disabled = true;
+                    clearCacheBtn.textContent = '<?php echo esc_js( __( 'در حال حذف کش...', 'bkja-assistant' ) ); ?>';
+                    const form = new FormData();
+                    form.append('action','bkja_repair_clear_cache');
+                    form.append('nonce', nonce);
+                    fetch(ajaxUrl, {method:'POST', credentials:'same-origin', body:form})
+                        .then(res => res.json())
+                        .then(() => {
+                            clearCacheBtn.disabled = false;
+                            clearCacheBtn.textContent = '<?php echo esc_js( __( 'حذف کش پاسخ‌ها', 'bkja-assistant' ) ); ?>';
+                        })
+                        .catch(() => {
+                            clearCacheBtn.disabled = false;
+                            clearCacheBtn.textContent = '<?php echo esc_js( __( 'حذف کش پاسخ‌ها', 'bkja-assistant' ) ); ?>';
+                        });
+                });
+
                 function runBatch() {
                     if (!state.running) return;
                     const form = new FormData();
@@ -173,8 +194,10 @@ class BKJA_Repair_Tool {
                                 if (state.unresolvedRows.length) {
                                     downloadBtn.style.display = 'inline-block';
                                 }
-                                startBtn.disabled = false;
-                                startBtn.textContent = '<?php echo esc_js( __( 'شروع تعمیر', 'bkja-assistant' ) ); ?>';
+                                startBtnDry.disabled = false;
+                                startBtnLive.disabled = false;
+                                startBtnDry.textContent = 'Dry Run';
+                                startBtnLive.textContent = '<?php echo esc_js( __( 'اجرای واقعی', 'bkja-assistant' ) ); ?>';
                             } else {
                                 setTimeout(runBatch, 200);
                             }
@@ -182,12 +205,14 @@ class BKJA_Repair_Tool {
                         .catch(() => {
                             state.running = false;
                             progressBox.innerHTML = '<span style="color:#b91c1c;">خطا در ارتباط با سرور</span>';
-                            startBtn.disabled = false;
-                            startBtn.textContent = '<?php echo esc_js( __( 'شروع تعمیر', 'bkja-assistant' ) ); ?>';
+                            startBtnDry.disabled = false;
+                            startBtnLive.disabled = false;
+                            startBtnDry.textContent = 'Dry Run';
+                            startBtnLive.textContent = '<?php echo esc_js( __( 'اجرای واقعی', 'bkja-assistant' ) ); ?>';
                         });
                 }
 
-                startBtn.addEventListener('click', function(){
+                function startRepair(isDry){
                     if (state.running) return;
                     state.running = true;
                     state.lastId = 0;
@@ -196,14 +221,19 @@ class BKJA_Repair_Tool {
                     state.skipped = 0;
                     state.unresolved = 0;
                     state.unresolvedRows = [];
-                    state.dryRun = !!dryRunToggle.checked;
+                    state.dryRun = !!isDry;
                     summaryBox.innerHTML = '';
                     downloadBtn.style.display = 'none';
-                    startBtn.disabled = true;
-                    startBtn.textContent = '<?php echo esc_js( __( 'در حال اجرا...', 'bkja-assistant' ) ); ?>';
+                    startBtnDry.disabled = true;
+                    startBtnLive.disabled = true;
+                    startBtnDry.textContent = '<?php echo esc_js( __( 'در حال اجرا...', 'bkja-assistant' ) ); ?>';
+                    startBtnLive.textContent = '<?php echo esc_js( __( 'در حال اجرا...', 'bkja-assistant' ) ); ?>';
                     renderProgress();
                     runBatch();
-                });
+                }
+
+                startBtnDry.addEventListener('click', function(){ startRepair(true); });
+                startBtnLive.addEventListener('click', function(){ startRepair(false); });
             })();
         </script>
         <?php
@@ -224,6 +254,18 @@ class BKJA_Repair_Tool {
         wp_send_json_success( $result );
     }
 
+    public static function handle_clear_cache() {
+        check_ajax_referer( 'bkja_repair_nonce', 'nonce' );
+
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_send_json_error( array( 'message' => 'forbidden' ), 403 );
+        }
+
+        BKJA_Database::flush_plugin_caches();
+
+        wp_send_json_success( array( 'cleared' => true ) );
+    }
+
     private static function process_batch( $last_id, $dry_run = false ) {
         global $wpdb;
         $table = $wpdb->prefix . 'bkja_jobs';
@@ -235,7 +277,7 @@ class BKJA_Repair_Tool {
 
         $rows = $wpdb->get_results(
             $wpdb->prepare(
-                "SELECT id, title, category_id, job_title_id, income, investment, income_toman, income_min_toman, income_max_toman, investment_toman FROM {$table} WHERE id > %d ORDER BY id ASC LIMIT %d",
+                "SELECT id, title, category_id, job_title_id, income, investment, income_num, investment_num, income_toman, income_toman_canonical, income_min_toman, income_max_toman, investment_toman, investment_toman_canonical, hours_per_day, days_per_week, gender FROM {$table} WHERE id > %d ORDER BY id ASC LIMIT %d",
                 $last_id,
                 absint( $limit )
             )
@@ -274,6 +316,10 @@ class BKJA_Repair_Tool {
 
         $done = count( $rows ) < absint( $limit );
 
+        if ( $done && ! $dry_run ) {
+            BKJA_Database::flush_plugin_caches();
+        }
+
         return array(
             'batch' => array(
                 'processed_count'  => $processed,
@@ -297,41 +343,69 @@ class BKJA_Repair_Tool {
         $unresolved = false;
 
         $title_match = self::match_job_title( $row->title );
+        $has_valid_category = self::is_valid_category_id( $row->category_id );
+
         if ( $title_match ) {
             if ( empty( $row->job_title_id ) || (int) $row->job_title_id !== (int) $title_match['id'] ) {
                 $updates['job_title_id'] = (int) $title_match['id'];
             }
 
-            if ( empty( $row->category_id ) || (int) $row->category_id !== (int) $title_match['category_id'] ) {
+            if ( ! $has_valid_category || (int) $row->category_id !== (int) $title_match['category_id'] ) {
                 $updates['category_id'] = (int) $title_match['category_id'];
             }
         } else {
-            if ( empty( $row->category_id ) ) {
+            if ( empty( $row->job_title_id ) ) {
                 $unresolved = true;
             }
-        }
-
-        $money = bkja_parse_money_to_toman( $row->income );
-        if ( isset( $money['value'] ) && $money['value'] > 0 && $money['value'] < 1000000000000 ) {
-            if ( empty( $row->income_toman ) || (int) $row->income_toman !== (int) $money['value'] ) {
-                $updates['income_toman'] = (int) $money['value'];
-            }
-            $min_val = ( isset( $money['min'] ) && $money['min'] > 0 ) ? (int) $money['min'] : null;
-            $max_val = ( isset( $money['max'] ) && $money['max'] > 0 ) ? (int) $money['max'] : null;
-
-            if ( $min_val && $min_val !== (int) $row->income_min_toman ) {
-                $updates['income_min_toman'] = $min_val;
-            }
-            if ( $max_val && $max_val !== (int) $row->income_max_toman ) {
-                $updates['income_max_toman'] = $max_val;
+            if ( ! $has_valid_category ) {
+                $updates['category_id'] = null;
             }
         }
 
-        $investment_money = bkja_parse_money_to_toman( $row->investment );
-        if ( isset( $investment_money['value'] ) && $investment_money['value'] >= 0 && $investment_money['value'] < 1000000000000 ) {
-            if ( $row->investment_toman === null || (int) $row->investment_toman !== (int) $investment_money['value'] ) {
-                $updates['investment_toman'] = (int) $investment_money['value'];
+        $income_canonical = BKJA_Database::normalize_numeric_to_canonical_toman( $row->income_num );
+        if ( $income_canonical && $income_canonical > 0 && $income_canonical <= 1000000000000 ) {
+            if ( empty( $row->income_toman_canonical ) || (int) $row->income_toman_canonical !== (int) $income_canonical ) {
+                $updates['income_toman_canonical'] = (int) $income_canonical;
             }
+            if ( empty( $row->income_toman ) || $row->income_toman > 1000000000000 ) {
+                $updates['income_toman'] = (int) $income_canonical;
+            }
+        } elseif ( isset( $row->income_toman_canonical ) && ( $row->income_toman_canonical <= 0 || $row->income_toman_canonical > 1000000000000 ) ) {
+            $updates['income_toman_canonical'] = null;
+        }
+
+        $investment_canonical = BKJA_Database::normalize_numeric_to_canonical_toman( $row->investment_num );
+        if ( null !== $investment_canonical && $investment_canonical >= 0 && $investment_canonical <= 1000000000000 ) {
+            if ( $row->investment_toman_canonical === null || (int) $row->investment_toman_canonical !== (int) $investment_canonical ) {
+                $updates['investment_toman_canonical'] = (int) $investment_canonical;
+            }
+            if ( $row->investment_toman === null || $row->investment_toman > 1000000000000 ) {
+                $updates['investment_toman'] = (int) $investment_canonical;
+            }
+        } elseif ( isset( $row->investment_toman_canonical ) && ( $row->investment_toman_canonical < 0 || $row->investment_toman_canonical > 1000000000000 ) ) {
+            $updates['investment_toman_canonical'] = null;
+        }
+
+        if ( isset( $row->hours_per_day ) && ( $row->hours_per_day < 1 || $row->hours_per_day > 18 ) ) {
+            $updates['hours_per_day'] = null;
+        }
+
+        if ( isset( $row->days_per_week ) && ( $row->days_per_week < 1 || $row->days_per_week > 7 ) ) {
+            $updates['days_per_week'] = null;
+        }
+
+        $normalized_gender = is_string( $row->gender ) ? trim( $row->gender ) : '';
+        if ( '' === $normalized_gender || null === $row->gender ) {
+            $normalized_gender = 'unknown';
+        }
+
+        $allowed_genders = array( 'male', 'female', 'both', 'unknown' );
+        if ( ! in_array( $normalized_gender, $allowed_genders, true ) ) {
+            $normalized_gender = 'unknown';
+        }
+
+        if ( $normalized_gender !== $row->gender ) {
+            $updates['gender'] = $normalized_gender;
         }
 
         if ( empty( $updates ) && ! $unresolved ) {
@@ -371,6 +445,7 @@ class BKJA_Repair_Tool {
                     'is_primary'  => isset( $row->is_primary ) ? (int) $row->is_primary : 0,
                     'normalized_label'      => self::normalize_title( $row->label ),
                     'normalized_base_label' => self::normalize_title( $row->base_label ),
+                    'base_first_token'      => self::first_token( self::normalize_title( $row->base_label ) ),
                 );
             }
         }
@@ -380,54 +455,22 @@ class BKJA_Repair_Tool {
             return null;
         }
 
-        $matches = array();
         foreach ( $cache as $item ) {
-            $level = null;
-
-            if ( $normalized_title === $item['normalized_base_label'] ) {
-                $level = 1;
-            } elseif ( $normalized_title === $item['normalized_label'] ) {
-                $level = 2;
-            } elseif ( 0 === strpos( $normalized_title, $item['normalized_base_label'] ) ) {
-                $level = 3;
-            } elseif ( 0 === strpos( $normalized_title, $item['normalized_label'] ) ) {
-                $level = 4;
-            } elseif ( false !== strpos( $normalized_title, $item['normalized_base_label'] ) ) {
-                $level = 5;
-            }
-
-            if ( null !== $level ) {
-                $matches[] = array(
-                    'level'       => $level,
-                    'length'      => max( strlen( $item['normalized_base_label'] ), strlen( $item['normalized_label'] ) ),
-                    'is_primary'  => $item['is_primary'],
-                    'id'          => $item['id'],
-                    'category_id' => $item['category_id'],
-                );
+            if ( $normalized_title === $item['normalized_label'] ) {
+                return $item;
             }
         }
 
-        if ( empty( $matches ) ) {
-            return null;
+        $first_token = self::first_token( $normalized_title );
+        if ( $first_token ) {
+            foreach ( $cache as $item ) {
+                if ( 1 === (int) $item['is_primary'] && $first_token === $item['base_first_token'] ) {
+                    return $item;
+                }
+            }
         }
 
-        usort( $matches, function( $a, $b ) {
-            if ( $a['level'] !== $b['level'] ) {
-                return $a['level'] - $b['level'];
-            }
-
-            if ( $a['length'] !== $b['length'] ) {
-                return $b['length'] - $a['length'];
-            }
-
-            if ( $a['is_primary'] !== $b['is_primary'] ) {
-                return $b['is_primary'] - $a['is_primary'];
-            }
-
-            return 0;
-        } );
-
-        return $matches[0];
+        return null;
     }
 
     private static function normalize_title( $title ) {
@@ -448,6 +491,33 @@ class BKJA_Repair_Tool {
         $normalized = mb_strtolower( $normalized );
 
         return $normalized;
+    }
+
+    private static function first_token( $text ) {
+        if ( ! is_string( $text ) || '' === trim( $text ) ) {
+            return '';
+        }
+
+        $parts = preg_split( '/\s+/u', trim( $text ) );
+        return isset( $parts[0] ) ? $parts[0] : '';
+    }
+
+    private static function get_valid_category_ids() {
+        static $ids = null;
+        if ( null !== $ids ) {
+            return $ids;
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'bkja_categories';
+        $ids   = array_map( 'intval', (array) $wpdb->get_col( "SELECT id FROM {$table}" ) );
+
+        return $ids;
+    }
+
+    private static function is_valid_category_id( $category_id ) {
+        $valid = self::get_valid_category_ids();
+        return in_array( (int) $category_id, $valid, true );
     }
 
     private static function get_report_data() {

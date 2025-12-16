@@ -23,6 +23,23 @@ add_action('admin_post_bkja_clear_response_cache', function(){
         exit;
 });
 
+add_action('wp_ajax_bkja_flush_caches', function(){
+        if ( ! current_user_can( 'manage_options' ) ) {
+                wp_send_json_error( array( 'error' => 'forbidden' ), 403 );
+        }
+
+        check_ajax_referer( 'bkja_flush_caches', 'nonce' );
+
+        $summary = class_exists( 'BKJA_Database' ) ? BKJA_Database::flush_plugin_caches( true ) : array();
+        $summary = is_array( $summary ) ? $summary : array();
+
+        wp_send_json_success( array(
+                'transients_deleted' => isset( $summary['transients_deleted'] ) ? (int) $summary['transients_deleted'] : 0,
+                'options_deleted'    => isset( $summary['options_deleted'] ) ? (int) $summary['options_deleted'] : 0,
+                'cache_version'      => isset( $summary['cache_version'] ) ? (int) $summary['cache_version'] : 0,
+        ) );
+});
+
         /**
          * Admin Page
          */
@@ -44,6 +61,7 @@ add_action('admin_post_bkja_clear_response_cache', function(){
         $per_page    = 20;
         $offset      = ($bkja_p - 1) * $per_page;
         $repair_nonce = wp_create_nonce('bkja_repair_db');
+        $cache_nonce  = wp_create_nonce('bkja_flush_caches');
         global $wpdb;
         $jobs_table_exists = $wpdb->get_var( $wpdb->prepare( "SHOW TABLES LIKE %s", $wpdb->prefix . 'bkja_jobs' ) );
         $repair_total = 0;
@@ -121,6 +139,35 @@ add_action('admin_post_bkja_clear_response_cache', function(){
                         if(h==='repair') active = 3;
                 }
                 activate(active);
+
+                const clearCacheBtn = document.getElementById('bkja-clear-cache-button');
+                const clearCacheStatus = document.getElementById('bkja-clear-cache-status');
+                if(clearCacheBtn && clearCacheStatus){
+                        clearCacheBtn.addEventListener('click', function(){
+                                if(clearCacheBtn.disabled) return;
+                                clearCacheBtn.disabled = true;
+                                clearCacheStatus.textContent = 'در حال پاکسازی کش...';
+                                const form = new FormData();
+                                form.append('action','bkja_flush_caches');
+                                form.append('nonce', clearCacheBtn.dataset.nonce || '');
+
+                                fetch(ajaxurl, { method:'POST', credentials:'same-origin', body: form })
+                                        .then(r => r.json())
+                                        .then(res => {
+                                                clearCacheBtn.disabled = false;
+                                                if(!res || !res.success){
+                                                        clearCacheStatus.textContent = 'خطا در پاکسازی کش.';
+                                                        return;
+                                                }
+                                                const d = res.data || {};
+                                                clearCacheStatus.textContent = 'پاکسازی انجام شد: ' + (d.transients_deleted || 0) + ' ترنزینت و ' + (d.options_deleted || 0) + ' گزینه حذف شد. نسخه کش: ' + (d.cache_version || 0);
+                                        })
+                                        .catch(() => {
+                                                clearCacheBtn.disabled = false;
+                                                clearCacheStatus.textContent = 'ارتباط با سرور قطع شد.';
+                                        });
+                        });
+                }
         });
         </script>
 
@@ -214,12 +261,8 @@ add_action('admin_post_bkja_clear_response_cache', function(){
                                                 </select>
                                                 <div class="bkja-note">در صورت فعال بودن، پاسخ‌های تکراری برای مدت کوتاه در حافظه نگهداری می‌شوند تا سرعت بیشتر شود.</div>
                                                 <div class="bkja-actions">
-                                                        <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:inline-flex; gap:8px; align-items:center;">
-                                                                <?php wp_nonce_field('bkja_clear_response_cache'); ?>
-                                                                <input type="hidden" name="action" value="bkja_clear_response_cache" />
-                                                                <button class="bkja-button secondary" type="submit">پاکسازی کش پاسخ‌ها</button>
-                                                                <span class="bkja-note">در هر لحظه می‌توانید کش پاسخ را خالی کنید تا قالب‌بندی‌های جدید اعمال شوند.</span>
-                                                        </form>
+                                                        <button class="bkja-button secondary" type="button" id="bkja-clear-cache-button" data-nonce="<?php echo esc_attr( $cache_nonce ); ?>">پاکسازی کش پاسخ‌ها</button>
+                                                        <span class="bkja-note" id="bkja-clear-cache-status">در هر لحظه می‌توانید کش پاسخ را خالی کنید تا قالب‌بندی‌های جدید اعمال شوند.</span>
                                                 </div>
                                         </div>
 	                                <div class="bkja-form-row">
