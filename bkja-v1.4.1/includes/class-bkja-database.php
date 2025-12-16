@@ -1299,7 +1299,7 @@ class BKJA_Database {
         $insert_id = $wpdb->insert_id;
 
         if ( class_exists( 'BKJA_Chat' ) ) {
-            BKJA_Chat::flush_cache_prefix();
+            BKJA_Chat::clear_all_caches();
         }
 
         return $insert_id;

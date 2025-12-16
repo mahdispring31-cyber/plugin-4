@@ -22,13 +22,14 @@
 	}
 
 	// Manage tab: filters
-	$bkja_action = isset($_GET['bkja_action']) ? sanitize_text_field($_GET['bkja_action']) : '';
-	$edit_id     = isset($_GET['id']) ? intval($_GET['id']) : 0;
-	$bkja_q      = isset($_GET['bkja_q']) ? sanitize_text_field($_GET['bkja_q']) : '';
-	$bkja_p      = isset($_GET['bkja_p']) ? max(1, intval($_GET['bkja_p'])) : 1;
-	$per_page    = 20;
-	$offset      = ($bkja_p - 1) * $per_page;
-	?>
+        $bkja_action = isset($_GET['bkja_action']) ? sanitize_text_field($_GET['bkja_action']) : '';
+        $edit_id     = isset($_GET['id']) ? intval($_GET['id']) : 0;
+        $bkja_q      = isset($_GET['bkja_q']) ? sanitize_text_field($_GET['bkja_q']) : '';
+        $bkja_p      = isset($_GET['bkja_p']) ? max(1, intval($_GET['bkja_p'])) : 1;
+        $per_page    = 20;
+        $offset      = ($bkja_p - 1) * $per_page;
+        $bkja_clear_cache_nonce = wp_create_nonce('bkja_clear_cache');
+        ?>
 
 	<style>
 		.bkja-tabs { display:flex; gap:12px; margin-bottom:18px; flex-wrap:wrap; }
@@ -96,6 +97,56 @@
                         if(h==='manage') active = 2;
                 }
                 activate(active);
+
+                const clearBtn = document.getElementById('bkja-clear-cache-btn');
+                const clearResult = document.getElementById('bkja-clear-cache-result');
+
+                if (clearBtn) {
+                        clearBtn.addEventListener('click', function(){
+                                clearBtn.disabled = true;
+                                clearBtn.classList.add('is-busy');
+                                if (clearResult) {
+                                        clearResult.innerHTML = '<div class="notice notice-info inline"><p>در حال پاکسازی کش...</p></div>';
+                                }
+
+                                const params = new URLSearchParams({
+                                        action: 'bkja_clear_cache',
+                                        nonce: '<?php echo esc_js( $bkja_clear_cache_nonce ); ?>'
+                                });
+
+                                fetch(ajaxurl, {
+                                        method: 'POST',
+                                        credentials: 'same-origin',
+                                        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                                        body: params.toString()
+                                })
+                                        .then(resp => resp.json())
+                                        .then(data => {
+                                                let message = 'خطا در پاکسازی کش.';
+                                                let cssClass = 'notice notice-error inline';
+
+                                                if (data && data.success && data.data) {
+                                                        message = data.data.message ? data.data.message : 'کش با موفقیت پاک شد.';
+                                                        cssClass = 'notice notice-success inline';
+                                                } else if (data && data.data && data.data.error) {
+                                                        message = data.data.error;
+                                                }
+
+                                                if (clearResult) {
+                                                        clearResult.innerHTML = '<div class="' + cssClass + '"><p>' + message + '</p></div>';
+                                                }
+                                        })
+                                        .catch(() => {
+                                                if (clearResult) {
+                                                        clearResult.innerHTML = '<div class="notice notice-error inline"><p>پاکسازی کش با خطا مواجه شد.</p></div>';
+                                                }
+                                        })
+                                        .finally(() => {
+                                                clearBtn.disabled = false;
+                                                clearBtn.classList.remove('is-busy');
+                                        });
+                        });
+                }
         });
         </script>
 
@@ -146,20 +197,26 @@
 	                                                <option value="gpt-5" <?php selected($m,'gpt-5'); ?>>gpt-5</option>
 	                                        </select>
 	                                </div>
-	                                <div class="bkja-form-row">
-	                                        <label>کش پاسخ‌ها</label>
-	                                        <?php $cache = get_option('bkja_enable_cache','1'); ?>
-	                                        <select name="bkja_enable_cache">
-	                                                <option value="1" <?php selected($cache,'1'); ?>>فعال</option>
-	                                                <option value="0" <?php selected($cache,'0'); ?>>غیرفعال</option>
-	                                        </select>
-	                                        <div class="bkja-note">در صورت فعال بودن، پاسخ‌های تکراری برای مدت کوتاه در حافظه نگهداری می‌شوند تا سرعت بیشتر شود.</div>
-	                                </div>
-	                                <div class="bkja-form-row">
-	                                        <label>دکمه «قدم بعدی منطقی»</label>
-	                                        <?php $quick_actions = get_option('bkja_enable_quick_actions','0'); ?>
-	                                        <select name="bkja_enable_quick_actions">
-	                                                <option value="1" <?php selected($quick_actions,'1'); ?>>فعال</option>
+                                        <div class="bkja-form-row">
+                                                <label>کش پاسخ‌ها</label>
+                                                <?php $cache = get_option('bkja_enable_cache','1'); ?>
+                                                <select name="bkja_enable_cache">
+                                                        <option value="1" <?php selected($cache,'1'); ?>>فعال</option>
+                                                        <option value="0" <?php selected($cache,'0'); ?>>غیرفعال</option>
+                                                </select>
+                                                <div class="bkja-note">در صورت فعال بودن، پاسخ‌های تکراری برای مدت کوتاه در حافظه نگهداری می‌شوند تا سرعت بیشتر شود.</div>
+                                        </div>
+                                        <div class="bkja-form-row">
+                                                <label>پاکسازی کش پاسخ‌ها</label>
+                                                <button type="button" class="bkja-button secondary" id="bkja-clear-cache-btn">پاکسازی کش پاسخ‌ها</button>
+                                                <div class="bkja-note">در صورت نیاز می‌توانید همه کش‌های پاسخ (و دیگر کش‌های BKJA) را پاکسازی کنید.</div>
+                                        </div>
+                                        <div id="bkja-clear-cache-result" class="bkja-help"></div>
+                                        <div class="bkja-form-row">
+                                                <label>دکمه «قدم بعدی منطقی»</label>
+                                                <?php $quick_actions = get_option('bkja_enable_quick_actions','0'); ?>
+                                                <select name="bkja_enable_quick_actions">
+                                                        <option value="1" <?php selected($quick_actions,'1'); ?>>فعال</option>
 	                                                <option value="0" <?php selected($quick_actions,'0'); ?>>غیرفعال</option>
 	                                        </select>
 	                                        <div class="bkja-note">در صورت غیرفعال بودن، پس از پاسخ دستیار دکمه‌های پیشنهادی مانند «قدم بعدی منطقی» نمایش داده نمی‌شود.</div>
