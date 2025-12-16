@@ -521,19 +521,13 @@ class BKJA_Chat {
                 $income_value = 'نامشخص';
                 if ( isset( $record['income_toman_canonical'] ) && $record['income_toman_canonical'] > 0 ) {
                     $income_value = self::format_amount_label( (int) $record['income_toman_canonical'] );
-                } elseif ( isset( $record['income_toman'] ) && $record['income_toman'] > 0 ) {
-                    $income_value = self::format_amount_label( (int) $record['income_toman'] );
-                } elseif ( isset( $record['income_num'] ) && $record['income_num'] > 0 ) {
-                    $income_value = self::format_amount_label( (int) $record['income_num'] * 1000000 );
                 } elseif ( ! empty( $record['income'] ) ) {
                     $income_value = $record['income'];
                 }
 
                 $investment_value = 'نامشخص';
-                if ( isset( $record['investment_num'] ) && $record['investment_num'] > 0 ) {
-                    $investment_value = self::format_amount_label( (int) $record['investment_num'] * 1000000 );
-                } elseif ( isset( $record['investment_toman'] ) && $record['investment_toman'] > 0 ) {
-                    $investment_value = self::format_amount_label( (int) $record['investment_toman'] );
+                if ( isset( $record['investment_toman_canonical'] ) && $record['investment_toman_canonical'] >= 0 ) {
+                    $investment_value = self::format_amount_label( (int) $record['investment_toman_canonical'] );
                 } elseif ( ! empty( $record['investment'] ) ) {
                     $investment_value = $record['investment'];
                 }
@@ -629,17 +623,11 @@ class BKJA_Chat {
                     $parts[] = 'درآمد: ' . self::format_amount_label( (int) $record['income_toman_canonical'] );
                 } elseif ( ! empty( $record['income'] ) ) {
                     $parts[] = 'درآمد: ' . $record['income'];
-                } elseif ( ! empty( $record['income_toman'] ) ) {
-                    $parts[] = 'درآمد: ' . self::format_amount_label( $record['income_toman'] );
-                } elseif ( ! empty( $record['income_num'] ) ) {
-                    $parts[] = 'درآمد: ' . self::format_amount_label( (int) $record['income_num'] * 1000000 );
                 }
-                if ( ! empty( $record['investment'] ) ) {
+                if ( isset( $record['investment_toman_canonical'] ) && $record['investment_toman_canonical'] >= 0 ) {
+                    $parts[] = 'سرمایه: ' . self::format_amount_label( (int) $record['investment_toman_canonical'] );
+                } elseif ( ! empty( $record['investment'] ) ) {
                     $parts[] = 'سرمایه: ' . $record['investment'];
-                } elseif ( isset( $record['investment_toman'] ) && $record['investment_toman'] >= 0 ) {
-                    $parts[] = 'سرمایه: ' . self::format_amount_label( $record['investment_toman'] );
-                } elseif ( ! empty( $record['investment_num'] ) ) {
-                    $parts[] = 'سرمایه: ' . self::format_amount_label( (int) $record['investment_num'] * 1000000 );
                 }
                 if ( ! empty( $record['city'] ) ) {
                     $parts[] = 'شهر: ' . $record['city'];

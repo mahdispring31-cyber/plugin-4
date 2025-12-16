@@ -2061,8 +2061,8 @@
                         var employmentLabel = r.employment_type_label || r.employment_type;
                         var createdAtLabel = r.created_at_display || r.created_at;
                         recHtml += '<h5>🧑‍💼 تجربه کاربر</h5>';
-                        var incomeToman = normalize_toman_value(r.income_toman_canonical, r.income_toman, r.income);
-                        var investmentToman = normalize_toman_value(r.investment_toman, r.investment);
+                        var incomeToman = normalize_toman_value(r.income_toman_canonical);
+                        var investmentToman = normalize_toman_value(r.investment_toman_canonical);
                         if (incomeToman || incomeToman === 0) {
                             recHtml += '<p>💵 درآمد: ' + esc(format_toman_to_million_label(incomeToman)) + '</p>';
                         } else if (r.income) {
@@ -2128,10 +2128,12 @@
                         var employmentLabel = r.employment_type_label || r.employment_type;
                         var createdAtLabel = r.created_at_display || r.created_at;
                         html += '<h5>🧑‍💼 تجربه کاربر</h5>';
-                        var incomeToman = r.income_toman_canonical || r.income_toman || r.income;
-                        var investmentToman = r.investment_toman || r.investment;
-                        if (incomeToman) html += '<p>💵 درآمد: ' + esc(format_toman_to_million_label(incomeToman)) + '</p>';
+                        var incomeToman = normalize_toman_value(r.income_toman_canonical);
+                        var investmentToman = normalize_toman_value(r.investment_toman_canonical);
+                        if (incomeToman || incomeToman === 0) html += '<p>💵 درآمد: ' + esc(format_toman_to_million_label(incomeToman)) + '</p>';
+                        else if (r.income) html += '<p>💵 درآمد: ' + esc(r.income) + '</p>';
                         if (investmentToman || investmentToman === 0) html += '<p>💰 سرمایه: ' + esc(format_toman_to_million_label(investmentToman)) + '</p>';
+                        else if (r.investment) html += '<p>💰 سرمایه: ' + esc(r.investment) + '</p>';
                         if (r.city) html += '<p>📍 شهر: ' + esc(r.city) + '</p>';
                         if (employmentLabel) html += '<p>💼 نوع اشتغال: ' + esc(employmentLabel) + '</p>';
                         if (genderLabel) html += '<p>👤 جنسیت: ' + esc(genderLabel) + '</p>';
