@@ -188,10 +188,31 @@ class BKJA_Chat {
         return 'gpt-4o-mini';
     }
 
-    const FORMATTING_VERSION = '2';
+    const FORMATTING_VERSION    = '2';
+    const CACHE_VERSION_OPTION = 'bkja_cache_version';
 
     protected static function get_formatting_version() {
         return self::FORMATTING_VERSION;
+    }
+
+    protected static function get_cache_version() {
+        $version = (int) get_option( self::CACHE_VERSION_OPTION, 1 );
+
+        if ( $version < 1 ) {
+            $version = 1;
+            update_option( self::CACHE_VERSION_OPTION, $version, false );
+        }
+
+        return $version;
+    }
+
+    public static function bump_cache_version() {
+        $current = self::get_cache_version();
+        $next    = $current + 1;
+
+        update_option( self::CACHE_VERSION_OPTION, $next, false );
+
+        return $next;
     }
 
     public static function build_cache_key( $message, $category = '', $model = '', $job_title = '' ) {
@@ -211,6 +232,7 @@ class BKJA_Chat {
         }
 
         $parts[] = 'fmt:' . self::get_formatting_version();
+        $parts[] = 'cv:' . self::get_cache_version();
 
         if ( '' !== $job_title ) {
             $parts[] = 'job:' . self::normalize_message( $job_title );
@@ -1057,15 +1079,26 @@ class BKJA_Chat {
         global $wpdb;
 
         if ( empty( $wpdb ) || empty( $wpdb->options ) ) {
-            return;
+            return 0;
         }
 
         $like          = $wpdb->esc_like( $prefix ) . '%';
         $transient_sql = $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", '_transient_' . $like );
         $timeout_sql   = $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", '_transient_timeout_' . $like );
 
-        $wpdb->query( $transient_sql );
-        $wpdb->query( $timeout_sql );
+        $deleted = 0;
+
+        $transient_deleted = $wpdb->query( $transient_sql );
+        if ( false !== $transient_deleted ) {
+            $deleted += (int) $transient_deleted;
+        }
+
+        $timeout_deleted = $wpdb->query( $timeout_sql );
+        if ( false !== $timeout_deleted ) {
+            $deleted += (int) $timeout_deleted;
+        }
+
+        return $deleted;
     }
 
     public static function call_openai( $message, $args = array() ) {

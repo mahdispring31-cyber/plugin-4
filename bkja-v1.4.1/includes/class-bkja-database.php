@@ -1347,28 +1347,56 @@ class BKJA_Database {
     public static function flush_plugin_caches() {
         global $wpdb;
 
+        $report = array(
+            'transients_deleted' => 0,
+            'options_deleted'    => 0,
+            'cache_version'      => null,
+        );
+
         if ( class_exists( 'BKJA_Chat' ) ) {
-            BKJA_Chat::flush_cache_prefix();
-            BKJA_Chat::flush_cache_prefix( 'bkja_' );
-            BKJA_Chat::flush_cache_prefix( 'bkja_summary_' );
+            $prefixes = array(
+                'bkja_cache_',
+                'bkja_',
+                'bkja_summary_',
+                'bkja_answer_',
+            );
+
             if ( defined( 'BKJA_PLUGIN_VERSION' ) ) {
-                BKJA_Chat::flush_cache_prefix( 'bkja_cache_' . BKJA_PLUGIN_VERSION );
-                BKJA_Chat::flush_cache_prefix( 'bkja_summary_' . BKJA_PLUGIN_VERSION );
+                $prefixes[] = 'bkja_cache_' . BKJA_PLUGIN_VERSION;
+                $prefixes[] = 'bkja_summary_' . BKJA_PLUGIN_VERSION;
+                $prefixes[] = 'bkja_answer_' . BKJA_PLUGIN_VERSION;
+            }
+
+            $prefixes = array_unique( array_filter( $prefixes ) );
+
+            foreach ( $prefixes as $prefix ) {
+                $report['transients_deleted'] += (int) BKJA_Chat::flush_cache_prefix( $prefix );
+            }
+
+            $report['cache_version'] = BKJA_Chat::bump_cache_version();
+        }
+
+        if ( ! empty( $wpdb ) && ! empty( $wpdb->options ) ) {
+            $option_prefixes = array( 'bkja_summary_', 'bkja_answer_' );
+
+            if ( defined( 'BKJA_PLUGIN_VERSION' ) ) {
+                $option_prefixes[] = 'bkja_summary_' . BKJA_PLUGIN_VERSION;
+                $option_prefixes[] = 'bkja_answer_' . BKJA_PLUGIN_VERSION;
+            }
+
+            $option_prefixes = array_unique( array_filter( $option_prefixes ) );
+
+            foreach ( $option_prefixes as $prefix ) {
+                $like          = $wpdb->esc_like( $prefix ) . '%';
+                $deleted_rows  = $wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $like ) );
+
+                if ( false !== $deleted_rows ) {
+                    $report['options_deleted'] += (int) $deleted_rows;
+                }
             }
         }
 
-        if ( empty( $wpdb ) || empty( $wpdb->options ) ) {
-            return;
-        }
-
-        $option_prefixes = array( 'bkja_summary_' );
-        if ( defined( 'BKJA_PLUGIN_VERSION' ) ) {
-            $option_prefixes[] = 'bkja_summary_' . BKJA_PLUGIN_VERSION;
-        }
-        foreach ( $option_prefixes as $prefix ) {
-            $like = $wpdb->esc_like( $prefix ) . '%';
-            $wpdb->query( $wpdb->prepare( "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s", $like ) );
-        }
+        return $report;
     }
 
     private static function calculate_percentile( $values, $percentile ) {

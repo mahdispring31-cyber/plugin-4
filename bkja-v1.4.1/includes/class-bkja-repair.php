@@ -60,6 +60,7 @@ class BKJA_Repair_Tool {
                             <?php esc_html_e( 'دانلود CSV موارد حل‌نشده', 'bkja-assistant' ); ?>
                         </button>
                     </div>
+                    <div class="bkja-note" id="bkja-repair-cache-message" aria-live="polite"></div>
                     <div id="bkja-repair-progress" class="bkja-repair-progress"></div>
                     <div id="bkja-repair-summary" class="bkja-repair-summary"></div>
                 </div>
@@ -98,6 +99,7 @@ class BKJA_Repair_Tool {
                 const summaryBox = document.getElementById('bkja-repair-summary');
                 const downloadBtn = document.getElementById('bkja-repair-download');
                 const clearCacheBtn = document.getElementById('bkja-repair-clear-cache');
+                const cacheMessage = document.getElementById('bkja-repair-cache-message');
 
                 function renderProgress() {
                     const pct = totalRows ? Math.min(100, Math.round((state.processed / totalRows) * 100)) : 0;
@@ -148,13 +150,29 @@ class BKJA_Repair_Tool {
                     form.append('nonce', nonce);
                     fetch(ajaxUrl, {method:'POST', credentials:'same-origin', body:form})
                         .then(res => res.json())
-                        .then(() => {
+                        .then((payload) => {
                             clearCacheBtn.disabled = false;
                             clearCacheBtn.textContent = '<?php echo esc_js( __( 'حذف کش پاسخ‌ها', 'bkja-assistant' ) ); ?>';
+
+                            if (payload && payload.success && payload.data && cacheMessage) {
+                                const total = typeof payload.data.total_deleted !== 'undefined' ? payload.data.total_deleted : 0;
+                                const version = payload.data.cache_version ? payload.data.cache_version : '';
+                                let message = '<?php echo esc_js( __( 'کش پاسخ‌ها پاک شد.', 'bkja-assistant' ) ); ?>';
+                                if ( total ) {
+                                    message += ` ( ${ total } مورد حذف شد )`;
+                                }
+                                if ( version ) {
+                                    message += ` · نسخه کش: ${ version }`;
+                                }
+                                cacheMessage.textContent = message;
+                            }
                         })
                         .catch(() => {
                             clearCacheBtn.disabled = false;
                             clearCacheBtn.textContent = '<?php echo esc_js( __( 'حذف کش پاسخ‌ها', 'bkja-assistant' ) ); ?>';
+                            if (cacheMessage) {
+                                cacheMessage.textContent = '<?php echo esc_js( __( 'خطا در پاکسازی کش.', 'bkja-assistant' ) ); ?>';
+                            }
                         });
                 });
 
@@ -261,9 +279,21 @@ class BKJA_Repair_Tool {
             wp_send_json_error( array( 'message' => 'forbidden' ), 403 );
         }
 
-        BKJA_Database::flush_plugin_caches();
+        $report = BKJA_Database::flush_plugin_caches();
 
-        wp_send_json_success( array( 'cleared' => true ) );
+        $transients = isset( $report['transients_deleted'] ) ? (int) $report['transients_deleted'] : 0;
+        $options    = isset( $report['options_deleted'] ) ? (int) $report['options_deleted'] : 0;
+        $version    = isset( $report['cache_version'] ) ? $report['cache_version'] : null;
+
+        wp_send_json_success(
+            array(
+                'cleared'             => true,
+                'transients_deleted'  => $transients,
+                'options_deleted'     => $options,
+                'total_deleted'       => $transients + $options,
+                'cache_version'       => $version,
+            )
+        );
     }
 
     private static function process_batch( $last_id, $dry_run = false ) {

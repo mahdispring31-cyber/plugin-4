@@ -15,12 +15,43 @@ add_action('admin_post_bkja_clear_response_cache', function(){
 
         check_admin_referer( 'bkja_clear_response_cache' );
 
+        $report = array();
         if ( class_exists( 'BKJA_Database' ) ) {
-                BKJA_Database::flush_plugin_caches();
+                $report = BKJA_Database::flush_plugin_caches();
+        }
+
+        if ( ! empty( $report ) ) {
+                set_transient( 'bkja_cache_clear_report', $report, MINUTE_IN_SECONDS );
         }
 
         wp_safe_redirect( add_query_arg( 'bkja_manage_msg', 'cache_cleared', admin_url( 'admin.php?page=bkja-assistant' ) ) );
         exit;
+});
+
+add_action( 'wp_ajax_bkja_clear_cache', function() {
+        if ( ! current_user_can( 'manage_options' ) ) {
+                wp_send_json_error( array( 'message' => 'forbidden' ), 403 );
+        }
+
+        $nonce = isset( $_POST['nonce'] ) ? sanitize_text_field( wp_unslash( $_POST['nonce'] ) ) : '';
+        if ( ! wp_verify_nonce( $nonce, 'bkja_clear_cache' ) ) {
+                wp_send_json_error( array( 'message' => 'invalid_nonce' ), 403 );
+        }
+
+        $report = class_exists( 'BKJA_Database' ) ? BKJA_Database::flush_plugin_caches() : array();
+
+        $transients = isset( $report['transients_deleted'] ) ? (int) $report['transients_deleted'] : 0;
+        $options    = isset( $report['options_deleted'] ) ? (int) $report['options_deleted'] : 0;
+        $version    = isset( $report['cache_version'] ) ? $report['cache_version'] : null;
+
+        wp_send_json_success(
+                array(
+                        'transients_deleted' => $transients,
+                        'options_deleted'    => $options,
+                        'total_deleted'      => $transients + $options,
+                        'cache_version'      => $version,
+                )
+        );
 });
 
         /**
@@ -95,7 +126,7 @@ add_action('admin_post_bkja_clear_response_cache', function(){
                 }
         </style>
 
-	<script>
+        <script>
         document.addEventListener('DOMContentLoaded', function(){
                 const tabs = document.querySelectorAll('.bkja-tab');
                 const panels = document.querySelectorAll('.bkja-panel');
@@ -121,6 +152,55 @@ add_action('admin_post_bkja_clear_response_cache', function(){
                         if(h==='repair') active = 3;
                 }
                 activate(active);
+
+                const clearCacheBtn = document.getElementById('bkja-clear-cache-btn');
+                const clearCacheResult = document.getElementById('bkja-clear-cache-result');
+                if ( clearCacheBtn && clearCacheResult ) {
+                        const ajaxUrl = clearCacheBtn.dataset.ajax;
+                        const nonce   = clearCacheBtn.dataset.nonce;
+                        const label   = clearCacheBtn.dataset.label || clearCacheBtn.textContent;
+
+                        clearCacheBtn.addEventListener('click', function(event){
+                                event.preventDefault();
+                                clearCacheBtn.disabled = true;
+                                clearCacheBtn.textContent = '<?php echo esc_js( __( 'در حال حذف کش...', 'bkja-assistant' ) ); ?>';
+                                clearCacheResult.textContent = '';
+                                clearCacheResult.classList.remove('bkja-danger');
+
+                                const form = new FormData();
+                                form.append('action','bkja_clear_cache');
+                                form.append('nonce', nonce);
+
+                                fetch(ajaxUrl, { method:'POST', credentials:'same-origin', body: form })
+                                        .then(res => res.json())
+                                        .then(res => {
+                                                clearCacheBtn.textContent = label;
+                                                clearCacheBtn.disabled = false;
+
+                                                if ( res && res.success && res.data ) {
+                                                        const total = typeof res.data.total_deleted !== 'undefined' ? res.data.total_deleted : 0;
+                                                        const version = res.data.cache_version ? res.data.cache_version : '';
+                                                        let message = 'کش پاسخ‌ها پاک شد';
+                                                        if ( total ) {
+                                                                message += ` ( ${total} ورودی حذف شد )`;
+                                                        }
+                                                        if ( version ) {
+                                                                message += ` · نسخه کش: ${version}`;
+                                                        }
+                                                        clearCacheResult.textContent = message;
+                                                } else {
+                                                        clearCacheResult.textContent = 'خطا در پاکسازی کش.';
+                                                        clearCacheResult.classList.add('bkja-danger');
+                                                }
+                                        })
+                                        .catch(() => {
+                                                clearCacheBtn.textContent = label;
+                                                clearCacheBtn.disabled = false;
+                                                clearCacheResult.textContent = 'خطا در برقراری ارتباط با سرور.';
+                                                clearCacheResult.classList.add('bkja-danger');
+                                        });
+                        });
+                }
         });
         </script>
 
@@ -170,12 +250,37 @@ add_action('admin_post_bkja_clear_response_cache', function(){
         });
         }
 
-		if(isset($_GET['bkja_manage_msg'])){
-			$m = sanitize_text_field($_GET['bkja_manage_msg']);
+                if(isset($_GET['bkja_manage_msg'])){
+                        $m = sanitize_text_field($_GET['bkja_manage_msg']);
                 if($m==='deleted') echo '<div class="notice notice-success"><p>رکورد حذف شد.</p></div>';
                         if($m==='edited')  echo '<div class="notice notice-success"><p>رکورد ویرایش شد.</p></div>';
                         if($m==='added')   echo '<div class="notice notice-success"><p>شغل جدید افزوده شد.</p></div>';
-                        if($m==='cache_cleared') echo '<div class="notice notice-success"><p>کش پاسخ‌ها پاک شد.</p></div>';
+                        if($m==='cache_cleared') {
+                                $report = get_transient( 'bkja_cache_clear_report' );
+                                if ( $report ) {
+                                        delete_transient( 'bkja_cache_clear_report' );
+                                }
+
+                                if ( ! is_array( $report ) ) {
+                                        $report = array();
+                                }
+
+                                $transients = isset( $report['transients_deleted'] ) ? intval( $report['transients_deleted'] ) : 0;
+                                $options    = isset( $report['options_deleted'] ) ? intval( $report['options_deleted'] ) : 0;
+                                $total      = $transients + $options;
+                                $version    = isset( $report['cache_version'] ) ? intval( $report['cache_version'] ) : 0;
+
+                                $message = 'کش پاسخ‌ها پاک شد.';
+                                if ( $total > 0 ) {
+                                        $message .= ' ' . sprintf( '(تعداد حذف‌شده: %d)', $total );
+                                }
+
+                                if ( $version > 0 ) {
+                                        $message .= ' ' . sprintf( '· نسخه کش: %d', $version );
+                                }
+
+                                echo '<div class="notice notice-success"><p>' . esc_html( $message ) . '</p></div>';
+                        }
                 }
                 ?>
 
@@ -213,13 +318,19 @@ add_action('admin_post_bkja_clear_response_cache', function(){
                                                         <option value="0" <?php selected($cache,'0'); ?>>غیرفعال</option>
                                                 </select>
                                                 <div class="bkja-note">در صورت فعال بودن، پاسخ‌های تکراری برای مدت کوتاه در حافظه نگهداری می‌شوند تا سرعت بیشتر شود.</div>
-                                                <div class="bkja-actions">
-                                                        <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:inline-flex; gap:8px; align-items:center;">
-                                                                <?php wp_nonce_field('bkja_clear_response_cache'); ?>
-                                                                <input type="hidden" name="action" value="bkja_clear_response_cache" />
-                                                                <button class="bkja-button secondary" type="submit">پاکسازی کش پاسخ‌ها</button>
-                                                                <span class="bkja-note">در هر لحظه می‌توانید کش پاسخ را خالی کنید تا قالب‌بندی‌های جدید اعمال شوند.</span>
-                                                        </form>
+                                                <div class="bkja-actions" style="display:flex; flex-direction:column; gap:6px;">
+                                                                <button
+                                                                        class="bkja-button secondary"
+                                                                        type="button"
+                                                                        id="bkja-clear-cache-btn"
+                                                                        data-ajax="<?php echo esc_url( admin_url( 'admin-ajax.php' ) ); ?>"
+                                                                        data-nonce="<?php echo esc_attr( wp_create_nonce( 'bkja_clear_cache' ) ); ?>"
+                                                                        data-label="<?php echo esc_attr( __( 'پاکسازی کش پاسخ‌ها', 'bkja-assistant' ) ); ?>"
+                                                                >
+                                                                        <?php esc_html_e( 'پاکسازی کش پاسخ‌ها', 'bkja-assistant' ); ?>
+                                                                </button>
+                                                        <span class="bkja-note">می‌توانید کش پاسخ و خلاصه‌ها را در هر لحظه خالی کنید (پاکسازی همه کش‌های BKJA).</span>
+                                                        <div class="bkja-note" id="bkja-clear-cache-result" aria-live="polite"></div>
                                                 </div>
                                         </div>
 	                                <div class="bkja-form-row">
