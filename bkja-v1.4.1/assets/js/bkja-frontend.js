@@ -1931,22 +1931,28 @@
                     html += '<div class="bkja-job-summary-note">' + esc(noteText) + '</div>';
 
                     var incomeText = '';
-                    if(s.avg_income){
-                        incomeText += 'میانگین: ' + esc(fmtMillion(s.avg_income));
+                    var avgIncomeLabel = s.avg_income_label ? s.avg_income_label : (s.avg_income ? fmtMillion(s.avg_income) : '');
+                    if(avgIncomeLabel){
+                        incomeText += 'میانگین: ' + esc(avgIncomeLabel);
                     }
-                    if(s.min_income && s.max_income){
-                        incomeText += (incomeText ? ' | ' : '') + 'بازه: ' + esc(fmtMillion(s.min_income)) + ' تا ' + esc(fmtMillion(s.max_income));
+                    var minIncomeLabel = s.min_income_label ? s.min_income_label : (s.min_income ? fmtMillion(s.min_income) : '');
+                    var maxIncomeLabel = s.max_income_label ? s.max_income_label : (s.max_income ? fmtMillion(s.max_income) : '');
+                    if(minIncomeLabel && maxIncomeLabel){
+                        incomeText += (incomeText ? ' | ' : '') + 'بازه: ' + esc(minIncomeLabel) + ' تا ' + esc(maxIncomeLabel);
                     }
                     if(incomeText){
                         html += '<p>💵 درآمد کاربران: ' + incomeText + '</p>';
                     }
 
                     var investText = '';
-                    if(s.avg_investment){
-                        investText += 'میانگین: ' + esc(fmtMillion(s.avg_investment));
+                    var avgInvestmentLabel = s.avg_investment_label ? s.avg_investment_label : (s.avg_investment ? fmtMillion(s.avg_investment) : '');
+                    if(avgInvestmentLabel){
+                        investText += 'میانگین: ' + esc(avgInvestmentLabel);
                     }
-                    if(s.min_investment && s.max_investment){
-                        investText += (investText ? ' | ' : '') + 'بازه: ' + esc(fmtMillion(s.min_investment)) + ' تا ' + esc(fmtMillion(s.max_investment));
+                    var minInvestmentLabel = s.min_investment_label ? s.min_investment_label : (s.min_investment ? fmtMillion(s.min_investment) : '');
+                    var maxInvestmentLabel = s.max_investment_label ? s.max_investment_label : (s.max_investment ? fmtMillion(s.max_investment) : '');
+                    if(minInvestmentLabel && maxInvestmentLabel){
+                        investText += (investText ? ' | ' : '') + 'بازه: ' + esc(minInvestmentLabel) + ' تا ' + esc(maxInvestmentLabel);
                     }
                     if(investText){
                         html += '<p>💰 سرمایه لازم: ' + investText + '</p>';

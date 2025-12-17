@@ -1292,7 +1292,26 @@ class BKJA_Chat {
         return false === $rows ? 0 : (int) $rows;
     }
 
-    public static function clear_all_caches( $transient_prefixes = array( 'bkja_cache_', 'bkja_summary_', 'bkja_answer_', 'bkja_' ) ) {
+    public static function clear_response_cache_prefix( $extra_prefixes = array() ) {
+        $base_prefixes = array(
+            'bkja_cache_',
+            'bkja_summary_',
+            'bkja_job_summary_',
+            'bkja_job_records_',
+            'bkja_answer_',
+            'bkja_stats_',
+            'bkja_jobs_',
+            'bkja_chat_',
+            'bkja_',
+        );
+
+        $extra_prefixes = array_filter( array_map( 'strval', (array) $extra_prefixes ) );
+        $prefixes       = array_values( array_unique( array_merge( $base_prefixes, $extra_prefixes ) ) );
+
+        return self::clear_all_caches( $prefixes );
+    }
+
+    public static function clear_all_caches( $transient_prefixes = array( 'bkja_cache_', 'bkja_summary_', 'bkja_job_summary_', 'bkja_job_records_', 'bkja_answer_', 'bkja_stats_', 'bkja_jobs_', 'bkja_chat_', 'bkja_' ) ) {
         $transient_prefixes = (array) $transient_prefixes;
 
         if ( empty( $transient_prefixes ) ) {
@@ -1306,7 +1325,7 @@ class BKJA_Chat {
         }
 
         // Clean up any option-based caches that may have been stored without the transient API.
-        foreach ( array( 'bkja_summary_', 'bkja_answer_' ) as $option_prefix ) {
+        foreach ( array( 'bkja_summary_', 'bkja_answer_', 'bkja_job_summary_' ) as $option_prefix ) {
             $deleted += self::delete_options_by_prefix( $option_prefix );
         }
 

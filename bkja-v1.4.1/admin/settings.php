@@ -6,6 +6,7 @@
 	 */
 	add_action('admin_menu', function(){
 	add_menu_page('BKJA Assistant', 'BKJA Assistant', 'manage_options', 'bkja-assistant', 'bkja_admin_page', 'dashicons-admin-comments', 60);
+	add_submenu_page('bkja-assistant', 'BKJA Assistant', 'تنظیمات', 'manage_options', 'bkja-assistant', 'bkja_admin_page');
 	});
 
 	/**
@@ -29,6 +30,17 @@
         $per_page    = 20;
         $offset      = ($bkja_p - 1) * $per_page;
         $bkja_clear_cache_nonce = wp_create_nonce('bkja_clear_cache');
+        $bkja_repair_nonce = wp_create_nonce('bkja_repair');
+        $bkja_option_notices = array();
+        $bkja_openai_key = trim( (string) get_option( 'bkja_openai_api_key', '' ) );
+        if ( '' === $bkja_openai_key ) {
+                $bkja_option_notices[] = 'کلید OpenAI هنوز ذخیره نشده است.';
+        }
+        $allowed_models = array( 'gpt-4o-mini', 'gpt-4o', 'gpt-4', 'gpt-3.5-turbo', 'gpt-5' );
+        $selected_model = get_option( 'bkja_model', 'gpt-4o-mini' );
+        if ( ! in_array( $selected_model, $allowed_models, true ) ) {
+                $bkja_option_notices[] = 'مدل انتخاب‌شده معتبر نیست؛ لطفاً یکی از گزینه‌های فهرست را برگزینید.';
+        }
         ?>
 
 	<style>
@@ -53,10 +65,13 @@
 		.bkja-search { margin:10px 0 16px; display:flex; gap:8px; align-items:center; }
                 .bkja-pagination { display:flex; gap:8px; margin-top:12px; align-items:center; }
                 .bkja-pagination a, .bkja-pagination span { padding:6px 10px; border:1px solid #e6eef5; border-radius:6px; text-decoration:none; }
-                .bkja-pagination .current { background:#eef6ff; }
+		.bkja-pagination .current { background:#eef6ff; }
                 .bkja-muted { color:#6b7280; font-size:12px; }
                 .bkja-inline-form { display:inline; }
                 .bkja-danger { color:#b91c1c; }
+                .bkja-log { background:#0f172a; color:#e2e8f0; padding:12px; border-radius:8px; max-height:260px; overflow:auto; margin-top:12px; font-size:12px; line-height:1.6; }
+                .bkja-log strong { color:#7dd3fc; }
+                .bkja-status { margin-top:8px; font-weight:600; color:#0b6fab; }
                 @media (max-width: 782px){
                         .bkja-form-row,
                         .bkja-job-form .bkja-form-row,
@@ -78,40 +93,46 @@
         document.addEventListener('DOMContentLoaded', function(){
                 const tabs = document.querySelectorAll('.bkja-tab');
                 const panels = document.querySelectorAll('.bkja-panel');
-                function activate(i){
+                const tabKeys = ['settings','import','jobs','repair'];
+                function activateByIndex(i){
                         tabs.forEach((t,idx)=> t.classList.toggle('active', idx===i));
                         panels.forEach((p,idx)=> p.classList.toggle('active', idx===i));
                 }
-                tabs.forEach((t,idx)=> t.addEventListener('click', ()=> activate(idx)));
-                let active = 0;
+                function activateByKey(key){
+                        const idx = tabKeys.indexOf(key);
+                        activateByIndex(idx >= 0 ? idx : 0);
+                }
+                tabs.forEach((t,idx)=> t.addEventListener('click', ()=> activateByIndex(idx)));
+
                 const params = new URLSearchParams(window.location.search);
                 const tabParam = params.get('tab');
-
-                if (tabParam === 'import') {
-                        active = 1;
-                } else if (tabParam === 'jobs') {
-                        active = 2;
+                if (tabParam && tabKeys.includes(tabParam)) {
+                        activateByKey(tabParam);
                 } else if (location.hash) {
                         const h = location.hash.replace('#','');
-                        if(h==='import') active = 1;
-                        if(h==='manage') active = 2;
+                        const alias = h === 'manage' ? 'jobs' : h;
+                        if (tabKeys.includes(alias)) {
+                                activateByKey(alias);
+                        } else {
+                                activateByIndex(0);
+                        }
+                } else {
+                        activateByIndex(0);
                 }
-                activate(active);
 
-                const clearBtn = document.getElementById('bkja-clear-cache-btn');
-                const clearResult = document.getElementById('bkja-clear-cache-result');
-
-                if (clearBtn) {
-                        clearBtn.addEventListener('click', function(){
-                                clearBtn.disabled = true;
-                                clearBtn.classList.add('is-busy');
-                                if (clearResult) {
-                                        clearResult.innerHTML = '<div class="notice notice-info inline"><p>در حال پاکسازی کش...</p></div>';
+                const clearCacheNonce = '<?php echo esc_js( $bkja_clear_cache_nonce ); ?>';
+                const clearButtons = document.querySelectorAll('[data-bkja-clear-cache]');
+                clearButtons.forEach((btn)=>{
+                        btn.addEventListener('click', ()=>{
+                                const targetId = btn.getAttribute('data-target') || 'bkja-clear-cache-result';
+                                const targetEl = document.getElementById(targetId);
+                                btn.disabled = true;
+                                if (targetEl) {
+                                        targetEl.innerHTML = '<div class="notice notice-info inline"><p>در حال پاکسازی کش...</p></div>';
                                 }
-
                                 const params = new URLSearchParams({
                                         action: 'bkja_clear_cache',
-                                        nonce: '<?php echo esc_js( $bkja_clear_cache_nonce ); ?>'
+                                        nonce: clearCacheNonce
                                 });
 
                                 fetch(ajaxurl, {
@@ -122,31 +143,128 @@
                                 })
                                         .then(resp => resp.json())
                                         .then(data => {
-                                                let message = 'خطا در پاکسازی کش.';
-                                                let cssClass = 'notice notice-error inline';
+                                                let message = 'کش با موفقیت پاک شد.';
+                                                let cssClass = 'notice notice-success inline';
 
-                                                if (data && data.success && data.data) {
-                                                        message = data.data.message ? data.data.message : 'کش با موفقیت پاک شد.';
-                                                        cssClass = 'notice notice-success inline';
-                                                } else if (data && data.data && data.data.error) {
-                                                        message = data.data.error;
+                                                if (!data || !data.success) {
+                                                        message = (data && data.data && data.data.error) ? data.data.error : 'پاکسازی کش ناموفق بود.';
+                                                        cssClass = 'notice notice-error inline';
+                                                } else if (data.data && data.data.message) {
+                                                        message = data.data.message;
                                                 }
 
-                                                if (clearResult) {
-                                                        clearResult.innerHTML = '<div class="' + cssClass + '"><p>' + message + '</p></div>';
+                                                if (targetEl) {
+                                                        targetEl.innerHTML = '<div class="' + cssClass + '"><p>' + message + '</p></div>';
                                                 }
                                         })
                                         .catch(() => {
-                                                if (clearResult) {
-                                                        clearResult.innerHTML = '<div class="notice notice-error inline"><p>پاکسازی کش با خطا مواجه شد.</p></div>';
+                                                if (targetEl) {
+                                                        targetEl.innerHTML = '<div class="notice notice-error inline"><p>پاکسازی کش با خطا مواجه شد.</p></div>';
                                                 }
                                         })
                                         .finally(() => {
-                                                clearBtn.disabled = false;
-                                                clearBtn.classList.remove('is-busy');
+                                                btn.disabled = false;
                                         });
                         });
+                });
+
+                const repairNonce = '<?php echo esc_js( isset( $bkja_repair_nonce ) ? $bkja_repair_nonce : '' ); ?>';
+                const repairLog = document.getElementById('bkja-repair-log');
+                const repairDownload = document.getElementById('bkja-repair-download');
+                const repairButtons = document.querySelectorAll('[data-bkja-repair]');
+                const repairStatus = document.getElementById('bkja-repair-status');
+                let repairRunning = false;
+                const repairLimit = <?php echo (int) apply_filters( 'bkja_repair_batch_size', 75 ); ?>;
+
+                function appendRepairLog(msg){
+                        if (!repairLog) return;
+                        const line = document.createElement('div');
+                        line.textContent = msg;
+                        repairLog.appendChild(line);
+                        repairLog.scrollTop = repairLog.scrollHeight;
                 }
+
+                function setRepairRunning(state){
+                        repairRunning = state;
+                        repairButtons.forEach(btn => btn.disabled = state);
+                }
+
+                function updateDownloadLink(url){
+                        if (!repairDownload) return;
+                        if (url) {
+                                repairDownload.innerHTML = '<a class="bkja-button secondary" href="'+url+'">دانلود unresolved.csv</a>';
+                        }
+                }
+
+                function runRepairBatch(offset, dryRun, resetFlag){
+                        const params = new URLSearchParams({
+                                action: 'bkja_repair_run_batch',
+                                nonce: repairNonce,
+                                offset: offset || 0,
+                                limit: repairLimit,
+                                dry_run: dryRun ? '1' : '0',
+                                reset: resetFlag ? '1' : '0'
+                        });
+                        fetch(ajaxurl,{
+                                method:'POST',
+                                credentials:'same-origin',
+                                headers:{'Content-Type':'application/x-www-form-urlencoded'},
+                                body: params.toString()
+                        })
+                        .then(resp => resp.json())
+                        .then(data => {
+                                if (!data || !data.success || !data.data) {
+                                    throw new Error('failed');
+                                }
+                                const payload = data.data;
+                                if (repairStatus) {
+                                        var processedCount = payload.processed_total ? payload.processed_total : payload.processed;
+                                        repairStatus.textContent = 'پردازش ' + processedCount + ' مورد (از ' + payload.total + ')';
+                                }
+                                if (Array.isArray(payload.log)) {
+                                        payload.log.forEach(appendRepairLog);
+                                }
+                                if (payload.updated) {
+                                        appendRepairLog('به‌روزرسانی‌ها: ' + payload.updated);
+                                }
+                                if (payload.unresolved) {
+                                        appendRepairLog('موارد بدون حل: ' + payload.unresolved);
+                                }
+                                if (payload.download_url) {
+                                        updateDownloadLink(payload.download_url);
+                                }
+                                if (payload.cache_cleared && payload.cache_cleared.version) {
+                                        appendRepairLog('کش پاکسازی شد (نسخه ' + payload.cache_cleared.version + ')');
+                                }
+                                if (!payload.done && payload.next_offset !== null) {
+                                        runRepairBatch(payload.next_offset, dryRun, false);
+                                } else {
+                                        appendRepairLog('تعمیر دیتابیس پایان یافت.');
+                                        setRepairRunning(false);
+                                }
+                        })
+                        .catch(() => {
+                                appendRepairLog('خطا در اجرای تعمیر دیتابیس.');
+                                setRepairRunning(false);
+                        });
+                }
+
+                repairButtons.forEach(btn => {
+                        btn.addEventListener('click', () => {
+                                if (repairRunning) {
+                                        return;
+                                }
+                                if (repairLog) {
+                                        repairLog.innerHTML = '';
+                                }
+                                if (repairStatus) {
+                                        repairStatus.textContent = 'در حال شروع پردازش...';
+                                }
+                                setRepairRunning(true);
+                                const dryRun = btn.getAttribute('data-bkja-repair') === 'dry';
+                                runRepairBatch(0, dryRun, true);
+                        });
+                });
         });
         </script>
 
@@ -154,6 +272,10 @@
 	<h1><?php esc_html_e('تنظیمات BKJA Assistant','bkja-assistant'); ?></h1>
 
 	<?php
+        if ( ! empty( $bkja_option_notices ) ) {
+                echo '<div class="notice notice-warning"><p>' . implode( '</p><p>', array_map( 'esc_html', $bkja_option_notices ) ) . '</p></div>';
+        }
+
 	// Import result notice
 	if ( isset($_GET['bkja_import_success']) ) {
 	$status = sanitize_text_field( wp_unslash( $_GET['bkja_import_success'] ) );
@@ -176,6 +298,7 @@
 			<div class="bkja-tab">تنظیمات عمومی</div>
 			<div class="bkja-tab">ایمپورت مشاغل</div>
 			<div class="bkja-tab">مدیریت مشاغل</div>
+                        <div class="bkja-tab">تعمیر دیتابیس</div>
 		</div>
 
 		<!-- Panel 1: Settings -->
@@ -208,7 +331,7 @@
                                         </div>
                                         <div class="bkja-form-row">
                                                 <label>پاکسازی کش پاسخ‌ها</label>
-                                                <button type="button" class="bkja-button secondary" id="bkja-clear-cache-btn">پاکسازی کش پاسخ‌ها</button>
+                                                <button type="button" class="bkja-button secondary" data-bkja-clear-cache="1" data-target="bkja-clear-cache-result">پاکسازی کش پاسخ‌ها</button>
                                                 <div class="bkja-note">در صورت نیاز می‌توانید همه کش‌های پاسخ (و دیگر کش‌های BKJA) را پاکسازی کنید.</div>
                                         </div>
                                         <div id="bkja-clear-cache-result" class="bkja-help"></div>
@@ -520,6 +643,21 @@
 			}
 			?>
 		</div>
+                <!-- Panel 4: Repair + Cache -->
+                <div class="bkja-panel">
+                        <h2>تعمیر دیتابیس و پاکسازی کش</h2>
+                        <p class="bkja-help">اجرای تعمیر به صورت مرحله‌ای (batch) انجام می‌شود و اطلاعات معتبر حذف نخواهد شد. پس از اتمام، کش به‌صورت خودکار پاک می‌شود تا خلاصه‌ها به‌روز باشند.</p>
+                        <div class="bkja-actions">
+                                <button type="button" class="bkja-button secondary" data-bkja-repair="dry">Dry-run تعمیر دیتابیس</button>
+                                <button type="button" class="bkja-button" data-bkja-repair="run">اجرای واقعی تعمیر دیتابیس</button>
+                                <button type="button" class="bkja-button secondary" data-bkja-clear-cache="1" data-target="bkja-clear-cache-repair">پاکسازی کش</button>
+                        </div>
+                        <div id="bkja-repair-status" class="bkja-status"></div>
+                        <div class="bkja-note">در صورت تولید داده نامشخص، فایل unresolved.csv برای بررسی بیشتر آماده خواهد شد.</div>
+                        <div id="bkja-repair-log" class="bkja-log" aria-live="polite"></div>
+                        <div id="bkja-repair-download" class="bkja-actions"></div>
+                        <div id="bkja-clear-cache-repair" class="bkja-help"></div>
+                </div>
 	</div>
 
 	<?php

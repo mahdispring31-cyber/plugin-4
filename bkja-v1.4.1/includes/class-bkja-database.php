@@ -1580,11 +1580,31 @@ class BKJA_Database {
         );
 
         $normalize_value = function( $value ) {
+            if ( ! is_numeric( $value ) ) {
+                return null;
+            }
             $value = (int) $value;
             if ( $value <= 0 || $value > 1000000000000 ) {
                 return null;
             }
             return $value;
+        };
+
+        $normalize_legacy_or_maybe_million = function( $value ) use ( $normalize_value ) {
+            if ( ! is_numeric( $value ) ) {
+                return null;
+            }
+
+            $value = (int) $value;
+            if ( $value <= 0 ) {
+                return null;
+            }
+
+            if ( $value < 1000000 ) {
+                $value = $value * 1000000;
+            }
+
+            return $normalize_value( $value );
         };
 
         $income_values      = array();
@@ -1600,7 +1620,11 @@ class BKJA_Database {
         $days_count     = 0;
 
         foreach ( $stat_rows as $srow ) {
-            $income_base = $normalize_value( $srow->income_toman ? $srow->income_toman : $srow->income_num );
+            $income_base = $normalize_value( $srow->income_toman );
+            if ( null === $income_base && isset( $srow->income_num ) ) {
+                $income_base = $normalize_legacy_or_maybe_million( $srow->income_num );
+            }
+
             $income_min  = $normalize_value( $srow->income_min_toman );
             $income_max  = $normalize_value( $srow->income_max_toman );
 
@@ -1617,7 +1641,10 @@ class BKJA_Database {
                 $income_values[] = (int) round( ( $income_min + $income_max ) / 2 );
             }
 
-            $investment_base = $normalize_value( $srow->investment_toman ? $srow->investment_toman : $srow->investment_num );
+            $investment_base = $normalize_value( $srow->investment_toman );
+            if ( null === $investment_base && isset( $srow->investment_num ) ) {
+                $investment_base = $normalize_legacy_or_maybe_million( $srow->investment_num );
+            }
             if ( $investment_base ) {
                 $investment_values[] = $investment_base;
             }
@@ -1802,6 +1829,19 @@ class BKJA_Database {
             }
         }
 
+        if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+            error_log(
+                'BKJA summary stats (toman) => avg_income: ' . print_r( $avg_income, true ) .
+                ' min_income: ' . print_r( $range_min, true ) .
+                ' max_income: ' . print_r( $range_max, true ) .
+                ' avg_investment: ' . print_r( $avg_investment, true )
+            );
+        }
+
+        $format_label = function( $value ) {
+            return $value ? bkja_format_toman_as_million_label( $value ) : null;
+        };
+
         return array(
             'job_title'         => $job_title,
             'job_title_id'      => $job_title_id,
@@ -1810,13 +1850,19 @@ class BKJA_Database {
             'group_key'         => isset( $context['group_key'] ) ? $context['group_key'] : null,
             'job_title_ids'     => $job_ids,
             'avg_income'        => $avg_income ? round( (float) $avg_income, 1 ) : null,
+            'avg_income_label'  => $format_label( $avg_income ),
             'min_income'        => $range_min ? (float) $range_min : null,
             'max_income'        => $range_max ? (float) $range_max : null,
+            'min_income_label'  => $format_label( $range_min ),
+            'max_income_label'  => $format_label( $range_max ),
             'income_count'      => $income_used,
             'income_numeric_total' => $income_numeric_total,
             'avg_investment'    => $avg_investment ? round( (float) $avg_investment, 1 ) : null,
+            'avg_investment_label' => $format_label( $avg_investment ),
             'min_investment'    => $min_investment ? (float) $min_investment : null,
             'max_investment'    => $max_investment ? (float) $max_investment : null,
+            'min_investment_label' => $format_label( $min_investment ),
+            'max_investment_label' => $format_label( $max_investment ),
             'investment_count'  => count( $investment_values ),
             'avg_experience_years' => $avg_experience_years ? round( (float) $avg_experience_years, 1 ) : null,
             'avg_hours_per_day'    => $avg_hours_per_day ? round( (float) $avg_hours_per_day, 1 ) : null,

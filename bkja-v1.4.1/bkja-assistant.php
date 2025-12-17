@@ -14,7 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 // BKJA enhanced includes
 require_once plugin_dir_path(__FILE__) . 'includes/logging.php';
 require_once plugin_dir_path(__FILE__) . 'includes/helpers.php';
-require_once plugin_dir_path(__FILE__) . 'admin/settings-page.php';
+require_once plugin_dir_path(__FILE__) . 'admin/settings.php';
 require_once plugin_dir_path(__FILE__) . 'admin/github-issue-reporter.php';
 
 if ( ! defined( 'BKJA_PLUGIN_VERSION' ) ) {
@@ -268,13 +268,14 @@ define( 'BKJA_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'BKJA_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 require_once BKJA_PLUGIN_DIR . 'includes/class-bkja-database.php';
 require_once BKJA_PLUGIN_DIR . 'includes/class-bkja-chat.php';
+require_once BKJA_PLUGIN_DIR . 'includes/class-bkja-repair.php';
 require_once BKJA_PLUGIN_DIR . 'includes/class-bkja-frontend.php';
 require_once BKJA_PLUGIN_DIR . 'includes/class-bkja-user-profile.php';
-require_once BKJA_PLUGIN_DIR . 'admin/settings.php';
 add_action( 'plugins_loaded', array( 'BKJA_Database', 'maybe_migrate_chat_created_at_default' ) );
 add_action( 'plugins_loaded', array( 'BKJA_Database', 'maybe_migrate_numeric_job_fields' ) );
 add_action( 'plugins_loaded', array( 'BKJA_Database', 'maybe_backfill_job_titles' ) );
 add_action( 'plugins_loaded', array( 'BKJA_Database', 'maybe_run_job_title_integrity' ) );
+add_action( 'plugins_loaded', array( 'BKJA_Repair', 'register_ajax_hooks' ) );
 register_activation_hook( __FILE__, array( 'BKJA_Database', 'activate' ) );
 register_activation_hook( __FILE__, 'bkja_cleanup_legacy_free_limit_option' );
 add_action('plugins_loaded', function(){
@@ -282,6 +283,17 @@ add_action('plugins_loaded', function(){
                 bkja_cleanup_legacy_free_limit_option();
         }
 });
+add_action( 'plugins_loaded', function() {
+        if ( get_option( 'bkja_cache_reset_1512' ) ) {
+                return;
+        }
+
+        if ( class_exists( 'BKJA_Chat' ) ) {
+                BKJA_Chat::clear_response_cache_prefix();
+        }
+
+        update_option( 'bkja_cache_reset_1512', 1 );
+} );
 add_action( 'admin_init', 'bkja_cleanup_legacy_free_limit_option' );
 add_action( 'init', function(){ load_plugin_textdomain( 'bkja-assistant', false, dirname( plugin_basename( __FILE__ ) ) . '/languages' ); if ( class_exists('BKJA_Frontend') ) BKJA_Frontend::init(); if ( class_exists('BKJA_User_Profile') ) BKJA_User_Profile::init(); });
 /* BKJA builder v1.4.1 injections */
@@ -304,7 +316,7 @@ function bkja_ajax_clear_cache() {
         wp_send_json_error( array( 'error' => 'missing_class' ), 500 );
     }
 
-    $result  = BKJA_Chat::clear_all_caches();
+    $result  = BKJA_Chat::clear_response_cache_prefix();
     $deleted = isset( $result['deleted'] ) ? (int) $result['deleted'] : 0;
     $version = isset( $result['version'] ) ? (int) $result['version'] : null;
 
