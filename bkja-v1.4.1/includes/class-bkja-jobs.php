@@ -64,9 +64,19 @@ class BKJA_Jobs {
         return BKJA_Database::get_job_summary($job_title, $filters);
     }
 
+    // خلاصه شغل بر اساس شناسه عنوان پایه
+    public static function get_job_summary_by_job_title_id( $job_title_id, $filters = array() ) {
+        return BKJA_Database::get_job_summary_by_job_title_id( $job_title_id, $filters );
+    }
+
     // رکوردهای شغل (برای نمایش جزئیات کاربران)
     public static function get_job_records($job_title, $limit = 5, $offset = 0, $filters = array()) {
         return BKJA_Database::get_job_records($job_title, $limit, $offset, $filters);
+    }
+
+    // رکوردهای شغل بر اساس شناسه عنوان پایه
+    public static function get_job_records_by_job_title_id( $job_title_id, $limit = 5, $offset = 0, $filters = array() ) {
+        return BKJA_Database::get_job_records_by_job_title_id( $job_title_id, $limit, $offset, $filters );
     }
 
     // لیست واریانت‌های یک عنوان پایه

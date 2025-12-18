@@ -178,12 +178,27 @@ function bkja_ajax_get_job_summary(){
             'investment_max'  => isset($_POST['investment_max']) ? intval($_POST['investment_max']) : 0,
         );
 
-        $summary = BKJA_Jobs::get_job_summary(array(
-            'label' => $job_label ?: $job_title,
-            'job_title_id' => $job_title_id,
-            'group_key' => $group_key,
-            'job_title_ids' => $job_title_ids,
-        ), $filters);
+        $resolved = class_exists( 'BKJA_Database' ) ? BKJA_Database::resolve_job_query(
+            array(
+                'label'         => $job_label ?: $job_title,
+                'job_title_id'  => $job_title_id,
+                'group_key'     => $group_key,
+                'job_title_ids' => $job_title_ids,
+            )
+        ) : array();
+
+        $matched_job_title_id = isset( $resolved['matched_job_title_id'] ) ? (int) $resolved['matched_job_title_id'] : ( $job_title_id ?: 0 );
+
+        if ( $matched_job_title_id > 0 ) {
+            $summary = BKJA_Jobs::get_job_summary_by_job_title_id( $matched_job_title_id, $filters );
+        } else {
+            $summary = BKJA_Jobs::get_job_summary(array(
+                'label' => $job_label ?: $job_title,
+                'job_title_id' => $job_title_id,
+                'group_key' => $group_key,
+                'job_title_ids' => $job_title_ids,
+            ), $filters);
+        }
         $free_messages = get_option('bkja_free_messages_per_day', 5);
         if(!$summary) wp_send_json_error(['error'=>'not_found'],404);
         wp_send_json_success(['summary'=>$summary]);
@@ -242,12 +257,27 @@ function bkja_ajax_get_job_records(){
             'investment_max'  => isset($_POST['investment_max']) ? intval($_POST['investment_max']) : 0,
         );
 
-        $records = BKJA_Jobs::get_job_records(array(
-            'label' => $job_label ?: $job_title,
-            'job_title_id' => $job_title_id,
-            'group_key' => $group_key,
-            'job_title_ids' => $job_title_ids,
-        ), $limit, $offset, $filters);
+        $resolved = class_exists( 'BKJA_Database' ) ? BKJA_Database::resolve_job_query(
+            array(
+                'label'         => $job_label ?: $job_title,
+                'job_title_id'  => $job_title_id,
+                'group_key'     => $group_key,
+                'job_title_ids' => $job_title_ids,
+            )
+        ) : array();
+
+        $matched_job_title_id = isset( $resolved['matched_job_title_id'] ) ? (int) $resolved['matched_job_title_id'] : ( $job_title_id ?: 0 );
+
+        if ( $matched_job_title_id > 0 ) {
+            $records = BKJA_Jobs::get_job_records_by_job_title_id( $matched_job_title_id, $limit, $offset, $filters );
+        } else {
+            $records = BKJA_Jobs::get_job_records(array(
+                'label' => $job_label ?: $job_title,
+                'job_title_id' => $job_title_id,
+                'group_key' => $group_key,
+                'job_title_ids' => $job_title_ids,
+            ), $limit, $offset, $filters);
+        }
         $free_messages = get_option('bkja_free_messages_per_day', 5);
 
         if ( is_array( $records ) && isset( $records['records'] ) ) {

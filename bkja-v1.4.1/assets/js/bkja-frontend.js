@@ -905,6 +905,10 @@
                 items = [];
             }
             items = sanitizeSuggestions(items, meta);
+            var clarificationOptions = [];
+            if(meta && Array.isArray(meta.clarification_options)){
+                clarificationOptions = meta.clarification_options.slice(0,3);
+            }
             var unique = [];
             items.forEach(function(item){
                 if(item === null || item === undefined) return;
@@ -920,18 +924,51 @@
                 unique.push('برای موفقیت در ' + jobFragment + ' چه مهارت‌هایی رو باید تقویت کنم؟');
             }
             if(!unique.length){
-                return [];
+                unique = [];
             }
             if(unique.length > 3){
                 unique = unique.slice(0,3);
             }
             var $wrap = $('<div class="bkja-followups" role="list"></div>');
+
+            if(clarificationOptions.length){
+                var $hint = $('<div class="bkja-followup-hint"></div>').text('منظورت کدام شغل است؟');
+                $wrap.append($hint);
+                clarificationOptions.forEach(function(opt){
+                    if(opt === null || opt === undefined){ return; }
+                    var label = '';
+                    if(typeof opt === 'object'){
+                        label = opt.label || opt.job_title || '';
+                    } else {
+                        label = String(opt);
+                    }
+                    label = $.trim(String(label || ''));
+                    if(!label){ return; }
+                    var $btnOpt = $('<button type="button" class="bkja-followup-btn" role="listitem"></button>');
+                    $btnOpt.text(label);
+                    $btnOpt.attr('data-message', label);
+                    $btnOpt.attr('data-job-title', label);
+                    if(opt && typeof opt === 'object'){
+                        if(opt.group_key){ $btnOpt.attr('data-group-key', String(opt.group_key)); }
+                        if(opt.job_title_id){ $btnOpt.attr('data-job-title-id', String(opt.job_title_id)); }
+                        if(opt.slug){ $btnOpt.attr('data-job-slug', String(opt.slug)); }
+                    }
+                    $wrap.append($btnOpt);
+                });
+            }
+
+            if(!unique.length && !clarificationOptions.length){
+                return [];
+            }
+
             unique.forEach(function(text){
                 var $btn = $('<button type="button" class="bkja-followup-btn" role="listitem"></button>');
                 if(meta && typeof meta === 'object'){
                     var cat = meta.category || meta.cat || '';
                     var jobTitle = meta.job_title || meta.jobTitle || '';
                     var jobSlug = meta.job_slug || meta.jobSlug || '';
+                    var groupKey = meta.group_key || '';
+                    var jobTitleId = meta.job_title_id || '';
                     if(cat){
                         $btn.attr('data-category', String(cat));
                     }
@@ -940,6 +977,12 @@
                     }
                     if(jobSlug){
                         $btn.attr('data-job-slug', String(jobSlug));
+                    }
+                    if(groupKey){
+                        $btn.attr('data-group-key', String(groupKey));
+                    }
+                    if(jobTitleId){
+                        $btn.attr('data-job-title-id', String(jobTitleId));
                     }
                 }
                 $btn.html(formatMessage(text));
@@ -997,9 +1040,18 @@
                 var catAttr = target.getAttribute('data-category') || '';
                 var jobTitleAttr = target.getAttribute('data-job-title') || '';
                 var jobSlugAttr = target.getAttribute('data-job-slug') || '';
+                var jobTitleIdAttr = target.getAttribute('data-job-title-id') || '';
+                var groupKeyAttr = target.getAttribute('data-group-key') || '';
                 if(catAttr){ opts.category = catAttr; }
                 if(jobTitleAttr){ opts.jobTitle = jobTitleAttr; }
                 if(jobSlugAttr){ opts.jobSlug = jobSlugAttr; }
+                if(jobTitleIdAttr){
+                    var parsedId = parseInt(jobTitleIdAttr, 10);
+                    if(!isNaN(parsedId) && parsedId > 0){
+                        opts.jobTitleId = parsedId;
+                    }
+                }
+                if(groupKeyAttr){ opts.groupKey = groupKeyAttr; }
             }
 
             if(typeof window.dispatchUserMessage === 'function'){
@@ -1427,34 +1479,38 @@
                 }
 
                 var explicitJobTitle = cleanJobHint(options.jobTitle);
-                var fallbackJobTitle = cleanJobHint(lastKnownJobTitle);
                 if(explicitJobTitle){
                     sendOptions.jobTitle = explicitJobTitle;
-                } else if(fallbackJobTitle){
-                    sendOptions.jobTitle = fallbackJobTitle;
                 }
 
                 var explicitJobSlug = cleanJobHint(options.jobSlug);
                 if(explicitJobSlug){
                     sendOptions.jobSlug = explicitJobSlug;
-                } else if(lastReplyMeta && cleanJobHint(lastReplyMeta.job_slug)){
-                    sendOptions.jobSlug = cleanJobHint(lastReplyMeta.job_slug);
-                } else if(cleanJobHint(lastKnownJobSlug)){
-                    sendOptions.jobSlug = cleanJobHint(lastKnownJobSlug);
                 }
 
                 if(options.jobTitleId){
                     sendOptions.jobTitleId = options.jobTitleId;
-                } else if(lastKnownJobTitleId){
-                    sendOptions.jobTitleId = lastKnownJobTitleId;
                 }
 
                 if(options.groupKey){
                     sendOptions.groupKey = options.groupKey;
-                } else if(lastKnownGroupKey){
-                    sendOptions.groupKey = lastKnownGroupKey;
-                } else if(lastReplyMeta && lastReplyMeta.group_key){
-                    sendOptions.groupKey = lastReplyMeta.group_key;
+                }
+
+                var normalizedSameJob = $.trim(String(text || '')).replace(/\s+/g,'').toLowerCase();
+                var wantsSameJob = normalizedSameJob.indexOf('همینشغل') !== -1 || normalizedSameJob.indexOf('همینکار') !== -1 || normalizedSameJob.indexOf('همونشغل') !== -1;
+                if(!sendOptions.jobTitle && !sendOptions.jobSlug && !sendOptions.jobTitleId && !sendOptions.groupKey && wantsSameJob){
+                    if(cleanJobHint(lastKnownJobTitle)){
+                        sendOptions.jobTitle = cleanJobHint(lastKnownJobTitle);
+                    }
+                    if(cleanJobHint(lastKnownJobSlug)){
+                        sendOptions.jobSlug = cleanJobHint(lastKnownJobSlug);
+                    }
+                    if(lastKnownJobTitleId){
+                        sendOptions.jobTitleId = lastKnownJobTitleId;
+                    }
+                    if(lastKnownGroupKey){
+                        sendOptions.groupKey = lastKnownGroupKey;
+                    }
                 }
 
                 sendOptions._bypassLimit = true;

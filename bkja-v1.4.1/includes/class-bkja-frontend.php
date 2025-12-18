@@ -181,8 +181,27 @@ class BKJA_Frontend {
         $reply              = '';
         $suggestions        = array();
         $from_cache         = false;
-        $meta_payload       = array();
         $normalized_message = BKJA_Chat::normalize_message($message);
+        $meta_payload       = array(
+            'suggestions'        => array(),
+            'context_used'       => false,
+            'from_cache'         => false,
+            'source'             => 'openai',
+            'model'              => $resolved_model,
+            'category'           => $category,
+            'normalized_message' => $normalized_message,
+            'job_title'          => '',
+            'job_slug'           => '',
+            'job_title_id'       => null,
+            'group_key'          => '',
+            'job_report_count'   => null,
+            'job_avg_income'     => null,
+            'job_income_range'   => array( null, null ),
+            'job_avg_investment' => null,
+            'job_investment_range'=> array( null, null ),
+            'used_job_stats'     => false,
+            'clarification_options' => array(),
+        );
 
         if ( is_wp_error( $ai_response ) ) {
             $reply = 'خطا یا کلید API تنظیم نشده. ' . $ai_response->get_error_message();
@@ -190,7 +209,7 @@ class BKJA_Frontend {
             $reply        = isset( $ai_response['text'] ) ? (string) $ai_response['text'] : '';
             $suggestions  = ! empty( $ai_response['suggestions'] ) && is_array( $ai_response['suggestions'] ) ? $ai_response['suggestions'] : array();
             $from_cache   = ! empty( $ai_response['from_cache'] );
-            $meta_payload = array(
+            $meta_payload = array_merge( $meta_payload, array(
                 'suggestions'        => $suggestions,
                 'context_used'       => ! empty( $ai_response['context_used'] ),
                 'from_cache'         => $from_cache,
@@ -199,7 +218,7 @@ class BKJA_Frontend {
                 'category'           => $category,
                 'normalized_message' => $normalized_message,
                 'job_title'          => ! empty( $ai_response['job_title'] ) ? $ai_response['job_title'] : '',
-            );
+            ) );
 
             if ( isset( $ai_response['meta'] ) && is_array( $ai_response['meta'] ) ) {
                 $meta_payload = array_merge( $meta_payload, $ai_response['meta'] );
