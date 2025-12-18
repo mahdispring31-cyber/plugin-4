@@ -1018,6 +1018,294 @@ class BKJA_Database {
     }
 
     /**
+     * Normalize incoming free-text job queries for consistent matching.
+     */
+    protected static function normalize_job_query_text( $text ) {
+        $text = is_string( $text ) ? $text : (string) $text;
+        $text = preg_replace( '/\s+/u', ' ', $text );
+
+        $replacements = array(
+            'ي' => 'ی',
+            'ك' => 'ک',
+            'ة' => 'ه',
+            'ۀ' => 'ه',
+            'ؤ' => 'و',
+            'إ' => 'ا',
+            'أ' => 'ا',
+            'آ' => 'ا',
+        );
+
+        $text = strtr( $text, $replacements );
+        $text = str_replace(
+            array( '‌', "\xE2\x80\x8C", '-', '–', '—', '_', '/', '\\', '(', ')', '[', ']', '{', '}', '«', '»', '"', '\'', ':' ),
+            ' ',
+            $text
+        );
+
+        $text = preg_replace( '/\s+/u', ' ', $text );
+
+        return trim( (string) $text );
+    }
+
+    /**
+     * Resolve a job title/group using a unified free-text resolver with ranking.
+     */
+    public static function resolve_job_query( $query, $options = array() ) {
+        global $wpdb;
+
+        self::ensure_job_title_schema();
+
+        $window_months = (int) get_option( 'bkja_stats_window_months', 12 );
+        if ( $window_months <= 0 ) {
+            $window_months = 12;
+        }
+
+        $table_titles = $wpdb->prefix . 'bkja_job_titles';
+        $table_jobs   = $wpdb->prefix . 'bkja_jobs';
+
+        $counts_recent_sql = $wpdb->prepare(
+            "SELECT job_title_id, COUNT(*) AS cnt FROM {$table_jobs} WHERE job_title_id IS NOT NULL AND created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d MONTH) GROUP BY job_title_id",
+            $window_months
+        );
+        $counts_total_sql  = "SELECT job_title_id, COUNT(*) AS cnt FROM {$table_jobs} WHERE job_title_id IS NOT NULL GROUP BY job_title_id";
+
+        $recent_counts = array();
+        $rows_counts   = $wpdb->get_results( $counts_recent_sql );
+        foreach ( (array) $rows_counts as $row ) {
+            $recent_counts[ (int) $row->job_title_id ] = (int) $row->cnt;
+        }
+
+        $total_counts = array();
+        $rows_totals  = $wpdb->get_results( $counts_total_sql );
+        foreach ( (array) $rows_totals as $row ) {
+            $total_counts[ (int) $row->job_title_id ] = (int) $row->cnt;
+        }
+
+        $initial_context = self::resolve_job_group_context( $query );
+        if ( ! empty( $initial_context['job_title_ids'] ) ) {
+            $primary_id = isset( $initial_context['job_title_ids'][0] ) ? (int) $initial_context['job_title_ids'][0] : 0;
+            $candidates = array();
+            foreach ( $initial_context['job_title_ids'] as $jt_id ) {
+                $jt_id = (int) $jt_id;
+                $candidates[] = array(
+                    'job_title_id'      => $jt_id,
+                    'group_key'         => $initial_context['group_key'],
+                    'label'             => $initial_context['label'],
+                    'slug'              => $initial_context['slug'],
+                    'jobs_count_recent' => isset( $recent_counts[ $jt_id ] ) ? (int) $recent_counts[ $jt_id ] : 0,
+                    'jobs_count_total'  => isset( $total_counts[ $jt_id ] ) ? (int) $total_counts[ $jt_id ] : 0,
+                    'score'             => 100,
+                    'match_type'        => 'explicit',
+                );
+            }
+
+            return array(
+                'matched_job_title_id' => $primary_id,
+                'group_key'            => $initial_context['group_key'],
+                'label'                => $initial_context['label'],
+                'slug'                 => $initial_context['slug'],
+                'job_title_ids'        => $initial_context['job_title_ids'],
+                'confidence'           => 1.0,
+                'candidates'           => $candidates,
+                'ambiguous'            => false,
+            );
+        }
+
+        $normalized = self::normalize_job_query_text( $query );
+        if ( '' === $normalized ) {
+            return array();
+        }
+
+        $tokens        = preg_split( '/[\s،,.!?؟]+/u', $normalized );
+        $tokens        = array_values( array_filter( array_map( 'trim', $tokens ) ) );
+        $token_compact = preg_replace( '/\s+/u', '', $normalized );
+
+        $candidate_terms = array();
+        if ( $tokens ) {
+            $candidate_terms[] = implode( ' ', $tokens );
+        }
+        $candidate_terms[] = $normalized;
+        $candidate_terms[] = $token_compact;
+
+        $stemmed = '';
+        if ( function_exists( 'mb_substr' ) ? 'ی' === mb_substr( $normalized, -1, 1, 'UTF-8' ) : ( 'ی' === substr( $normalized, -2 ) ) ) {
+            $stemmed = function_exists( 'mb_substr' ) ? mb_substr( $normalized, 0, mb_strlen( $normalized, 'UTF-8' ) - 1, 'UTF-8' ) : substr( $normalized, 0, -2 );
+        }
+        if ( $stemmed ) {
+            $candidate_terms[] = $stemmed;
+        }
+
+        $candidate_terms = array_values( array_unique( array_filter( $candidate_terms ) ) );
+
+        $calc_match_len = function( $label ) use ( $candidate_terms ) {
+            $max_len = 0;
+            foreach ( $candidate_terms as $term ) {
+                if ( '' === $term ) {
+                    continue;
+                }
+                $pos = function_exists( 'mb_strpos' ) ? mb_strpos( $label, $term, 0, 'UTF-8' ) : strpos( $label, $term );
+                if ( false !== $pos ) {
+                    $len     = function_exists( 'mb_strlen' ) ? mb_strlen( $term, 'UTF-8' ) : strlen( $term );
+                    $max_len = max( $max_len, $len );
+                }
+            }
+            return $max_len;
+        };
+
+        $stages = array(
+            array(
+                'key'     => 'exact',
+                'weight'  => 5,
+                'builder' => function( $term ) {
+                    return array(
+                        'where'  => '(jt.base_label = %s OR jt.label = %s OR jt.slug = %s OR jt.base_slug = %s)',
+                        'params' => array( $term, $term, $term, $term ),
+                    );
+                },
+            ),
+            array(
+                'key'     => 'prefix',
+                'weight'  => 4,
+                'builder' => function( $term ) {
+                    $prefix = $term . '%';
+                    return array(
+                        'where'  => '(jt.base_label LIKE %s OR jt.label LIKE %s)',
+                        'params' => array( $prefix, $prefix ),
+                    );
+                },
+            ),
+            array(
+                'key'     => 'contains',
+                'weight'  => 3,
+                'builder' => function( $term ) {
+                    $like = '%' . $term . '%';
+                    return array(
+                        'where'  => '(jt.base_label LIKE %s OR jt.label LIKE %s)',
+                        'params' => array( $like, $like ),
+                    );
+                },
+            ),
+            array(
+                'key'     => 'variant',
+                'weight'  => 3,
+                'builder' => function( $term ) {
+                    $like = '%' . $term . '%';
+                    return array(
+                        'where'  => '(jt.base_label LIKE %s OR jt.label LIKE %s OR EXISTS (SELECT 1 FROM %1$s j WHERE j.job_title_id = jt.id AND (j.title LIKE %2$s OR j.variant_title LIKE %2$s) LIMIT 1))',
+                        'params' => array( $like, $like ),
+                    );
+                },
+            ),
+        );
+
+        $candidate_map = array();
+
+        $add_candidate = function( $row, $weight, $match_len, $stage_key ) use ( &$candidate_map, $recent_counts, $total_counts ) {
+            $group_key   = $row->group_key ? $row->group_key : ( 'id:' . (int) $row->id );
+            $recent_cnt  = isset( $recent_counts[ (int) $row->id ] ) ? (int) $recent_counts[ (int) $row->id ] : 0;
+            $total_cnt   = isset( $total_counts[ (int) $row->id ] ) ? (int) $total_counts[ (int) $row->id ] : 0;
+            $score       = ( $weight * 10 ) + ( $match_len * 2 ) + log( $recent_cnt + 1 ) + log( $total_cnt + 1 );
+            $job_title_ids = array( (int) $row->id );
+
+            if ( $row->group_key && class_exists( 'BKJA_Database' ) ) {
+                $job_title_ids = BKJA_Database::get_job_title_ids_for_group( $row->group_key );
+            }
+
+            if ( ! isset( $candidate_map[ $group_key ] ) || $score > $candidate_map[ $group_key ]['score'] ) {
+                $candidate_map[ $group_key ] = array(
+                    'job_title_id'      => (int) $row->id,
+                    'group_key'         => $row->group_key ? $row->group_key : null,
+                    'label'             => isset( $row->label ) ? $row->label : '',
+                    'slug'              => isset( $row->slug ) ? $row->slug : '',
+                    'jobs_count_recent' => $recent_cnt,
+                    'jobs_count_total'  => $total_cnt,
+                    'score'             => $score,
+                    'match_type'        => $stage_key,
+                    'job_title_ids'     => array_map( 'intval', $job_title_ids ),
+                );
+            }
+        };
+
+        foreach ( $stages as $stage ) {
+            foreach ( $candidate_terms as $term ) {
+                if ( '' === $term ) {
+                    continue;
+                }
+                $condition = call_user_func( $stage['builder'], $term );
+                $where     = $condition['where'];
+                $params    = $condition['params'];
+
+                if ( false !== strpos( $where, '%1$s' ) ) {
+                    $where = sprintf( $where, $table_jobs );
+                }
+
+                $sql = "SELECT jt.id, jt.group_key, COALESCE(jt.base_label, jt.label) AS label, COALESCE(jt.base_slug, jt.slug) AS slug, jt.is_primary, COALESCE(rc.cnt, 0) AS recent_cnt, COALESCE(tc.cnt, 0) AS total_cnt
+                        FROM {$table_titles} jt
+                        LEFT JOIN ({$counts_recent_sql}) rc ON rc.job_title_id = jt.id
+                        LEFT JOIN ({$counts_total_sql}) tc ON tc.job_title_id = jt.id
+                        WHERE {$where} AND jt.is_visible = 1
+                        LIMIT 60";
+
+                $prepared = $params;
+                array_unshift( $prepared, $sql );
+                $sql_prepared = call_user_func_array( array( $wpdb, 'prepare' ), $prepared );
+
+                $rows = $wpdb->get_results( $sql_prepared );
+                foreach ( (array) $rows as $row ) {
+                    $match_len = $calc_match_len( $row->label );
+                    $add_candidate( $row, $stage['weight'], $match_len, $stage['key'] );
+                }
+            }
+
+            if ( ! empty( $candidate_map ) ) {
+                break;
+            }
+        }
+
+        if ( empty( $candidate_map ) ) {
+            $fallback_rows = $wpdb->get_results( "SELECT id, group_key, COALESCE(base_label, label) AS label, COALESCE(base_slug, slug) AS slug FROM {$table_titles} WHERE is_visible = 1 LIMIT 200" );
+            foreach ( (array) $fallback_rows as $row ) {
+                $similarity = 0;
+                similar_text( $normalized, $row->label, $similarity );
+                $weight = $similarity >= 70 ? 3 : 1;
+                $add_candidate( $row, $weight, (int) round( $similarity / 10 ), 'fuzzy' );
+            }
+        }
+
+        if ( empty( $candidate_map ) ) {
+            return array();
+        }
+
+        $candidates = array_values( $candidate_map );
+        usort( $candidates, function( $a, $b ) {
+            if ( $a['score'] === $b['score'] ) {
+                if ( $a['jobs_count_recent'] === $b['jobs_count_recent'] ) {
+                    return ( $a['jobs_count_total'] > $b['jobs_count_total'] ) ? -1 : 1;
+                }
+                return ( $a['jobs_count_recent'] > $b['jobs_count_recent'] ) ? -1 : 1;
+            }
+            return ( $a['score'] > $b['score'] ) ? -1 : 1;
+        } );
+
+        $best         = $candidates[0];
+        $best_score   = isset( $best['score'] ) ? (float) $best['score'] : 0.0;
+        $second_score = isset( $candidates[1]['score'] ) ? (float) $candidates[1]['score'] : 0.0;
+        $confidence   = $best_score > 0 ? min( 1.0, max( 0.35, ( $best_score - $second_score ) / ( $best_score + 1 ) + 0.6 ) ) : 0.0;
+        $ambiguous    = ( count( $candidates ) > 1 && $second_score >= ( $best_score * 0.85 ) );
+
+        return array(
+            'matched_job_title_id' => isset( $best['job_title_id'] ) ? (int) $best['job_title_id'] : 0,
+            'group_key'            => isset( $best['group_key'] ) ? $best['group_key'] : null,
+            'label'                => isset( $best['label'] ) ? $best['label'] : '',
+            'slug'                 => isset( $best['slug'] ) ? $best['slug'] : '',
+            'job_title_ids'        => isset( $best['job_title_ids'] ) ? $best['job_title_ids'] : array(),
+            'confidence'           => $confidence,
+            'candidates'           => array_slice( $candidates, 0, 5 ),
+            'ambiguous'            => $ambiguous,
+        );
+    }
+
+    /**
      * Resolve a job title/group context from input (id, label, slug or group_key array/object).
      */
     protected static function resolve_job_group_context( $job_title ) {
@@ -1531,6 +1819,23 @@ class BKJA_Database {
     }
 
     /**
+     * خلاصه شغل بر اساس شناسه عنوان شغلی (ترجیح مسیر گروه).
+     */
+    public static function get_job_summary_by_job_title_id( $job_title_id, $filters = array() ) {
+        $job_title_id = absint( $job_title_id );
+        if ( $job_title_id <= 0 ) {
+            return array();
+        }
+
+        $context = self::resolve_job_group_context( array( 'job_title_id' => $job_title_id ) );
+        if ( empty( $context['job_title_ids'] ) ) {
+            return array();
+        }
+
+        return self::get_job_summary( $context, $filters );
+    }
+
+    /**
      * جدید: خلاصه شغل (میانگین و ترکیب داده‌ها)
      */
     public static function get_job_summary($job_title, $filters = array()) {
@@ -1878,6 +2183,23 @@ class BKJA_Database {
             'gender_summary'    => $gender_summary,
             'window_months'     => $window_months,
         );
+    }
+
+    /**
+     * جدید: رکوردهای واقعی کاربران برای یک شغل
+     */
+    public static function get_job_records_by_job_title_id( $job_title_id, $limit = 5, $offset = 0, $filters = array() ) {
+        $job_title_id = absint( $job_title_id );
+        if ( $job_title_id <= 0 ) {
+            return array( 'records' => array(), 'has_more' => false, 'next_offset' => null, 'limit' => $limit, 'offset' => $offset );
+        }
+
+        $context = self::resolve_job_group_context( array( 'job_title_id' => $job_title_id ) );
+        if ( empty( $context['job_title_ids'] ) ) {
+            return array( 'records' => array(), 'has_more' => false, 'next_offset' => null, 'limit' => $limit, 'offset' => $offset );
+        }
+
+        return self::get_job_records( $context, $limit, $offset, $filters );
     }
 
     /**
