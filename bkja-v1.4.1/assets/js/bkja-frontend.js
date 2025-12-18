@@ -1901,11 +1901,31 @@
                     if(isNaN(num) || num <= 0){
                         return '';
                     }
-                    var rounded = Math.round(num * 10) / 10;
-                    if(Math.abs(rounded - Math.round(rounded)) < 0.1){
-                        rounded = Math.round(rounded);
+
+                    var millionValue = num / 1000000;
+                    if(millionValue <= 0){
+                        return '';
                     }
-                    return rounded + ' میلیون تومان';
+
+                    var rounded;
+                    if(millionValue < 20){
+                        rounded = Math.round(millionValue * 10) / 10;
+                    } else {
+                        rounded = Math.round(millionValue);
+                    }
+
+                    var formatted = rounded.toString();
+                    if(formatted.indexOf('.') !== -1){
+                        formatted = formatted.replace(/\.0+$/, '');
+                    }
+
+                    var digitsEn = ['0','1','2','3','4','5','6','7','8','9'];
+                    var digitsFa = ['۰','۱','۲','۳','۴','۵','۶','۷','۸','۹'];
+                    for(var i=0; i<digitsEn.length; i++){
+                        formatted = formatted.replace(new RegExp(digitsEn[i], 'g'), digitsFa[i]);
+                    }
+
+                    return formatted + ' میلیون تومان';
                 }
 
                 var titleToShow = displayTitle || (s && (s.job_title_label || s.job_title)) || (typeof job_title === 'object' && job_title.label ? job_title.label : job_title);
