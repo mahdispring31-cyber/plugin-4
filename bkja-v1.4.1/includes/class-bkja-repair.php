@@ -279,13 +279,29 @@ class BKJA_Repair {
         }
 
         if ( null === $value && $text_value ) {
-            $parsed = bkja_parse_money_to_toman( $text_value );
-            if ( isset( $parsed['value_toman'] ) ) {
-                $value = self::sanitize_money_value( $parsed['value_toman'], $field_label, $messages );
-            }
-            if ( isset( $parsed['min_toman'] ) || isset( $parsed['max_toman'] ) ) {
-                $min_value = isset( $parsed['min_toman'] ) ? $parsed['min_toman'] : $min_value;
-                $max_value = isset( $parsed['max_toman'] ) ? $parsed['max_toman'] : $max_value;
+            $raw_text = is_string( $text_value ) ? $text_value : (string) $text_value;
+            if ( self::is_invalid_money_text( $raw_text ) ) {
+                $mark_null = true;
+                $min_value = null;
+                $max_value = null;
+            } else {
+                $parsed = bkja_parse_money_to_toman( $raw_text );
+                if ( isset( $parsed['value_toman'] ) ) {
+                    $value = self::sanitize_money_value( $parsed['value_toman'], $field_label, $messages );
+                }
+                if ( isset( $parsed['min_toman'] ) || isset( $parsed['max_toman'] ) ) {
+                    $min_value = isset( $parsed['min_toman'] ) ? $parsed['min_toman'] : $min_value;
+                    $max_value = isset( $parsed['max_toman'] ) ? $parsed['max_toman'] : $max_value;
+                }
+
+                if ( self::is_ambiguous_money_text( $raw_text ) ) {
+                    $value      = null;
+                    $min_value  = null;
+                    $max_value  = null;
+                    $unresolved = true;
+                    $mark_null  = true;
+                    $messages[] = "متن {$field_label} به‌صورت عددی مبهم بود و نیاز به بررسی دارد.";
+                }
             }
         }
 
@@ -302,7 +318,7 @@ class BKJA_Repair {
             $value = (int) round( ( $min_value + $max_value ) / 2 );
         }
 
-        if ( null === $value && ( $toman || $legacy || $text_value ) ) {
+        if ( null === $value && ( $toman || $legacy || $text_value ) && ! self::is_invalid_money_text( $text_value ) ) {
             $messages[] = "مقدار {$field_label} نامعتبر بود و در فایل unresolved.csv ثبت شد.";
             $unresolved = true;
             $mark_null  = true;
@@ -345,6 +361,78 @@ class BKJA_Repair {
         return self::sanitize_money_value( $value, $label, $messages );
     }
 
+    protected static function is_invalid_money_text( $text ) {
+        if ( ! is_string( $text ) ) {
+            $text = (string) $text;
+        }
+
+        $text = trim( $text );
+        if ( '' === $text ) {
+            return false;
+        }
+
+        if ( function_exists( 'bkja_normalize_fa_text' ) ) {
+            $text = bkja_normalize_fa_text( $text );
+        }
+
+        $needles = array(
+            'نامشخص',
+            'نیاز ندارد',
+            'سرمایه ای ندارد',
+            'سرمایه‌ای ندارد',
+            'سرمایه ندارد',
+            'وابسته',
+            'در متن گفته',
+            'در متن گفته شده',
+            '—',
+            '–',
+            '---',
+            '----',
+            '-',
+        );
+
+        foreach ( $needles as $needle ) {
+            if ( false !== mb_stripos( $text, $needle, 0, 'UTF-8' ) ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected static function is_ambiguous_money_text( $text ) {
+        if ( ! is_string( $text ) ) {
+            $text = (string) $text;
+        }
+
+        $text = trim( $text );
+        if ( '' === $text ) {
+            return false;
+        }
+
+        $unit_words = array( 'میلیون', 'میلیارد', 'هزار', 'تومان', 'تومن' );
+        foreach ( $unit_words as $word ) {
+            if ( false !== mb_stripos( $text, $word, 0, 'UTF-8' ) ) {
+                return false;
+            }
+        }
+
+        $has_digits = preg_match( '/[0-9۰-۹]/u', $text );
+        if ( ! $has_digits ) {
+            return false;
+        }
+
+        if ( preg_match( '/[0-9۰-۹]+\s*[-–—]\s*[0-9۰-۹]+/u', $text ) ) {
+            return true;
+        }
+
+        if ( preg_match( '/\b(تا|الی|بین)\b/u', $text ) ) {
+            return true;
+        }
+
+        return false;
+    }
+
     protected static function resolve_job_title( $row ) {
         global $wpdb;
 
@@ -354,16 +442,17 @@ class BKJA_Repair {
         $label    = '';
 
         if ( $job_id > 0 ) {
-            $exists = $wpdb->get_var(
+            $exists = $wpdb->get_row(
                 $wpdb->prepare(
-                    "SELECT id FROM {$wpdb->prefix}bkja_job_titles WHERE id = %d",
+                    "SELECT id, category_id FROM {$wpdb->prefix}bkja_job_titles WHERE id = %d",
                     $job_id
                 )
             );
             if ( $exists ) {
+                $resolved_category = $category > 0 ? $category : (int) $exists->category_id;
                 return array(
-                    'job_title_id' => $job_id,
-                    'category_id'  => $category,
+                    'job_title_id' => (int) $exists->id,
+                    'category_id'  => $resolved_category,
                     'messages'     => $messages,
                 );
             }
@@ -386,15 +475,42 @@ class BKJA_Repair {
             );
         }
 
+        $normalized_label = function_exists( 'bkja_normalize_fa_text' ) ? bkja_normalize_fa_text( $label ) : $label;
+        $variants         = function_exists( 'bkja_generate_title_variants' )
+            ? bkja_generate_title_variants( $normalized_label )
+            : array( $normalized_label );
+
         $slug        = sanitize_title( $label );
         $title_table = $wpdb->prefix . 'bkja_job_titles';
-        $found       = $wpdb->get_row(
-            $wpdb->prepare(
-                "SELECT id, category_id FROM {$title_table} WHERE slug = %s OR label = %s ORDER BY is_primary DESC, id ASC LIMIT 1",
-                $slug,
-                $label
-            )
-        );
+        $normalized_column = "TRIM(REPLACE(REPLACE(REPLACE(COALESCE(base_label, label), 'ي', 'ی'), 'ك', 'ک'), '‌', ' '))";
+
+        $found = null;
+        foreach ( $variants as $variant ) {
+            $found = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT id, category_id FROM {$title_table} WHERE {$normalized_column} = %s OR slug = %s OR label = %s ORDER BY is_primary DESC, id ASC LIMIT 1",
+                    $variant,
+                    $slug,
+                    $label
+                )
+            );
+
+            if ( $found && isset( $found->id ) ) {
+                break;
+            }
+
+            $like = '%' . $wpdb->esc_like( $variant ) . '%';
+            $found = $wpdb->get_row(
+                $wpdb->prepare(
+                    "SELECT id, category_id FROM {$title_table} WHERE {$normalized_column} LIKE %s ORDER BY is_primary DESC, id ASC LIMIT 1",
+                    $like
+                )
+            );
+
+            if ( $found && isset( $found->id ) ) {
+                break;
+            }
+        }
 
         if ( $found && isset( $found->id ) ) {
             return array(
@@ -404,7 +520,9 @@ class BKJA_Repair {
             );
         }
 
-        if ( $category <= 0 ) {
+        $fallback_category = $category > 0 ? $category : self::get_unknown_category_id();
+
+        if ( $fallback_category <= 0 ) {
             $messages[] = 'دسته‌بندی برای ساخت عنوان شغل مشخص نبود.';
             return array(
                 'job_title_id' => null,
@@ -413,12 +531,32 @@ class BKJA_Repair {
             );
         }
 
-        $new_id = BKJA_Database::ensure_job_title_exists( $category, $label );
+        $now       = current_time( 'mysql' );
+        $group_key = 'auto:' . md5( $normalized_label );
+
+        $wpdb->insert(
+            $title_table,
+            array(
+                'category_id' => $fallback_category,
+                'slug'        => $slug,
+                'label'       => $label,
+                'description' => null,
+                'base_label'  => $label,
+                'base_slug'   => sanitize_title( $label ),
+                'group_key'   => $group_key,
+                'is_primary'  => 1,
+                'is_visible'  => 0,
+                'created_at'  => $now,
+                'updated_at'  => $now,
+            )
+        );
+
+        $new_id = (int) $wpdb->insert_id;
         if ( $new_id ) {
-            $messages[] = 'عنوان شغل جدید ثبت شد.';
+            $messages[] = 'عنوان شغل جدید ثبت شد (خودکار).';
             return array(
-                'job_title_id' => (int) $new_id,
-                'category_id'  => $category,
+                'job_title_id' => $new_id,
+                'category_id'  => $fallback_category,
                 'messages'     => $messages,
             );
         }
@@ -430,6 +568,32 @@ class BKJA_Repair {
             'category_id'  => $category,
             'messages'     => $messages,
         );
+    }
+
+    protected static function get_unknown_category_id() {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'bkja_categories';
+        $exists = $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+        if ( $exists !== $table ) {
+            return 0;
+        }
+
+        $name  = 'سایر/نامشخص';
+        $cat_id = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT id FROM {$table} WHERE name = %s LIMIT 1",
+                $name
+            )
+        );
+
+        if ( $cat_id ) {
+            return (int) $cat_id;
+        }
+
+        $wpdb->insert( $table, array( 'name' => $name ) );
+
+        return (int) $wpdb->insert_id;
     }
 
     protected static function append_unresolved_row( $row, $messages = array() ) {
@@ -444,9 +608,13 @@ class BKJA_Repair {
             array(
                 $row->id,
                 isset( $row->title ) ? $row->title : '',
-                isset( $row->variant_title ) ? $row->variant_title : '',
-                isset( $row->category_id ) ? $row->category_id : '',
                 isset( $row->job_title_id ) ? $row->job_title_id : '',
+                isset( $row->category_id ) ? $row->category_id : '',
+                isset( $row->income ) ? $row->income : '',
+                isset( $row->investment ) ? $row->investment : '',
+                isset( $row->gender ) ? $row->gender : '',
+                isset( $row->hours_per_day ) ? $row->hours_per_day : '',
+                isset( $row->days_per_week ) ? $row->days_per_week : '',
                 implode( ' | ', $messages ),
             )
         );
@@ -467,7 +635,7 @@ class BKJA_Repair {
             return;
         }
 
-        fputcsv( $fh, array( 'id', 'title', 'variant_title', 'category_id', 'job_title_id', 'issues' ) );
+        fputcsv( $fh, array( 'job_id', 'title', 'job_title_id', 'category_id', 'income_raw', 'investment_raw', 'gender_raw', 'hours_raw', 'days_raw', 'issues' ) );
         fclose( $fh );
     }
 
@@ -494,6 +662,10 @@ class BKJA_Repair {
 
     protected static function clear_plugin_caches() {
         if ( class_exists( 'BKJA_Chat' ) ) {
+            if ( method_exists( 'BKJA_Chat', 'clear_all_caches_full' ) ) {
+                return BKJA_Chat::clear_all_caches_full();
+            }
+
             return BKJA_Chat::clear_response_cache_prefix();
         }
 

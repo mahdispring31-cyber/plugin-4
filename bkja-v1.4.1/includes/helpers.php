@@ -3,6 +3,81 @@ if ( ! defined( 'ABSPATH' ) ) {
     exit;
 }
 
+if ( ! function_exists( 'bkja_normalize_fa_text' ) ) {
+    /**
+     * Normalize Persian text by unifying Arabic characters and whitespace.
+     *
+     * @param string $text
+     * @return string
+     */
+    function bkja_normalize_fa_text( $text ) {
+        if ( ! is_string( $text ) ) {
+            $text = (string) $text;
+        }
+
+        $text = str_replace(
+            array( 'ي', 'ك', '‌', "\xE2\x80\x8C" ),
+            array( 'ی', 'ک', ' ', ' ' ),
+            $text
+        );
+
+        $text = preg_replace( '/\s+/u', ' ', $text );
+
+        return trim( (string) $text );
+    }
+}
+
+if ( ! function_exists( 'bkja_generate_title_variants' ) ) {
+    /**
+     * Generate variant titles for fuzzy matching.
+     *
+     * @param string $text
+     * @return array
+     */
+    function bkja_generate_title_variants( $text ) {
+        $text = bkja_normalize_fa_text( $text );
+        if ( '' === $text ) {
+            return array();
+        }
+
+        $variants = array( $text );
+
+        $ends_with = function( $value, $suffix ) {
+            if ( function_exists( 'mb_substr' ) ) {
+                return $suffix === mb_substr( $value, -1 * mb_strlen( $suffix, 'UTF-8' ), null, 'UTF-8' );
+            }
+            return substr( $value, -1 * strlen( $suffix ) ) === $suffix;
+        };
+
+        if ( $ends_with( $text, 'ی' ) ) {
+            $trimmed = function_exists( 'mb_substr' )
+                ? mb_substr( $text, 0, mb_strlen( $text, 'UTF-8' ) - 1, 'UTF-8' )
+                : substr( $text, 0, -1 );
+            $trimmed = bkja_normalize_fa_text( $trimmed );
+            if ( '' !== $trimmed ) {
+                $variants[] = $trimmed;
+            }
+        }
+
+        foreach ( array( 'های', 'ها' ) as $suffix ) {
+            if ( $ends_with( $text, $suffix ) ) {
+                $trimmed = function_exists( 'mb_substr' )
+                    ? mb_substr( $text, 0, mb_strlen( $text, 'UTF-8' ) - mb_strlen( $suffix, 'UTF-8' ), 'UTF-8' )
+                    : substr( $text, 0, -1 * strlen( $suffix ) );
+                $trimmed = bkja_normalize_fa_text( $trimmed );
+                if ( '' !== $trimmed ) {
+                    $variants[] = $trimmed;
+                }
+                break;
+            }
+        }
+
+        $variants = array_values( array_unique( array_filter( $variants ) ) );
+
+        return $variants;
+    }
+}
+
 if ( ! function_exists( 'bkja_get_gender_label' ) ) {
     function bkja_get_gender_label( $gender ) {
         switch ( $gender ) {

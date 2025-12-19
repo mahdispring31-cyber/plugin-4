@@ -1024,9 +1024,11 @@ class BKJA_Database {
         $text = is_string( $text ) ? $text : (string) $text;
         $text = preg_replace( '/\s+/u', ' ', $text );
 
+        if ( function_exists( 'bkja_normalize_fa_text' ) ) {
+            $text = bkja_normalize_fa_text( $text );
+        }
+
         $replacements = array(
-            'ي' => 'ی',
-            'ك' => 'ک',
             'ة' => 'ه',
             'ۀ' => 'ه',
             'ؤ' => 'و',
@@ -1062,6 +1064,7 @@ class BKJA_Database {
 
         $table_titles = $wpdb->prefix . 'bkja_job_titles';
         $table_jobs   = $wpdb->prefix . 'bkja_jobs';
+        $normalized_label_column = "REPLACE(REPLACE(REPLACE(COALESCE(jt.base_label, jt.label), 'ي', 'ی'), 'ك', 'ک'), '‌', ' ')";
 
         $counts_recent_sql = $wpdb->prepare(
             "SELECT job_title_id, COUNT(*) AS cnt FROM {$table_jobs} WHERE job_title_id IS NOT NULL AND created_at >= DATE_SUB(UTC_TIMESTAMP(), INTERVAL %d MONTH) GROUP BY job_title_id",
@@ -1135,7 +1138,14 @@ class BKJA_Database {
             $candidate_terms[] = $stemmed;
         }
 
-        $candidate_terms = array_values( array_unique( array_filter( $candidate_terms ) ) );
+        $variant_terms = array();
+        if ( function_exists( 'bkja_generate_title_variants' ) ) {
+            foreach ( $candidate_terms as $term ) {
+                $variant_terms = array_merge( $variant_terms, bkja_generate_title_variants( $term ) );
+            }
+        }
+
+        $candidate_terms = array_values( array_unique( array_filter( array_merge( $candidate_terms, $variant_terms ) ) ) );
 
         $calc_match_len = function( $label ) use ( $candidate_terms ) {
             $max_len = 0;
@@ -1156,43 +1166,43 @@ class BKJA_Database {
             array(
                 'key'     => 'exact',
                 'weight'  => 5,
-                'builder' => function( $term ) {
+                'builder' => function( $term ) use ( $normalized_label_column ) {
                     return array(
-                        'where'  => '(jt.base_label = %s OR jt.label = %s OR jt.slug = %s OR jt.base_slug = %s)',
-                        'params' => array( $term, $term, $term, $term ),
+                        'where'  => '(jt.base_label = %s OR jt.label = %s OR jt.slug = %s OR jt.base_slug = %s OR ' . $normalized_label_column . ' = %s)',
+                        'params' => array( $term, $term, $term, $term, $term ),
                     );
                 },
             ),
             array(
                 'key'     => 'prefix',
                 'weight'  => 4,
-                'builder' => function( $term ) {
+                'builder' => function( $term ) use ( $normalized_label_column ) {
                     $prefix = $term . '%';
                     return array(
-                        'where'  => '(jt.base_label LIKE %s OR jt.label LIKE %s)',
-                        'params' => array( $prefix, $prefix ),
+                        'where'  => '(jt.base_label LIKE %s OR jt.label LIKE %s OR ' . $normalized_label_column . ' LIKE %s)',
+                        'params' => array( $prefix, $prefix, $prefix ),
                     );
                 },
             ),
             array(
                 'key'     => 'contains',
                 'weight'  => 3,
-                'builder' => function( $term ) {
+                'builder' => function( $term ) use ( $normalized_label_column ) {
                     $like = '%' . $term . '%';
                     return array(
-                        'where'  => '(jt.base_label LIKE %s OR jt.label LIKE %s)',
-                        'params' => array( $like, $like ),
+                        'where'  => '(jt.base_label LIKE %s OR jt.label LIKE %s OR ' . $normalized_label_column . ' LIKE %s)',
+                        'params' => array( $like, $like, $like ),
                     );
                 },
             ),
             array(
                 'key'     => 'variant',
                 'weight'  => 3,
-                'builder' => function( $term ) {
+                'builder' => function( $term ) use ( $normalized_label_column ) {
                     $like = '%' . $term . '%';
                     return array(
-                        'where'  => '(jt.base_label LIKE %s OR jt.label LIKE %s OR EXISTS (SELECT 1 FROM %1$s j WHERE j.job_title_id = jt.id AND (j.title LIKE %2$s OR j.variant_title LIKE %2$s) LIMIT 1))',
-                        'params' => array( $like, $like ),
+                        'where'  => '(jt.base_label LIKE %s OR jt.label LIKE %s OR ' . $normalized_label_column . ' LIKE %s OR EXISTS (SELECT 1 FROM %1$s j WHERE j.job_title_id = jt.id AND (j.title LIKE %s OR j.variant_title LIKE %s) LIMIT 1))',
+                        'params' => array( $like, $like, $like, $like, $like ),
                     );
                 },
             ),
@@ -1236,7 +1246,7 @@ class BKJA_Database {
                 $params    = $condition['params'];
 
                 if ( false !== strpos( $where, '%1$s' ) ) {
-                    $where = sprintf( $where, $table_jobs );
+                    $where = str_replace( '%1$s', $table_jobs, $where );
                 }
 
                 $sql = "SELECT jt.id, jt.group_key, COALESCE(jt.base_label, jt.label) AS label, COALESCE(jt.base_slug, jt.slug) AS slug, jt.is_primary, COALESCE(rc.cnt, 0) AS recent_cnt, COALESCE(tc.cnt, 0) AS total_cnt
@@ -1303,6 +1313,35 @@ class BKJA_Database {
             'candidates'           => array_slice( $candidates, 0, 5 ),
             'ambiguous'            => $ambiguous,
         );
+    }
+
+    /**
+     * Resolve a job title group (group_key + job_title_ids) from any query.
+     */
+    public static function resolve_job_title_group( $query ) {
+        self::ensure_job_title_schema();
+
+        $context = self::resolve_job_group_context( $query );
+        if ( ! empty( $context['job_title_ids'] ) ) {
+            return array(
+                'group_key'     => isset( $context['group_key'] ) ? $context['group_key'] : null,
+                'base_label'    => isset( $context['label'] ) ? $context['label'] : '',
+                'job_title_ids' => array_values( array_unique( array_filter( array_map( 'intval', $context['job_title_ids'] ) ) ) ),
+            );
+        }
+
+        if ( is_string( $query ) && '' !== trim( $query ) ) {
+            $resolved = self::resolve_job_query( $query );
+            if ( ! empty( $resolved['job_title_ids'] ) ) {
+                return array(
+                    'group_key'     => isset( $resolved['group_key'] ) ? $resolved['group_key'] : null,
+                    'base_label'    => isset( $resolved['label'] ) ? $resolved['label'] : '',
+                    'job_title_ids' => array_values( array_unique( array_filter( array_map( 'intval', (array) $resolved['job_title_ids'] ) ) ) ),
+                );
+            }
+        }
+
+        return array();
     }
 
     /**
@@ -1404,16 +1443,15 @@ class BKJA_Database {
         }
 
         if ( is_string( $job_title ) && '' !== trim( $job_title ) ) {
-            $trimmed       = trim( $job_title );
-            $base_slug     = sanitize_title( $trimmed );
-            $candidates    = array( $trimmed );
-            $maybe_stemmed = ( function_exists( 'mb_substr' ) ? mb_substr( $trimmed, -1, 1, 'UTF-8' ) : substr( $trimmed, -2 ) ) === 'ی'
-                ? trim( function_exists( 'mb_substr' ) ? mb_substr( $trimmed, 0, mb_strlen( $trimmed, 'UTF-8' ) - 1, 'UTF-8' ) : substr( $trimmed, 0, -2 ) )
-                : '';
+            $trimmed    = trim( $job_title );
+            $base_slug  = sanitize_title( $trimmed );
+            $candidates = array( $trimmed );
 
-            if ( $maybe_stemmed ) {
-                $candidates[] = $maybe_stemmed;
+            if ( function_exists( 'bkja_generate_title_variants' ) ) {
+                $candidates = array_merge( $candidates, bkja_generate_title_variants( $trimmed ) );
             }
+
+            $candidates = array_values( array_unique( array_filter( $candidates ) ) );
 
             foreach ( $candidates as $term ) {
                 $term_slug = sanitize_title( $term );
@@ -1851,18 +1889,15 @@ class BKJA_Database {
             $window_months = 12;
         }
 
-        $context      = self::resolve_job_group_context( $job_title );
+        $context      = self::resolve_job_title_group( $job_title );
         $job_title_id = ! empty( $context['job_title_ids'] ) ? (int) $context['job_title_ids'][0] : null;
-        $job_label    = isset( $context['label'] ) ? $context['label'] : '';
-        $job_slug     = isset( $context['slug'] ) ? $context['slug'] : '';
-
-        if ( empty( $context['job_title_ids'] ) && ! is_string( $job_title ) ) {
-            $job_title = is_array( $job_title ) && isset( $job_title['label'] ) ? $job_title['label'] : '';
-        }
+        $job_label    = isset( $context['base_label'] ) ? $context['base_label'] : '';
+        $job_slug     = $job_label ? sanitize_title( $job_label ) : '';
+        $job_title    = $job_label ?: ( is_string( $job_title ) ? $job_title : '' );
 
         $job_ids = ! empty( $context['job_title_ids'] ) ? array_map( 'intval', $context['job_title_ids'] ) : array();
 
-        $where        = self::build_job_where_clause( $context, $job_title, $window_months, $filters, 'j' );
+        $where        = self::build_job_where_clause( $context, '', $window_months, $filters, 'j' );
         $where_clause = $where['where_clause'];
         $where_params = $where['where_params'];
 
@@ -2212,11 +2247,7 @@ class BKJA_Database {
 
         self::ensure_job_title_schema();
 
-        $context = self::resolve_job_group_context( $job_title );
-
-        if ( empty( $context['job_title_ids'] ) && ! is_string( $job_title ) ) {
-            $job_title = is_array( $job_title ) && isset( $job_title['label'] ) ? $job_title['label'] : '';
-        }
+        $context = self::resolve_job_title_group( $job_title );
 
         $job_ids = ! empty( $context['job_title_ids'] ) ? array_map( 'intval', $context['job_title_ids'] ) : array();
 
@@ -2225,7 +2256,7 @@ class BKJA_Database {
             $window_months = 12;
         }
 
-        $where        = self::build_job_where_clause( $context, $job_title, $window_months, $filters, 'j' );
+        $where        = self::build_job_where_clause( $context, '', $window_months, $filters, 'j' );
         $where_clause = $where['where_clause'];
         $where_params = $where['where_params'];
 
@@ -2349,6 +2380,10 @@ class BKJA_Database {
             $fallback_title = $context['label'];
         }
 
+        if ( ! $fallback_title && ! empty( $context['base_label'] ) ) {
+            $fallback_title = $context['base_label'];
+        }
+
         if ( empty( $job_ids ) && ! empty( $context['group_key'] ) ) {
             $job_ids = self::get_job_title_ids_for_group( $context['group_key'] );
         }
@@ -2360,6 +2395,8 @@ class BKJA_Database {
         } elseif ( '' !== $fallback_title ) {
             $clauses[] = "{$prefix}title = %s";
             $params[]  = $fallback_title;
+        } else {
+            $clauses[] = '1=0';
         }
 
         if ( $window_months > 0 ) {

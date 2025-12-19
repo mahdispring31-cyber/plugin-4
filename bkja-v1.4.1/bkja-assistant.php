@@ -346,14 +346,24 @@ function bkja_ajax_clear_cache() {
         wp_send_json_error( array( 'error' => 'missing_class' ), 500 );
     }
 
-    $result  = BKJA_Chat::clear_response_cache_prefix();
+    $result  = BKJA_Chat::clear_all_caches_full();
     $deleted = isset( $result['deleted'] ) ? (int) $result['deleted'] : 0;
     $version = isset( $result['version'] ) ? (int) $result['version'] : null;
+    $deleted_options = isset( $result['deleted_options'] ) ? (int) $result['deleted_options'] : 0;
+    $object_flush = isset( $result['object_cache_flushed'] ) ? $result['object_cache_flushed'] : null;
 
     $message = sprintf( 'پاکسازی کش انجام شد. %d رکورد حذف شد.', $deleted );
 
+    if ( $deleted_options > 0 ) {
+        $message .= ' ' . sprintf( '%d گزینه کش پاک شد.', $deleted_options );
+    }
+
     if ( null !== $version ) {
         $message .= ' (نسخه کش فعلی: ' . $version . ')';
+    }
+
+    if ( null !== $object_flush ) {
+        $message .= $object_flush ? ' (کش شیء پاک شد)' : ' (کش شیء پاک نشد)';
     }
 
     wp_send_json_success(
@@ -361,6 +371,8 @@ function bkja_ajax_clear_cache() {
             'message' => $message,
             'deleted' => $deleted,
             'version' => $version,
+            'deleted_options' => $deleted_options,
+            'object_cache_flushed' => $object_flush,
         )
     );
 }
