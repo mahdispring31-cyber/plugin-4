@@ -26,9 +26,11 @@ class BKJA_Chat {
             return '';
         }
 
+        if ( function_exists( 'bkja_normalize_fa_text' ) ) {
+            $text = bkja_normalize_fa_text( $text );
+        }
+
         $replacements = array(
-            'ي' => 'ی',
-            'ك' => 'ک',
             'ة' => 'ه',
             'ۀ' => 'ه',
             'ؤ' => 'و',
@@ -136,19 +138,39 @@ class BKJA_Chat {
 
         $job_title = '';
         $phrases   = self::build_job_lookup_phrases( $normalized_message );
+        $normalized_column = "TRIM(REPLACE(REPLACE(REPLACE({$title_column}, 'ي', 'ی'), 'ك', 'ک'), '‌', ' '))";
 
         foreach ( $phrases as $phrase ) {
-            $like = '%' . $wpdb->esc_like( $phrase ) . '%';
-            $row  = $wpdb->get_row(
-                $wpdb->prepare(
-                    "SELECT {$title_column} AS job_title FROM {$table} WHERE {$title_column} LIKE %s ORDER BY CHAR_LENGTH({$title_column}) ASC LIMIT 1",
-                    $like
-                )
-            );
+            $normalized_phrase = function_exists( 'bkja_normalize_fa_text' ) ? bkja_normalize_fa_text( $phrase ) : $phrase;
+            $variants = function_exists( 'bkja_generate_title_variants' )
+                ? bkja_generate_title_variants( $normalized_phrase )
+                : array( $normalized_phrase );
 
-            if ( $row && ! empty( $row->job_title ) ) {
-                $job_title = $row->job_title;
-                break;
+            foreach ( $variants as $variant ) {
+                $row = $wpdb->get_row(
+                    $wpdb->prepare(
+                        "SELECT {$title_column} AS job_title FROM {$table} WHERE {$normalized_column} = %s ORDER BY CHAR_LENGTH({$title_column}) ASC LIMIT 1",
+                        $variant
+                    )
+                );
+
+                if ( $row && ! empty( $row->job_title ) ) {
+                    $job_title = $row->job_title;
+                    break 2;
+                }
+
+                $like = '%' . $wpdb->esc_like( $variant ) . '%';
+                $row  = $wpdb->get_row(
+                    $wpdb->prepare(
+                        "SELECT {$title_column} AS job_title FROM {$table} WHERE {$normalized_column} LIKE %s ORDER BY CHAR_LENGTH({$title_column}) ASC LIMIT 1",
+                        $like
+                    )
+                );
+
+                if ( $row && ! empty( $row->job_title ) ) {
+                    $job_title = $row->job_title;
+                    break 2;
+                }
             }
         }
 
@@ -385,6 +407,7 @@ class BKJA_Chat {
 
         $table_titles = $wpdb->prefix . 'bkja_job_titles';
         $table_jobs   = $wpdb->prefix . 'bkja_jobs';
+        $normalized_label_column = "REPLACE(REPLACE(REPLACE(COALESCE(jt.base_label, jt.label), 'ي', 'ی'), 'ك', 'ک'), '‌', ' ')";
 
         $candidate_tokens = array( $core );
 
@@ -397,27 +420,36 @@ class BKJA_Chat {
         }
 
         $candidate_tokens[] = $normalized_full;
+
+        if ( function_exists( 'bkja_generate_title_variants' ) ) {
+            $variant_tokens = array();
+            foreach ( $candidate_tokens as $token ) {
+                $variant_tokens = array_merge( $variant_tokens, bkja_generate_title_variants( $token ) );
+            }
+            $candidate_tokens = array_merge( $candidate_tokens, $variant_tokens );
+        }
+
         $candidate_tokens   = array_values( array_unique( array_filter( $candidate_tokens ) ) );
 
         $stages = array(
-            'exact'    => function( $term ) {
+            'exact'    => function( $term ) use ( $normalized_label_column ) {
                 return array(
-                        'where'  => '(jt.base_label = %s OR jt.label = %s OR jt.slug = %s OR jt.base_slug = %s)',
-                        'params' => array( $term, $term, $term, $term ),
+                        'where'  => '(jt.base_label = %s OR jt.label = %s OR jt.slug = %s OR jt.base_slug = %s OR ' . $normalized_label_column . ' = %s)',
+                        'params' => array( $term, $term, $term, $term, $term ),
                 );
             },
-            'prefix'   => function( $term ) {
+            'prefix'   => function( $term ) use ( $normalized_label_column ) {
                 $term_prefix = $term . '%';
                 return array(
-                    'where'  => '(jt.label LIKE %s OR jt.base_label LIKE %s)',
-                    'params' => array( $term_prefix, $term_prefix ),
+                    'where'  => '(jt.label LIKE %s OR jt.base_label LIKE %s OR ' . $normalized_label_column . ' LIKE %s)',
+                    'params' => array( $term_prefix, $term_prefix, $term_prefix ),
                 );
             },
-            'contains' => function( $term ) {
+            'contains' => function( $term ) use ( $normalized_label_column ) {
                 $term_like = '%' . $term . '%';
                 return array(
-                    'where'  => '(jt.label LIKE %s OR jt.base_label LIKE %s)',
-                    'params' => array( $term_like, $term_like ),
+                    'where'  => '(jt.label LIKE %s OR jt.base_label LIKE %s OR ' . $normalized_label_column . ' LIKE %s)',
+                    'params' => array( $term_like, $term_like, $term_like ),
                 );
             },
         );
@@ -667,7 +699,7 @@ class BKJA_Chat {
                 $resolved_confidence   = isset( $resolved['confidence'] ) ? $resolved['confidence'] : $resolved_confidence;
                 $clarification_options = isset( $resolved['candidates'] ) ? (array) $resolved['candidates'] : $clarification_options;
                 $ambiguous_match       = ! empty( $resolved['ambiguous'] );
-                $resolved_for_db       = ! empty( $resolved['group_key'] ) ? array( 'group_key' => $resolved['group_key'], 'job_title_ids' => $resolved_ids, 'label' => $resolved['label'] ) : ( ! empty( $resolved['primary_job_title_id'] ) ? $resolved['primary_job_title_id'] : $resolved['label'] );
+                $resolved_for_db       = ! empty( $resolved['group_key'] ) ? array( 'group_key' => $resolved['group_key'], 'job_title_ids' => $resolved_ids, 'base_label' => $resolved['label'] ) : ( ! empty( $resolved['primary_job_title_id'] ) ? $resolved['primary_job_title_id'] : $resolved['label'] );
             }
         }
 
@@ -681,7 +713,7 @@ class BKJA_Chat {
                 $resolved_confidence   = isset( $resolved['confidence'] ) ? $resolved['confidence'] : $resolved_confidence;
                 $clarification_options = isset( $resolved['candidates'] ) ? (array) $resolved['candidates'] : $clarification_options;
                 $ambiguous_match       = ! empty( $resolved['ambiguous'] );
-                $resolved_for_db       = ! empty( $resolved['group_key'] ) ? array( 'group_key' => $resolved['group_key'], 'job_title_ids' => $resolved_ids, 'label' => $resolved['label'] ) : ( ! empty( $resolved['primary_job_title_id'] ) ? $resolved['primary_job_title_id'] : $resolved['label'] );
+                $resolved_for_db       = ! empty( $resolved['group_key'] ) ? array( 'group_key' => $resolved['group_key'], 'job_title_ids' => $resolved_ids, 'base_label' => $resolved['label'] ) : ( ! empty( $resolved['primary_job_title_id'] ) ? $resolved['primary_job_title_id'] : $resolved['label'] );
             }
         }
 
@@ -695,7 +727,7 @@ class BKJA_Chat {
                 $resolved_confidence   = isset( $resolved_hint['confidence'] ) ? $resolved_hint['confidence'] : $resolved_confidence;
                 $clarification_options = isset( $resolved_hint['candidates'] ) ? (array) $resolved_hint['candidates'] : $clarification_options;
                 $ambiguous_match       = ! empty( $resolved_hint['ambiguous'] );
-                $resolved_for_db       = ! empty( $resolved_hint['group_key'] ) ? array( 'group_key' => $resolved_hint['group_key'], 'job_title_ids' => $resolved_ids, 'label' => $resolved_hint['label'] ) : ( ! empty( $resolved_hint['primary_job_title_id'] ) ? $resolved_hint['primary_job_title_id'] : $resolved_hint['label'] );
+                $resolved_for_db       = ! empty( $resolved_hint['group_key'] ) ? array( 'group_key' => $resolved_hint['group_key'], 'job_title_ids' => $resolved_ids, 'base_label' => $resolved_hint['label'] ) : ( ! empty( $resolved_hint['primary_job_title_id'] ) ? $resolved_hint['primary_job_title_id'] : $resolved_hint['label'] );
             }
         }
 
@@ -712,6 +744,16 @@ class BKJA_Chat {
         }
 
         $target_title = $resolved_for_db ? $resolved_for_db : $job_title;
+
+        if ( class_exists( 'BKJA_Database' ) && method_exists( 'BKJA_Database', 'resolve_job_title_group' ) && ! empty( $target_title ) ) {
+            $group_context = BKJA_Database::resolve_job_title_group( $target_title );
+            if ( ! empty( $group_context['job_title_ids'] ) ) {
+                $target_title = $group_context;
+                if ( ! $primary_job_title_id && ! empty( $group_context['job_title_ids'][0] ) ) {
+                    $primary_job_title_id = (int) $group_context['job_title_ids'][0];
+                }
+            }
+        }
 
         if ( $primary_job_title_id > 0 && class_exists( 'BKJA_Database' ) && method_exists( 'BKJA_Database', 'get_job_summary_by_job_title_id' ) ) {
             $summary = BKJA_Database::get_job_summary_by_job_title_id( $primary_job_title_id );
@@ -1410,6 +1452,28 @@ class BKJA_Chat {
         $prefixes       = array_values( array_unique( array_merge( $base_prefixes, $extra_prefixes ) ) );
 
         return self::clear_all_caches( $prefixes );
+    }
+
+    public static function clear_all_caches_full( $extra_prefixes = array() ) {
+        $result = self::clear_response_cache_prefix( $extra_prefixes );
+
+        $deleted_options = 0;
+        if ( delete_option( 'bkja_cache_version' ) ) {
+            $deleted_options++;
+        }
+
+        $version = self::get_cache_version();
+        $result['version'] = $version;
+        $result['deleted_options'] = $deleted_options;
+
+        $object_cache_flushed = null;
+        if ( function_exists( 'wp_cache_flush' ) ) {
+            $object_cache_flushed = wp_cache_flush();
+        }
+
+        $result['object_cache_flushed'] = $object_cache_flushed;
+
+        return $result;
     }
 
     public static function clear_all_caches( $transient_prefixes = array( 'bkja_cache_', 'bkja_summary_', 'bkja_job_summary_', 'bkja_job_records_', 'bkja_answer_', 'bkja_stats_', 'bkja_jobs_', 'bkja_chat_', 'bkja_' ) ) {
