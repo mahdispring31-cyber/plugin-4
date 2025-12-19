@@ -27,6 +27,46 @@ if ( ! function_exists( 'bkja_normalize_fa_text' ) ) {
     }
 }
 
+if ( ! function_exists( 'bkja_normalize_query_text' ) ) {
+    /**
+     * Normalize free-text queries for job matching.
+     *
+     * @param string $text
+     * @return string
+     */
+    function bkja_normalize_query_text( $text ) {
+        if ( ! is_string( $text ) ) {
+            $text = (string) $text;
+        }
+
+        $text = bkja_normalize_fa_text( $text );
+        $text = strtr(
+            $text,
+            array(
+                'ة' => 'ه',
+                'ۀ' => 'ه',
+                'ؤ' => 'و',
+                'إ' => 'ا',
+                'أ' => 'ا',
+                'آ' => 'ا',
+                'ـ' => '',
+            )
+        );
+
+        // Strip emoji and punctuation-like symbols.
+        $text = preg_replace( '/[^\p{L}\p{N}\s]+/u', ' ', $text );
+        $text = preg_replace( '/\s+/u', ' ', $text );
+
+        if ( function_exists( 'mb_strtolower' ) ) {
+            $text = mb_strtolower( $text, 'UTF-8' );
+        } else {
+            $text = strtolower( $text );
+        }
+
+        return trim( (string) $text );
+    }
+}
+
 if ( ! function_exists( 'bkja_generate_title_variants' ) ) {
     /**
      * Generate variant titles for fuzzy matching.
@@ -35,7 +75,7 @@ if ( ! function_exists( 'bkja_generate_title_variants' ) ) {
      * @return array
      */
     function bkja_generate_title_variants( $text ) {
-        $text = bkja_normalize_fa_text( $text );
+        $text = bkja_normalize_query_text( $text );
         if ( '' === $text ) {
             return array();
         }
@@ -53,7 +93,7 @@ if ( ! function_exists( 'bkja_generate_title_variants' ) ) {
             $trimmed = function_exists( 'mb_substr' )
                 ? mb_substr( $text, 0, mb_strlen( $text, 'UTF-8' ) - 1, 'UTF-8' )
                 : substr( $text, 0, -1 );
-            $trimmed = bkja_normalize_fa_text( $trimmed );
+            $trimmed = bkja_normalize_query_text( $trimmed );
             if ( '' !== $trimmed ) {
                 $variants[] = $trimmed;
             }
@@ -64,7 +104,20 @@ if ( ! function_exists( 'bkja_generate_title_variants' ) ) {
                 $trimmed = function_exists( 'mb_substr' )
                     ? mb_substr( $text, 0, mb_strlen( $text, 'UTF-8' ) - mb_strlen( $suffix, 'UTF-8' ), 'UTF-8' )
                     : substr( $text, 0, -1 * strlen( $suffix ) );
-                $trimmed = bkja_normalize_fa_text( $trimmed );
+                $trimmed = bkja_normalize_query_text( $trimmed );
+                if ( '' !== $trimmed ) {
+                    $variants[] = $trimmed;
+                }
+                break;
+            }
+        }
+
+        foreach ( array( 'گری', 'کاری', 'چی' ) as $suffix ) {
+            if ( $ends_with( $text, $suffix ) ) {
+                $trimmed = function_exists( 'mb_substr' )
+                    ? mb_substr( $text, 0, mb_strlen( $text, 'UTF-8' ) - mb_strlen( $suffix, 'UTF-8' ), 'UTF-8' )
+                    : substr( $text, 0, -1 * strlen( $suffix ) );
+                $trimmed = bkja_normalize_query_text( $trimmed );
                 if ( '' !== $trimmed ) {
                     $variants[] = $trimmed;
                 }
@@ -171,36 +224,21 @@ if ( ! function_exists( 'bkja_parse_money_to_toman' ) ) {
             return $result;
         }
 
-        $persian_digits = array( '۰','۱','۲','۳','۴','۵','۶','۷','۸','۹' );
-        $latin_digits   = array( '0','1','2','3','4','5','6','7','8','9' );
-        $normalized     = str_replace( $persian_digits, $latin_digits, $text );
-        $normalized     = str_replace( array( ',', '٬', '،' ), '', $normalized );
-        $normalized     = preg_replace( '/\s+/u', ' ', $normalized );
-
         // Detect unit words
         $has_billion = ( false !== mb_stripos( $text, 'میلیارد', 0, 'UTF-8' ) );
         $has_million = ( false !== mb_stripos( $text, 'میلیون', 0, 'UTF-8' ) );
         $has_thousand = ( false !== mb_stripos( $text, 'هزار', 0, 'UTF-8' ) );
         $has_toman = ( false !== mb_stripos( $text, 'تومان', 0, 'UTF-8' ) || false !== mb_stripos( $text, 'تومن', 0, 'UTF-8' ) );
 
-        preg_match_all( '/([0-9]+(?:[\.\/][0-9]+)?)/', $normalized, $matches );
-        $numbers = array();
-        if ( ! empty( $matches[1] ) ) {
-            foreach ( $matches[1] as $match ) {
-                $num = floatval( str_replace( '/', '.', $match ) );
-                if ( $num > 0 ) {
-                    $numbers[] = $num;
-                }
-            }
-        }
+        $numeric = function_exists( 'bkja_parse_numeric_range' )
+            ? bkja_parse_numeric_range( $text )
+            : array();
 
-        if ( empty( $numbers ) ) {
+        if ( empty( $numeric ) || ( empty( $numeric['value'] ) && empty( $numeric['min'] ) && empty( $numeric['max'] ) ) ) {
             return $result;
         }
 
-        $is_range = false !== mb_stripos( $normalized, 'تا', 0, 'UTF-8' ) || false !== mb_stripos( $normalized, 'بین', 0, 'UTF-8' );
-
-        $base_number = $numbers[0];
+        $base_number = isset( $numeric['value'] ) ? (float) $numeric['value'] : 0.0;
         $multiplier  = 1;
 
         if ( $has_billion ) {
@@ -223,10 +261,10 @@ if ( ! function_exists( 'bkja_parse_money_to_toman' ) ) {
         $min = null;
         $max = null;
 
-        if ( $is_range && count( $numbers ) >= 2 ) {
-            $min = (int) round( $numbers[0] * $multiplier );
-            $max = (int) round( $numbers[1] * $multiplier );
-            if ( $min > 0 && $max > 0 && $min > $max ) {
+        if ( isset( $numeric['min'] ) || isset( $numeric['max'] ) ) {
+            $min = isset( $numeric['min'] ) ? (int) round( (float) $numeric['min'] * $multiplier ) : null;
+            $max = isset( $numeric['max'] ) ? (int) round( (float) $numeric['max'] * $multiplier ) : null;
+            if ( $min && $max && $min > $max ) {
                 $tmp = $min;
                 $min = $max;
                 $max = $tmp;
@@ -234,11 +272,7 @@ if ( ! function_exists( 'bkja_parse_money_to_toman' ) ) {
         }
 
         $value = null;
-        if ( count( $numbers ) >= 2 && $is_range ) {
-            $value = (int) round( ( ( $numbers[0] + $numbers[1] ) / 2 ) * $multiplier );
-        } else {
-            $value = (int) round( $base_number * $multiplier );
-        }
+        $value = $base_number > 0 ? (int) round( $base_number * $multiplier ) : null;
 
         if ( $value > 0 ) {
             $result['value_toman'] = $value;
@@ -248,6 +282,69 @@ if ( ! function_exists( 'bkja_parse_money_to_toman' ) ) {
         }
         if ( $max && $max > 0 ) {
             $result['max_toman'] = $max;
+        }
+
+        return $result;
+    }
+}
+
+if ( ! function_exists( 'bkja_parse_numeric_range' ) ) {
+    /**
+     * Parse a numeric value or range from text (supports Persian digits and ranges).
+     *
+     * @param string $raw
+     * @return array{value:?float,min:?float,max:?float}
+     */
+    function bkja_parse_numeric_range( $raw ) {
+        $result = array(
+            'value' => null,
+            'min'   => null,
+            'max'   => null,
+        );
+
+        if ( ! is_string( $raw ) ) {
+            return $result;
+        }
+
+        $text = trim( wp_strip_all_tags( (string) $raw ) );
+        if ( '' === $text ) {
+            return $result;
+        }
+
+        $persian_digits = array( '۰','۱','۲','۳','۴','۵','۶','۷','۸','۹' );
+        $latin_digits   = array( '0','1','2','3','4','5','6','7','8','9' );
+        $normalized     = str_replace( $persian_digits, $latin_digits, $text );
+        $normalized     = str_replace( array( ',', '٬', '،' ), '', $normalized );
+        $normalized     = preg_replace( '/\s+/u', ' ', $normalized );
+
+        $range_patterns = array(
+            '/بین\s*([0-9]+(?:[\.\/][0-9]+)?)\s*(?:و|تا|الی)\s*([0-9]+(?:[\.\/][0-9]+)?)/u',
+            '/([0-9]+(?:[\.\/][0-9]+)?)\s*(?:تا|الی|الى|–|-|—)\s*([0-9]+(?:[\.\/][0-9]+)?)/u',
+        );
+
+        foreach ( $range_patterns as $pattern ) {
+            if ( preg_match( $pattern, $normalized, $matches ) ) {
+                $min = floatval( str_replace( '/', '.', $matches[1] ) );
+                $max = floatval( str_replace( '/', '.', $matches[2] ) );
+                if ( $min > 0 && $max > 0 ) {
+                    if ( $min > $max ) {
+                        $tmp = $min;
+                        $min = $max;
+                        $max = $tmp;
+                    }
+                    $result['min']   = $min;
+                    $result['max']   = $max;
+                    $result['value'] = ( $min + $max ) / 2;
+                    return $result;
+                }
+            }
+        }
+
+        if ( preg_match( '/([0-9]+(?:[\.\/][0-9]+)?)/', $normalized, $match ) ) {
+            $value = floatval( str_replace( '/', '.', $match[1] ) );
+            if ( $value > 0 ) {
+                $result['value'] = $value;
+            }
         }
 
         return $result;

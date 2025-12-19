@@ -59,8 +59,24 @@ class BKJA_Repair {
         $table = $wpdb->prefix . 'bkja_jobs';
         $total = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" );
 
-        if ( $reset_csv && ! $dry_run ) {
-            self::reset_unresolved_csv();
+        $processed   = 0;
+        $updated     = 0;
+        $unresolved  = 0;
+        $log         = array();
+
+        $repair_dir = self::ensure_repair_dir_writable();
+        $can_write_unresolved = (bool) $repair_dir;
+        if ( ! $can_write_unresolved ) {
+            $log[] = 'مسیر uploads/bkja-repair قابل‌نوشتن نیست. امکان ساخت unresolved.csv وجود ندارد.';
+        }
+
+        if ( $reset_csv ) {
+            $reset_ok = self::reset_unresolved_csv();
+            if ( ! $reset_ok ) {
+                $log[] = 'امکان ریست فایل unresolved.csv وجود ندارد (مسیر قابل‌نوشتن نیست).';
+            } elseif ( $dry_run ) {
+                $log[] = 'Dry-run: فایل unresolved.csv از نو ساخته شد.';
+            }
         }
 
         $rows = $wpdb->get_results(
@@ -71,14 +87,9 @@ class BKJA_Repair {
             )
         );
 
-        $processed   = 0;
-        $updated     = 0;
-        $unresolved  = 0;
-        $log         = array();
-
         foreach ( (array) $rows as $row ) {
             $processed++;
-            $result = self::repair_row( $row, $dry_run );
+            $result = self::repair_row( $row, $dry_run, $can_write_unresolved );
 
             if ( ! empty( $result['updated'] ) ) {
                 $updated++;
@@ -129,7 +140,7 @@ class BKJA_Repair {
         );
     }
 
-    protected static function repair_row( $row, $dry_run = false ) {
+    protected static function repair_row( $row, $dry_run = false, $write_unresolved = false ) {
         global $wpdb;
 
         $updates    = array();
@@ -219,7 +230,7 @@ class BKJA_Repair {
             $unresolved = true;
         }
 
-        if ( $unresolved && ! $dry_run ) {
+        if ( $unresolved && $write_unresolved ) {
             self::append_unresolved_row( $row, $messages );
         }
 
@@ -255,11 +266,16 @@ class BKJA_Repair {
     }
 
     protected static function normalize_range_value( $value, $min, $max ) {
+        if ( ! is_numeric( $value ) && function_exists( 'bkja_parse_numeric_range' ) ) {
+            $parsed = bkja_parse_numeric_range( (string) $value );
+            $value  = isset( $parsed['value'] ) ? $parsed['value'] : null;
+        }
+
         if ( ! is_numeric( $value ) ) {
             return null;
         }
 
-        $value = (int) $value;
+        $value = (int) round( $value );
         if ( $value < $min || $value > $max ) {
             return null;
         }
@@ -598,6 +614,9 @@ class BKJA_Repair {
 
     protected static function append_unresolved_row( $row, $messages = array() ) {
         $path = self::get_unresolved_csv_path();
+        if ( '' === $path ) {
+            return;
+        }
         $fh   = fopen( $path, 'a' );
         if ( ! $fh ) {
             return;
@@ -624,6 +643,9 @@ class BKJA_Repair {
 
     protected static function reset_unresolved_csv() {
         $path = self::get_unresolved_csv_path();
+        if ( '' === $path ) {
+            return false;
+        }
         $dir  = dirname( $path );
 
         if ( ! file_exists( $dir ) ) {
@@ -632,18 +654,18 @@ class BKJA_Repair {
 
         $fh = fopen( $path, 'w' );
         if ( ! $fh ) {
-            return;
+            return false;
         }
 
         fputcsv( $fh, array( 'job_id', 'title', 'job_title_id', 'category_id', 'income_raw', 'investment_raw', 'gender_raw', 'hours_raw', 'days_raw', 'issues' ) );
         fclose( $fh );
+        return true;
     }
 
     protected static function get_unresolved_csv_path() {
-        $uploads = wp_upload_dir();
-        $base    = trailingslashit( $uploads['basedir'] ) . 'bkja-repair';
-        if ( ! file_exists( $base ) ) {
-            wp_mkdir_p( $base );
+        $base = self::ensure_repair_dir_writable();
+        if ( ! $base ) {
+            return '';
         }
         return trailingslashit( $base ) . 'unresolved.csv';
     }
@@ -658,6 +680,29 @@ class BKJA_Repair {
         );
 
         return $url;
+    }
+
+    /**
+     * Ensure the repair upload directory exists and is writable.
+     */
+    protected static function ensure_repair_dir_writable() {
+        $uploads = wp_upload_dir();
+        if ( ! empty( $uploads['error'] ) ) {
+            return false;
+        }
+
+        $base = trailingslashit( $uploads['basedir'] ) . 'bkja-repair';
+        if ( ! file_exists( $base ) ) {
+            if ( ! wp_mkdir_p( $base ) ) {
+                return false;
+            }
+        }
+
+        if ( ! is_writable( $base ) ) {
+            return false;
+        }
+
+        return $base;
     }
 
     protected static function clear_plugin_caches() {

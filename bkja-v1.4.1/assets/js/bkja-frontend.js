@@ -1306,6 +1306,53 @@
                 return String(text).replace(/[\s‌]+/g,' ').trim().toLowerCase();
             }
 
+            function isLikelyFollowupMessage(message){
+                var normalized = normalizeForMatch(message);
+                if(!normalized){
+                    return false;
+                }
+                var followupKeywords = ['چقدر','چقدره','درآمد','درامد','حقوق','سرمایه','مزایا','معایب','چالش','بازار','ریسک','سود','چطوره','چطور','چیه','چنده','درآمدش','حقوقش','سخته','امکان','شرایط'];
+                if(normalized.length <= 28){
+                    for(var i=0;i<followupKeywords.length;i++){
+                        if(normalized.indexOf(followupKeywords[i]) !== -1){
+                            return true;
+                        }
+                    }
+                }
+                if(normalized.indexOf('این') !== -1 || normalized.indexOf('همین') !== -1 || normalized.indexOf('اون') !== -1){
+                    return true;
+                }
+                return false;
+            }
+
+            function hasExplicitJobHint(message){
+                var normalized = normalizeForMatch(message);
+                if(!normalized){
+                    return false;
+                }
+                var explicitKeywords = ['شغل','کار','حوزه','رشته','حرفه','درباره','در مورد','راجع','راجب','خصوص','زمینه'];
+                for(var i=0;i<explicitKeywords.length;i++){
+                    if(normalized.indexOf(explicitKeywords[i]) !== -1){
+                        return true;
+                    }
+                }
+                var tokens = normalized.split(' ');
+                var stopwords = ['چقدر','چقدره','درآمد','درامد','حقوق','سرمایه','مزایا','معایب','بازار','ریسک','سود','این','همین','اون','چطور','چیه','چنده'];
+                for(var t=0;t<tokens.length;t++){
+                    var token = tokens[t];
+                    if(!token || token.length < 3){
+                        continue;
+                    }
+                    if(stopwords.indexOf(token) !== -1){
+                        continue;
+                    }
+                    if(/(ی|گر|گری|کاری|چی|مند|کار)$/.test(token)){
+                        return true;
+                    }
+                }
+                return false;
+            }
+
             function shouldStartPersonalityFlow(message){
                 if(personalityFlow.active || personalityFlow.awaitingResult){
                     return false;
@@ -1468,6 +1515,8 @@
                 }
 
                 var sendOptions = { contextMessage: text };
+                var explicitJobHintInMessage = hasExplicitJobHint(text);
+                var followupMessage = isLikelyFollowupMessage(text);
                 if(typeof options.category === 'string' && options.category.length){
                     sendOptions.category = options.category;
                 }
@@ -1498,7 +1547,22 @@
 
                 var normalizedSameJob = $.trim(String(text || '')).replace(/\s+/g,'').toLowerCase();
                 var wantsSameJob = normalizedSameJob.indexOf('همینشغل') !== -1 || normalizedSameJob.indexOf('همینکار') !== -1 || normalizedSameJob.indexOf('همونشغل') !== -1;
-                if(!sendOptions.jobTitle && !sendOptions.jobSlug && !sendOptions.jobTitleId && !sendOptions.groupKey && wantsSameJob){
+                if(!sendOptions.jobTitle && !sendOptions.jobSlug && !sendOptions.jobTitleId && !sendOptions.groupKey && wantsSameJob && !explicitJobHintInMessage){
+                    if(cleanJobHint(lastKnownJobTitle)){
+                        sendOptions.jobTitle = cleanJobHint(lastKnownJobTitle);
+                    }
+                    if(cleanJobHint(lastKnownJobSlug)){
+                        sendOptions.jobSlug = cleanJobHint(lastKnownJobSlug);
+                    }
+                    if(lastKnownJobTitleId){
+                        sendOptions.jobTitleId = lastKnownJobTitleId;
+                    }
+                    if(lastKnownGroupKey){
+                        sendOptions.groupKey = lastKnownGroupKey;
+                    }
+                }
+
+                if(!sendOptions.jobTitle && !sendOptions.jobSlug && !sendOptions.jobTitleId && !sendOptions.groupKey && followupMessage && !explicitJobHintInMessage){
                     if(cleanJobHint(lastKnownJobTitle)){
                         sendOptions.jobTitle = cleanJobHint(lastKnownJobTitle);
                     }

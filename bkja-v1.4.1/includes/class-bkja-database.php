@@ -1022,29 +1022,15 @@ class BKJA_Database {
      */
     protected static function normalize_job_query_text( $text ) {
         $text = is_string( $text ) ? $text : (string) $text;
-        $text = preg_replace( '/\s+/u', ' ', $text );
+        $text = function_exists( 'bkja_normalize_query_text' )
+            ? bkja_normalize_query_text( $text )
+            : $text;
 
-        if ( function_exists( 'bkja_normalize_fa_text' ) ) {
-            $text = bkja_normalize_fa_text( $text );
+        if ( function_exists( 'mb_strtolower' ) ) {
+            $text = mb_strtolower( $text, 'UTF-8' );
+        } else {
+            $text = strtolower( $text );
         }
-
-        $replacements = array(
-            'ة' => 'ه',
-            'ۀ' => 'ه',
-            'ؤ' => 'و',
-            'إ' => 'ا',
-            'أ' => 'ا',
-            'آ' => 'ا',
-        );
-
-        $text = strtr( $text, $replacements );
-        $text = str_replace(
-            array( '‌', "\xE2\x80\x8C", '-', '–', '—', '_', '/', '\\', '(', ')', '[', ']', '{', '}', '«', '»', '"', '\'', ':' ),
-            ' ',
-            $text
-        );
-
-        $text = preg_replace( '/\s+/u', ' ', $text );
 
         return trim( (string) $text );
     }
@@ -1124,8 +1110,25 @@ class BKJA_Database {
         $token_compact = preg_replace( '/\s+/u', '', $normalized );
 
         $candidate_terms = array();
+        $filtered_tokens = array();
         if ( $tokens ) {
+            $filtered_tokens = array_filter( $tokens, function( $token ) {
+                $token = trim( $token );
+                if ( '' === $token ) {
+                    return false;
+                }
+                return ! in_array( $token, self::$job_title_stopwords, true );
+            } );
+            if ( $filtered_tokens ) {
+                $candidate_terms[] = implode( ' ', $filtered_tokens );
+            }
             $candidate_terms[] = implode( ' ', $tokens );
+            foreach ( $tokens as $token ) {
+                $candidate_terms[] = $token;
+            }
+            foreach ( $filtered_tokens as $token ) {
+                $candidate_terms[] = $token;
+            }
         }
         $candidate_terms[] = $normalized;
         $candidate_terms[] = $token_compact;
@@ -1231,6 +1234,7 @@ class BKJA_Database {
                     'jobs_count_total'  => $total_cnt,
                     'score'             => $score,
                     'match_type'        => $stage_key,
+                    'match_len'         => $match_len,
                     'job_title_ids'     => array_map( 'intval', $job_title_ids ),
                 );
             }
@@ -1302,6 +1306,17 @@ class BKJA_Database {
         $second_score = isset( $candidates[1]['score'] ) ? (float) $candidates[1]['score'] : 0.0;
         $confidence   = $best_score > 0 ? min( 1.0, max( 0.35, ( $best_score - $second_score ) / ( $best_score + 1 ) + 0.6 ) ) : 0.0;
         $ambiguous    = ( count( $candidates ) > 1 && $second_score >= ( $best_score * 0.85 ) );
+
+        if ( 1 === count( $candidates ) ) {
+            $ambiguous = false;
+        }
+
+        if ( isset( $best['match_type'], $best['match_len'] ) && in_array( $best['match_type'], array( 'exact', 'prefix' ), true ) ) {
+            if ( (int) $best['match_len'] >= 3 ) {
+                $confidence = max( $confidence, 0.75 );
+                $ambiguous  = false;
+            }
+        }
 
         return array(
             'matched_job_title_id' => isset( $best['job_title_id'] ) ? (int) $best['job_title_id'] : 0,
@@ -1544,9 +1559,26 @@ class BKJA_Database {
 
         $income_num_input     = isset( $data['income_num'] ) ? intval( $data['income_num'] ) : null;
         $investment_num_input = isset( $data['investment_num'] ) ? intval( $data['investment_num'] ) : null;
-        $experience_years     = isset( $data['experience_years'] ) ? intval( $data['experience_years'] ) : null;
-        $hours_per_day        = isset( $data['hours_per_day'] ) ? intval( $data['hours_per_day'] ) : null;
-        $days_per_week        = isset( $data['days_per_week'] ) ? intval( $data['days_per_week'] ) : null;
+        $experience_years     = isset( $data['experience_years'] ) ? $data['experience_years'] : null;
+        $hours_per_day        = isset( $data['hours_per_day'] ) ? $data['hours_per_day'] : null;
+        $days_per_week        = isset( $data['days_per_week'] ) ? $data['days_per_week'] : null;
+
+        if ( ! is_numeric( $experience_years ) && function_exists( 'bkja_parse_numeric_range' ) ) {
+            $parsed = bkja_parse_numeric_range( (string) $experience_years );
+            $experience_years = isset( $parsed['value'] ) ? (int) round( $parsed['value'] ) : null;
+        }
+        if ( ! is_numeric( $hours_per_day ) && function_exists( 'bkja_parse_numeric_range' ) ) {
+            $parsed = bkja_parse_numeric_range( (string) $hours_per_day );
+            $hours_per_day = isset( $parsed['value'] ) ? (int) round( $parsed['value'] ) : null;
+        }
+        if ( ! is_numeric( $days_per_week ) && function_exists( 'bkja_parse_numeric_range' ) ) {
+            $parsed = bkja_parse_numeric_range( (string) $days_per_week );
+            $days_per_week = isset( $parsed['value'] ) ? (int) round( $parsed['value'] ) : null;
+        }
+
+        $experience_years = is_numeric( $experience_years ) ? (int) $experience_years : null;
+        $hours_per_day    = is_numeric( $hours_per_day ) ? (int) $hours_per_day : null;
+        $days_per_week    = is_numeric( $days_per_week ) ? (int) $days_per_week : null;
 
         $experience_years = ( $experience_years && $experience_years > 0 ) ? $experience_years : null;
         $hours_per_day    = ( $hours_per_day && $hours_per_day > 0 ) ? $hours_per_day : null;
@@ -2063,9 +2095,37 @@ class BKJA_Database {
             $range_max = ! empty( $income_range_maxes ) ? max( $income_range_maxes ) : $max_income;
         }
 
+        if ( $range_min && $range_max && $range_min > $range_max ) {
+            $tmp       = $range_min;
+            $range_min = $range_max;
+            $range_max = $tmp;
+        }
+
+        if ( $avg_income && $range_min && $range_max ) {
+            if ( $avg_income < $range_min ) {
+                $avg_income = $range_min;
+            } elseif ( $avg_income > $range_max ) {
+                $avg_income = $range_max;
+            }
+        }
+
         $avg_investment = $calc_avg( $investment_values );
         $min_investment = ! empty( $investment_values ) ? min( $investment_values ) : null;
         $max_investment = ! empty( $investment_values ) ? max( $investment_values ) : null;
+
+        if ( $min_investment && $max_investment && $min_investment > $max_investment ) {
+            $tmp            = $min_investment;
+            $min_investment = $max_investment;
+            $max_investment = $tmp;
+        }
+
+        if ( $avg_investment && $min_investment && $max_investment ) {
+            if ( $avg_investment < $min_investment ) {
+                $avg_investment = $min_investment;
+            } elseif ( $avg_investment > $max_investment ) {
+                $avg_investment = $max_investment;
+            }
+        }
 
         $avg_experience_years = $exp_count > 0 ? $sum_experience / $exp_count : null;
         $avg_hours_per_day    = $hours_count > 0 ? $sum_hours / $hours_count : null;

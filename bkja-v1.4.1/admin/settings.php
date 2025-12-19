@@ -653,7 +653,7 @@
                                 <button type="button" class="bkja-button secondary" data-bkja-clear-cache="1" data-target="bkja-clear-cache-repair">پاکسازی کش</button>
                         </div>
                         <div id="bkja-repair-status" class="bkja-status"></div>
-                        <div class="bkja-note">در صورت تولید داده نامشخص، فایل unresolved.csv برای بررسی بیشتر آماده خواهد شد.</div>
+                        <div class="bkja-note">در صورت تولید داده نامشخص، فایل unresolved.csv برای بررسی بیشتر آماده خواهد شد. در حالت Dry-run نیز فایل از نو ساخته می‌شود تا نتایج مرحله فعلی شفاف باشد.</div>
                         <div id="bkja-repair-log" class="bkja-log" aria-live="polite"></div>
                         <div id="bkja-repair-download" class="bkja-actions"></div>
                         <div id="bkja-clear-cache-repair" class="bkja-help"></div>

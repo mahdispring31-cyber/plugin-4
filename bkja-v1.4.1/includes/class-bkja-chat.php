@@ -26,26 +26,11 @@ class BKJA_Chat {
             return '';
         }
 
-        if ( function_exists( 'bkja_normalize_fa_text' ) ) {
+        if ( function_exists( 'bkja_normalize_query_text' ) ) {
+            $text = bkja_normalize_query_text( $text );
+        } elseif ( function_exists( 'bkja_normalize_fa_text' ) ) {
             $text = bkja_normalize_fa_text( $text );
         }
-
-        $replacements = array(
-            'ة' => 'ه',
-            'ۀ' => 'ه',
-            'ؤ' => 'و',
-            'إ' => 'ا',
-            'أ' => 'ا',
-            'آ' => 'ا',
-        );
-
-        $text = strtr( $text, $replacements );
-        $text = str_replace(
-            array( '‌', "\xE2\x80\x8C", '-', '–', '—', '_', '/', '\\', '(', ')', '[', ']', '{', '}', '«', '»', '"', '\'', ':' ),
-            ' ',
-            $text
-        );
-        $text = preg_replace( '/\s+/u', ' ', $text );
 
         return trim( (string) $text );
     }
@@ -683,8 +668,63 @@ class BKJA_Chat {
         $resolved_confidence   = null;
         $clarification_options = array();
         $ambiguous_match       = false;
+        $needs_clarification   = false;
+        $resolution_source     = '';
 
-        if ( $job_title_id > 0 || $group_key ) {
+        $explicit_terms       = array();
+        $explicit_resolution  = null;
+        $explicit_confidence  = null;
+        $explicit_candidates  = array();
+        $explicit_ambiguous   = false;
+
+        if ( '' !== $normalized ) {
+            $explicit_terms = self::build_job_lookup_phrases( $normalized );
+            $explicit_resolution = self::resolve_job_context_from_query( $normalized );
+            if ( $explicit_resolution ) {
+                $explicit_confidence = isset( $explicit_resolution['confidence'] ) ? (float) $explicit_resolution['confidence'] : null;
+                $explicit_candidates = isset( $explicit_resolution['candidates'] ) ? (array) $explicit_resolution['candidates'] : array();
+                $explicit_ambiguous  = ! empty( $explicit_resolution['ambiguous'] ) || ( null !== $explicit_confidence && $explicit_confidence < 0.55 );
+            }
+        }
+
+        $explicit_signal = ( ! empty( $explicit_terms ) || ( $explicit_resolution && ( ! empty( $explicit_resolution['job_title_ids'] ) || ! empty( $explicit_candidates ) ) ) );
+
+        if ( $explicit_signal ) {
+            if ( $explicit_resolution && ! $explicit_ambiguous && ! empty( $explicit_resolution['job_title_ids'] ) ) {
+                $job_title             = $explicit_resolution['label'];
+                $job_slug              = isset( $explicit_resolution['slug'] ) ? $explicit_resolution['slug'] : $job_slug;
+                $resolved_ids          = isset( $explicit_resolution['job_title_ids'] ) ? (array) $explicit_resolution['job_title_ids'] : array();
+                $primary_job_title_id  = ! empty( $explicit_resolution['primary_job_title_id'] )
+                    ? (int) $explicit_resolution['primary_job_title_id']
+                    : ( ! empty( $resolved_ids ) ? (int) $resolved_ids[0] : $primary_job_title_id );
+                $resolved_confidence   = $explicit_confidence;
+                $clarification_options = $explicit_candidates;
+                $ambiguous_match       = ! empty( $explicit_resolution['ambiguous'] );
+                $resolved_for_db       = ! empty( $explicit_resolution['group_key'] )
+                    ? array( 'group_key' => $explicit_resolution['group_key'], 'job_title_ids' => $resolved_ids, 'base_label' => $explicit_resolution['label'] )
+                    : ( ! empty( $explicit_resolution['primary_job_title_id'] ) ? $explicit_resolution['primary_job_title_id'] : $explicit_resolution['label'] );
+                $resolution_source     = 'explicit_in_text';
+            } else {
+                $needs_clarification = true;
+                return array(
+                    'job_title'           => '',
+                    'summary'             => null,
+                    'records'             => array(),
+                    'job_slug'            => null,
+                    'job_title_ids'       => array(),
+                    'group_key'           => null,
+                    'primary_job_title_id'=> null,
+                    'resolved_confidence' => $explicit_confidence,
+                    'candidates'          => $explicit_candidates,
+                    'ambiguous'           => true,
+                    'needs_clarification' => true,
+                    'resolution_source'   => 'explicit_in_text',
+                    'stats_executed'      => false,
+                );
+            }
+        }
+
+        if ( '' === $resolution_source && ( $job_title_id > 0 || $group_key ) ) {
             $resolved = self::resolve_job_context_from_query(
                 array(
                     'job_title_id' => $job_title_id,
@@ -700,10 +740,11 @@ class BKJA_Chat {
                 $clarification_options = isset( $resolved['candidates'] ) ? (array) $resolved['candidates'] : $clarification_options;
                 $ambiguous_match       = ! empty( $resolved['ambiguous'] );
                 $resolved_for_db       = ! empty( $resolved['group_key'] ) ? array( 'group_key' => $resolved['group_key'], 'job_title_ids' => $resolved_ids, 'base_label' => $resolved['label'] ) : ( ! empty( $resolved['primary_job_title_id'] ) ? $resolved['primary_job_title_id'] : $resolved['label'] );
+                $resolution_source     = 'context_followup';
             }
         }
 
-        if ( '' !== $normalized ) {
+        if ( '' === $resolution_source && '' !== $normalized ) {
             $resolved = self::resolve_job_context_from_query( $normalized );
             if ( $resolved ) {
                 $job_title             = $resolved['label'];
@@ -714,6 +755,7 @@ class BKJA_Chat {
                 $clarification_options = isset( $resolved['candidates'] ) ? (array) $resolved['candidates'] : $clarification_options;
                 $ambiguous_match       = ! empty( $resolved['ambiguous'] );
                 $resolved_for_db       = ! empty( $resolved['group_key'] ) ? array( 'group_key' => $resolved['group_key'], 'job_title_ids' => $resolved_ids, 'base_label' => $resolved['label'] ) : ( ! empty( $resolved['primary_job_title_id'] ) ? $resolved['primary_job_title_id'] : $resolved['label'] );
+                $resolution_source     = 'explicit_in_text';
             }
         }
 
@@ -728,15 +770,22 @@ class BKJA_Chat {
                 $clarification_options = isset( $resolved_hint['candidates'] ) ? (array) $resolved_hint['candidates'] : $clarification_options;
                 $ambiguous_match       = ! empty( $resolved_hint['ambiguous'] );
                 $resolved_for_db       = ! empty( $resolved_hint['group_key'] ) ? array( 'group_key' => $resolved_hint['group_key'], 'job_title_ids' => $resolved_ids, 'base_label' => $resolved_hint['label'] ) : ( ! empty( $resolved_hint['primary_job_title_id'] ) ? $resolved_hint['primary_job_title_id'] : $resolved_hint['label'] );
+                $resolution_source     = 'manual_pick';
             }
         }
 
         if ( '' === $job_title && '' !== $normalized ) {
             $job_title = self::resolve_job_title_from_message( $normalized, $table, $title_column );
+            if ( $job_title ) {
+                $resolution_source = 'explicit_in_text';
+            }
         }
 
         if ( '' === $job_title && '' !== $job_title_hint ) {
             $job_title = $job_title_hint;
+            if ( '' === $resolution_source ) {
+                $resolution_source = 'manual_pick';
+            }
         }
 
         if ( '' === $job_title ) {
@@ -775,6 +824,8 @@ class BKJA_Chat {
             'candidates' => $clarification_options,
             'ambiguous' => $ambiguous_match,
             'stats_executed' => is_array( $summary ),
+            'resolution_source' => $resolution_source,
+            'needs_clarification' => $needs_clarification,
         ];
     }
 
@@ -833,6 +884,7 @@ class BKJA_Chat {
             $summary       = $context['summary'];
             $count_reports = isset( $summary['count_reports'] ) ? (int) $summary['count_reports'] : 0;
             $window_months = isset( $summary['window_months'] ) ? (int) $summary['window_months'] : null;
+            $income_numeric_total = isset( $summary['income_numeric_total'] ) ? (int) $summary['income_numeric_total'] : 0;
 
             $count_line = 'تعداد گزارش‌های معتبر';
             if ( $window_months ) {
@@ -840,6 +892,12 @@ class BKJA_Chat {
             }
             $count_line .= ': ' . $count_reports;
             $lines[] = $count_line;
+            if ( $count_reports > 0 && $count_reports < 3 ) {
+                $lines[] = 'هشدار: داده‌های بسیار محدود است و نتایج تقریبی است.';
+            }
+            if ( $income_numeric_total > 0 && $income_numeric_total < 3 ) {
+                $lines[] = 'هشدار: تعداد گزارش‌های عددی کم است و دقت پایین است.';
+            }
 
             $avg_income  = isset( $summary['avg_income'] ) ? $summary['avg_income'] : null;
             $min_income  = isset( $summary['min_income'] ) ? $summary['min_income'] : null;
@@ -936,6 +994,9 @@ class BKJA_Chat {
                 $sections[] = '• از ' . $count_reports . ' گزارش، ' . $income_numeric_total . ' گزارش درآمد عددی قابل تحلیل داشت.';
             } else {
                 $sections[] = '• دادهٔ کافی برای محاسبهٔ دقیق درآمد ندارم (مثلاً فقط ۰ گزارش عددی). اگر چند تجربهٔ دیگر اضافه شود، میانگین دقیق‌تر می‌شود.';
+            }
+            if ( $count_reports < 3 ) {
+                $sections[] = '• ⚠️ داده‌های موجود محدود است و دقت پایین است.';
             }
         } else {
             $sections[] = '• در ۱۲ ماه اخیر گزارشی برای این شغل ثبت نشده. می‌خوای کل زمان رو هم بررسی کنم؟';
@@ -1045,7 +1106,9 @@ class BKJA_Chat {
             $clarification_candidates = array_slice( $context['candidates'], 0, 3 );
         }
 
-        $needs_clarification = ! empty( $context['ambiguous'] ) || ( isset( $context['resolved_confidence'] ) && (float) $context['resolved_confidence'] < 0.55 );
+        $needs_clarification = ! empty( $context['ambiguous'] )
+            || ( isset( $context['resolved_confidence'] ) && (float) $context['resolved_confidence'] < 0.55 )
+            || ! empty( $context['needs_clarification'] );
         if ( $clarification_candidates && $needs_clarification ) {
             $labels = array();
             foreach ( $clarification_candidates as $cand ) {
@@ -1060,6 +1123,8 @@ class BKJA_Chat {
                 $question = 'منظورت کدام شغل است؟ ' . implode( ' یا ', array_slice( $labels, 0, 3 ) );
                 $push( $question );
             }
+        } elseif ( $needs_clarification ) {
+            $push( 'منظورت کدام شغل است؟' );
         }
 
         $normalize = function( $text ) {
@@ -1279,6 +1344,8 @@ class BKJA_Chat {
         $payload['job_title_ids']        = $job_title_ids;
         $payload['group_key']            = $group_key;
         $payload['clarification_options']= $clarification_options;
+        $payload['resolution_source']    = isset( $context['resolution_source'] ) ? $context['resolution_source'] : null;
+        $payload['resolved_job_title_id']= $primary_job_title_id;
 
         if ( ! isset( $payload['meta'] ) || ! is_array( $payload['meta'] ) ) {
             $payload['meta'] = array();
@@ -1294,6 +1361,8 @@ class BKJA_Chat {
         $payload['meta']['job_title_ids']        = $payload['job_title_ids'];
         $payload['meta']['group_key']            = $payload['group_key'];
         $payload['meta']['clarification_options']= $payload['clarification_options'];
+        $payload['meta']['resolution_source']    = $payload['resolution_source'];
+        $payload['meta']['resolved_job_title_id']= $payload['resolved_job_title_id'];
 
         return $payload;
     }
@@ -1313,6 +1382,7 @@ class BKJA_Chat {
             'group_key'    => isset( $context['group_key'] ) ? $context['group_key'] : '',
             'clarification_options' => isset( $context['candidates'] ) && is_array( $context['candidates'] ) ? array_slice( $context['candidates'], 0, 3 ) : array(),
             'resolved_confidence'   => isset( $context['resolved_confidence'] ) ? $context['resolved_confidence'] : null,
+            'resolution_source'     => isset( $context['resolution_source'] ) ? $context['resolution_source'] : null,
         );
 
         if ( ! empty( $extra ) && is_array( $extra ) ) {
@@ -1351,6 +1421,7 @@ class BKJA_Chat {
             'group_key'    => isset( $payload['group_key'] ) ? $payload['group_key'] : null,
             'clarification_options' => isset( $payload['clarification_options'] ) ? $payload['clarification_options'] : array(),
             'resolved_confidence'   => isset( $payload['resolved_confidence'] ) ? $payload['resolved_confidence'] : null,
+            'resolution_source'     => isset( $payload['resolution_source'] ) ? $payload['resolution_source'] : null,
         );
 
         return self::refresh_job_stats_payload( $payload, $context );
