@@ -63,6 +63,7 @@ class BKJA_Repair {
         $updated     = 0;
         $unresolved  = 0;
         $log         = array();
+        $stats       = array();
 
         $repair_dir = self::ensure_repair_dir_writable();
         $can_write_unresolved = (bool) $repair_dir;
@@ -99,8 +100,13 @@ class BKJA_Repair {
                 $unresolved++;
             }
 
-            if ( ! empty( $result['messages'] ) ) {
-                $log = array_merge( $log, $result['messages'] );
+            if ( ! empty( $result['stats'] ) ) {
+                foreach ( $result['stats'] as $key => $value ) {
+                    if ( ! isset( $stats[ $key ] ) ) {
+                        $stats[ $key ] = 0;
+                    }
+                    $stats[ $key ] += (int) $value;
+                }
             }
         }
 
@@ -125,6 +131,11 @@ class BKJA_Repair {
             $log[] = 'رکوردی برای پردازش در این مرحله باقی نمانده بود.';
         }
 
+        $summary_lines = self::format_repair_summary( $stats );
+        if ( ! empty( $summary_lines ) ) {
+            $log = array_merge( $log, $summary_lines );
+        }
+
         return array(
             'processed'        => $processed,
             'updated'          => $updated,
@@ -135,6 +146,7 @@ class BKJA_Repair {
             'next_offset'      => $next,
             'done'             => $done,
             'log'              => $log,
+            'stats'            => $stats,
             'cache_cleared'    => $cache_data,
             'download_url'     => self::get_download_url(),
         );
@@ -144,22 +156,31 @@ class BKJA_Repair {
         global $wpdb;
 
         $updates    = array();
-        $messages   = array();
+        $issues     = array();
+        $stats      = array();
         $unresolved = false;
 
         $title_data = self::resolve_job_title( $row );
-        if ( $title_data['job_title_id'] ) {
-            $updates['job_title_id'] = $title_data['job_title_id'];
+        $job_title_id = isset( $title_data['job_title_id'] ) ? (int) $title_data['job_title_id'] : 0;
+        if ( $job_title_id ) {
+            $should_update_job_title = (int) $row->job_title_id !== $job_title_id;
         } else {
+            $should_update_job_title = false;
+            self::record_unresolved(
+                $issues,
+                $stats,
+                (int) $row->id,
+                'job_title_id',
+                isset( $title_data['label'] ) ? $title_data['label'] : '',
+                null,
+                isset( $title_data['reason'] ) ? $title_data['reason'] : 'job_title_missing',
+                isset( $title_data['wpdb_error'] ) ? $title_data['wpdb_error'] : ''
+            );
             $unresolved = true;
         }
 
         if ( $title_data['category_id'] && (int) $row->category_id !== (int) $title_data['category_id'] ) {
             $updates['category_id'] = (int) $title_data['category_id'];
-        }
-
-        if ( ! empty( $title_data['messages'] ) ) {
-            $messages = array_merge( $messages, $title_data['messages'] );
         }
 
         $gender = self::normalize_gender( $row->gender );
@@ -183,7 +204,8 @@ class BKJA_Repair {
             $row->income,
             $row->income_min_toman,
             $row->income_max_toman,
-            'income'
+            'income',
+            $row->id
         );
         $investment_norm = self::normalize_money_set(
             $row->investment_toman,
@@ -191,13 +213,16 @@ class BKJA_Repair {
             $row->investment,
             null,
             null,
-            'investment'
+            'investment',
+            $row->id
         );
 
-        foreach ( array( $income_norm, $investment_norm ) as $norm ) {
-            if ( ! empty( $norm['messages'] ) ) {
-                $messages = array_merge( $messages, $norm['messages'] );
-            }
+        $issues = array_merge( $issues, $income_norm['issues'], $investment_norm['issues'] );
+        foreach ( $income_norm['stats'] as $key => $count ) {
+            $stats[ $key ] = isset( $stats[ $key ] ) ? $stats[ $key ] + $count : $count;
+        }
+        foreach ( $investment_norm['stats'] as $key => $count ) {
+            $stats[ $key ] = isset( $stats[ $key ] ) ? $stats[ $key ] + $count : $count;
         }
 
         if ( null !== $income_norm['value'] ) {
@@ -230,24 +255,57 @@ class BKJA_Repair {
             $unresolved = true;
         }
 
-        if ( $unresolved && $write_unresolved ) {
-            self::append_unresolved_row( $row, $messages );
+        $updated = false;
+        if ( $should_update_job_title && ! $dry_run ) {
+            $title_update = $wpdb->update(
+                $wpdb->prefix . 'bkja_jobs',
+                array( 'job_title_id' => $job_title_id ),
+                array( 'id' => (int) $row->id )
+            );
+            if ( false === $title_update || 0 === $title_update ) {
+                self::record_unresolved(
+                    $issues,
+                    $stats,
+                    (int) $row->id,
+                    'job_title_id',
+                    isset( $title_data['label'] ) ? $title_data['label'] : '',
+                    $job_title_id,
+                    'job_title_update_failed',
+                    $wpdb->last_error
+                );
+                $unresolved = true;
+            } else {
+                $updated = true;
+                if ( ! empty( $title_data['created'] ) ) {
+                    $stats['job_title_created'] = isset( $stats['job_title_created'] ) ? $stats['job_title_created'] + 1 : 1;
+                }
+            }
         }
 
-        $updated = false;
         if ( ! empty( $updates ) && ! $dry_run ) {
-            $wpdb->update(
+            $result = $wpdb->update(
                 $wpdb->prefix . 'bkja_jobs',
                 $updates,
                 array( 'id' => (int) $row->id )
             );
-            $updated = true;
+            if ( false !== $result && $result > 0 ) {
+                $updated = true;
+            }
+        }
+
+        if ( ! empty( $issues ) ) {
+            $unresolved = true;
+        }
+
+        if ( $unresolved && $write_unresolved ) {
+            self::append_unresolved_rows( $issues );
         }
 
         return array(
             'updated'    => $updated,
             'unresolved' => $unresolved,
-            'messages'   => $messages,
+            'issues'     => $issues,
+            'stats'      => $stats,
         );
     }
 
@@ -283,46 +341,119 @@ class BKJA_Repair {
         return $value;
     }
 
-    protected static function normalize_money_set( $toman, $legacy, $text_value, $min_value, $max_value, $field_label ) {
-        $messages   = array();
-        $unresolved = false;
-        $mark_null  = false;
+    protected static function record_unresolved( &$issues, &$stats, $job_id, $field, $raw_value, $normalized_value, $reason, $wpdb_error = '' ) {
+        $issues[] = array(
+            'job_id'           => $job_id,
+            'field'            => $field,
+            'raw_value'        => $raw_value,
+            'normalized_value' => $normalized_value,
+            'reason'           => $reason,
+            'wpdb_error'       => $wpdb_error,
+        );
 
-        $value = self::sanitize_money_value( $toman, $field_label, $messages );
+        if ( ! isset( $stats[ $reason ] ) ) {
+            $stats[ $reason ] = 0;
+        }
+        $stats[ $reason ]++;
+    }
 
-        if ( null === $value && $legacy ) {
-            $value = self::convert_legacy_money( $legacy, $field_label, $messages );
+    protected static function format_repair_summary( $stats ) {
+        if ( empty( $stats ) ) {
+            return array();
         }
 
-        if ( null === $value && $text_value ) {
-            $raw_text = is_string( $text_value ) ? $text_value : (string) $text_value;
-            if ( self::is_invalid_money_text( $raw_text ) ) {
-                $mark_null = true;
+        $labels = array(
+            'investment_unknown'         => 'سرمایه نامشخص بود',
+            'investment_invalid'         => 'سرمایه نامعتبر بود',
+            'investment_ambiguous_unit'  => 'واحد سرمایه نامشخص بود',
+            'income_unknown'             => 'درآمد نامشخص بود',
+            'income_invalid'             => 'درآمد نامعتبر بود',
+            'income_ambiguous_unit'      => 'واحد درآمد نامشخص بود',
+            'job_title_insert_failed'    => 'ثبت عنوان شغل جدید ممکن نشد',
+            'job_title_insert_no_id'     => 'ثبت عنوان شغل جدید شناسه برنگرداند',
+            'job_title_update_failed'    => 'به‌روزرسانی عنوان شغل با شکست مواجه شد',
+            'job_title_missing'          => 'عنوان شغل خالی بود',
+            'job_title_category_unknown' => 'دسته‌بندی برای عنوان شغل مشخص نبود',
+            'job_title_created'          => 'عنوان شغل جدید ثبت شد (خودکار)',
+        );
+
+        $lines = array();
+        foreach ( $stats as $reason => $count ) {
+            if ( ! $count ) {
+                continue;
+            }
+            $label = isset( $labels[ $reason ] ) ? $labels[ $reason ] : $reason;
+            $lines[] = sprintf( '%s: %d مورد', $label, $count );
+        }
+
+        return $lines;
+    }
+
+    protected static function normalize_job_title_label( $label ) {
+        $label = is_string( $label ) ? $label : (string) $label;
+        $label = trim( wp_strip_all_tags( $label ) );
+        $label = preg_replace( '/[[:cntrl:]]/u', ' ', $label );
+        $label = preg_replace( '/\s+/u', ' ', $label );
+
+        if ( function_exists( 'bkja_normalize_fa_text' ) ) {
+            $label = bkja_normalize_fa_text( $label );
+        }
+
+        return trim( $label );
+    }
+
+    protected static function normalize_money_set( $toman, $legacy, $text_value, $min_value, $max_value, $field_label, $job_id ) {
+        $issues     = array();
+        $stats      = array();
+        $unresolved = false;
+        $mark_null  = false;
+        $allow_zero = ( 'investment' === $field_label );
+
+        $value = self::sanitize_money_value( $toman, $field_label, $allow_zero, true );
+
+        if ( null === $value && $legacy ) {
+            $value = self::sanitize_money_value( $legacy, $field_label, $allow_zero, true );
+        }
+
+        $raw_text   = is_string( $text_value ) ? $text_value : (string) $text_value;
+        $has_text   = '' !== trim( $raw_text );
+        $should_parse = $has_text || ( null === $value && ! $legacy );
+
+        if ( $should_parse && class_exists( 'BKJA_Parser' ) ) {
+            $parsed = ( 'investment' === $field_label )
+                ? BKJA_Parser::parse_investment_to_toman( $raw_text )
+                : BKJA_Parser::parse_income_to_toman( $raw_text );
+
+            if ( 'zero' === $parsed['status'] ) {
+                $value     = 0;
+                $mark_null = false;
                 $min_value = null;
                 $max_value = null;
-            } else {
-                $parsed = bkja_parse_money_to_toman( $raw_text );
-                if ( isset( $parsed['value_toman'] ) ) {
-                    $value = self::sanitize_money_value( $parsed['value_toman'], $field_label, $messages );
+            } elseif ( 'ok' === $parsed['status'] ) {
+                if ( null === $value ) {
+                    $value = self::sanitize_money_value( $parsed['value'], $field_label, $allow_zero, false );
                 }
-                if ( isset( $parsed['min_toman'] ) || isset( $parsed['max_toman'] ) ) {
-                    $min_value = isset( $parsed['min_toman'] ) ? $parsed['min_toman'] : $min_value;
-                    $max_value = isset( $parsed['max_toman'] ) ? $parsed['max_toman'] : $max_value;
-                }
-
-                if ( self::is_ambiguous_money_text( $raw_text ) ) {
-                    $value      = null;
-                    $min_value  = null;
-                    $max_value  = null;
-                    $unresolved = true;
-                    $mark_null  = true;
-                    $messages[] = "متن {$field_label} به‌صورت عددی مبهم بود و نیاز به بررسی دارد.";
-                }
+            } elseif ( in_array( $parsed['status'], array( 'unknown', 'invalid', 'ambiguous_unit' ), true ) ) {
+                $value      = null;
+                $min_value  = null;
+                $max_value  = null;
+                $mark_null  = true;
+                $unresolved = true;
+                self::record_unresolved(
+                    $issues,
+                    $stats,
+                    (int) $job_id,
+                    $field_label,
+                    $raw_text,
+                    $parsed['note'],
+                    "{$field_label}_{$parsed['status']}",
+                    ''
+                );
             }
         }
 
-        $min_value = self::sanitize_money_value( $min_value, "{$field_label}_min", $messages );
-        $max_value = self::sanitize_money_value( $max_value, "{$field_label}_max", $messages );
+        $min_value = self::sanitize_money_value( $min_value, "{$field_label}_min", false, false );
+        $max_value = self::sanitize_money_value( $max_value, "{$field_label}_max", false, false );
 
         if ( $min_value && $max_value && $min_value > $max_value ) {
             $tmp       = $min_value;
@@ -334,125 +465,45 @@ class BKJA_Repair {
             $value = (int) round( ( $min_value + $max_value ) / 2 );
         }
 
-        if ( null === $value && ( $toman || $legacy || $text_value ) && ! self::is_invalid_money_text( $text_value ) ) {
-            $messages[] = "مقدار {$field_label} نامعتبر بود و در فایل unresolved.csv ثبت شد.";
-            $unresolved = true;
-            $mark_null  = true;
-        }
-
         return array(
-            'value'     => $value,
-            'min'       => $min_value,
-            'max'       => $max_value,
-            'messages'  => $messages,
-            'unresolved'=> $unresolved,
-            'mark_null' => $mark_null,
+            'value'      => $value,
+            'min'        => $min_value,
+            'max'        => $max_value,
+            'issues'     => $issues,
+            'stats'      => $stats,
+            'unresolved' => $unresolved,
+            'mark_null'  => $mark_null,
         );
     }
 
-    protected static function sanitize_money_value( $value, $label, &$messages ) {
+    protected static function sanitize_money_value( $value, $label, $allow_zero, $assume_million ) {
         if ( ! is_numeric( $value ) ) {
             return null;
         }
 
-        $value = (int) $value;
+        $value = (float) $value;
+        if ( 0.0 === $value && $allow_zero ) {
+            return 0;
+        }
+
         if ( $value <= 0 ) {
             return null;
         }
 
-        if ( $value < 1000000 ) {
-            $messages[] = "{$label} برحسب میلیون تشخیص داده شد و به تومان تبدیل شد.";
+        if ( $assume_million && $value < 1000000 ) {
             $value = $value * 1000000;
         }
 
         if ( $value > 1000000000000 ) {
-            $messages[] = "{$label} بزرگ‌تر از حد مجاز بود و کنار گذاشته شد.";
             return null;
         }
 
-        return $value;
-    }
-
-    protected static function convert_legacy_money( $value, $label, &$messages ) {
-        return self::sanitize_money_value( $value, $label, $messages );
-    }
-
-    protected static function is_invalid_money_text( $text ) {
-        if ( ! is_string( $text ) ) {
-            $text = (string) $text;
-        }
-
-        $text = trim( $text );
-        if ( '' === $text ) {
-            return false;
-        }
-
-        if ( function_exists( 'bkja_normalize_fa_text' ) ) {
-            $text = bkja_normalize_fa_text( $text );
-        }
-
-        $needles = array(
-            'نامشخص',
-            'نیاز ندارد',
-            'سرمایه ای ندارد',
-            'سرمایه‌ای ندارد',
-            'سرمایه ندارد',
-            'وابسته',
-            'در متن گفته',
-            'در متن گفته شده',
-            '—',
-            '–',
-            '---',
-            '----',
-            '-',
-        );
-
-        foreach ( $needles as $needle ) {
-            if ( false !== mb_stripos( $text, $needle, 0, 'UTF-8' ) ) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    protected static function is_ambiguous_money_text( $text ) {
-        if ( ! is_string( $text ) ) {
-            $text = (string) $text;
-        }
-
-        $text = trim( $text );
-        if ( '' === $text ) {
-            return false;
-        }
-
-        $unit_words = array( 'میلیون', 'میلیارد', 'هزار', 'تومان', 'تومن' );
-        foreach ( $unit_words as $word ) {
-            if ( false !== mb_stripos( $text, $word, 0, 'UTF-8' ) ) {
-                return false;
-            }
-        }
-
-        $has_digits = preg_match( '/[0-9۰-۹]/u', $text );
-        if ( ! $has_digits ) {
-            return false;
-        }
-
-        if ( preg_match( '/[0-9۰-۹]+\s*[-–—]\s*[0-9۰-۹]+/u', $text ) ) {
-            return true;
-        }
-
-        if ( preg_match( '/\b(تا|الی|بین)\b/u', $text ) ) {
-            return true;
-        }
-
-        return false;
+        return (int) round( $value );
     }
 
     protected static function resolve_job_title( $row ) {
         global $wpdb;
 
-        $messages = array();
         $category = isset( $row->category_id ) ? (int) $row->category_id : 0;
         $job_id   = isset( $row->job_title_id ) ? (int) $row->job_title_id : 0;
         $label    = '';
@@ -469,10 +520,9 @@ class BKJA_Repair {
                 return array(
                     'job_title_id' => (int) $exists->id,
                     'category_id'  => $resolved_category,
-                    'messages'     => $messages,
+                    'label'        => isset( $row->title ) ? $row->title : '',
                 );
             }
-            $messages[] = 'شناسه عنوان شغل معتبر نبود و مجدداً تعیین شد.';
         }
 
         if ( ! empty( $row->variant_title ) ) {
@@ -481,13 +531,13 @@ class BKJA_Repair {
             $label = $row->title;
         }
 
-        $label = is_string( $label ) ? trim( $label ) : '';
+        $label = self::normalize_job_title_label( $label );
         if ( '' === $label ) {
-            $messages[] = 'عنوان شغل خالی است.';
             return array(
                 'job_title_id' => null,
                 'category_id'  => $category,
-                'messages'     => $messages,
+                'label'        => '',
+                'reason'       => 'job_title_missing',
             );
         }
 
@@ -532,25 +582,25 @@ class BKJA_Repair {
             return array(
                 'job_title_id' => (int) $found->id,
                 'category_id'  => $category > 0 ? $category : (int) $found->category_id,
-                'messages'     => $messages,
+                'label'        => $label,
             );
         }
 
         $fallback_category = $category > 0 ? $category : self::get_unknown_category_id();
 
         if ( $fallback_category <= 0 ) {
-            $messages[] = 'دسته‌بندی برای ساخت عنوان شغل مشخص نبود.';
             return array(
                 'job_title_id' => null,
                 'category_id'  => $category,
-                'messages'     => $messages,
+                'label'        => $label,
+                'reason'       => 'job_title_category_unknown',
             );
         }
 
         $now       = current_time( 'mysql' );
         $group_key = 'auto:' . md5( $normalized_label );
 
-        $wpdb->insert(
+        $inserted = $wpdb->insert(
             $title_table,
             array(
                 'category_id' => $fallback_category,
@@ -567,22 +617,31 @@ class BKJA_Repair {
             )
         );
 
-        $new_id = (int) $wpdb->insert_id;
-        if ( $new_id ) {
-            $messages[] = 'عنوان شغل جدید ثبت شد (خودکار).';
+        if ( false === $inserted ) {
             return array(
-                'job_title_id' => $new_id,
-                'category_id'  => $fallback_category,
-                'messages'     => $messages,
+                'job_title_id' => null,
+                'category_id'  => $category,
+                'label'        => $label,
+                'reason'       => 'job_title_insert_failed',
+                'wpdb_error'   => $wpdb->last_error,
             );
         }
 
-        $messages[] = 'ثبت عنوان شغل جدید ممکن نشد.';
+        $new_id = (int) $wpdb->insert_id;
+        if ( $new_id <= 0 ) {
+            return array(
+                'job_title_id' => null,
+                'category_id'  => $fallback_category,
+                'label'        => $label,
+                'reason'       => 'job_title_insert_no_id',
+            );
+        }
 
         return array(
-            'job_title_id' => null,
-            'category_id'  => $category,
-            'messages'     => $messages,
+            'job_title_id' => $new_id,
+            'category_id'  => $fallback_category,
+            'label'        => $label,
+            'created'      => true,
         );
     }
 
@@ -612,7 +671,7 @@ class BKJA_Repair {
         return (int) $wpdb->insert_id;
     }
 
-    protected static function append_unresolved_row( $row, $messages = array() ) {
+    protected static function append_unresolved_rows( $issues ) {
         $path = self::get_unresolved_csv_path();
         if ( '' === $path ) {
             return;
@@ -621,22 +680,19 @@ class BKJA_Repair {
         if ( ! $fh ) {
             return;
         }
-
-        fputcsv(
-            $fh,
-            array(
-                $row->id,
-                isset( $row->title ) ? $row->title : '',
-                isset( $row->job_title_id ) ? $row->job_title_id : '',
-                isset( $row->category_id ) ? $row->category_id : '',
-                isset( $row->income ) ? $row->income : '',
-                isset( $row->investment ) ? $row->investment : '',
-                isset( $row->gender ) ? $row->gender : '',
-                isset( $row->hours_per_day ) ? $row->hours_per_day : '',
-                isset( $row->days_per_week ) ? $row->days_per_week : '',
-                implode( ' | ', $messages ),
-            )
-        );
+        foreach ( (array) $issues as $issue ) {
+            fputcsv(
+                $fh,
+                array(
+                    isset( $issue['job_id'] ) ? $issue['job_id'] : '',
+                    isset( $issue['field'] ) ? $issue['field'] : '',
+                    isset( $issue['raw_value'] ) ? $issue['raw_value'] : '',
+                    isset( $issue['normalized_value'] ) ? $issue['normalized_value'] : '',
+                    isset( $issue['reason'] ) ? $issue['reason'] : '',
+                    isset( $issue['wpdb_error'] ) ? $issue['wpdb_error'] : '',
+                )
+            );
+        }
 
         fclose( $fh );
     }
@@ -657,7 +713,7 @@ class BKJA_Repair {
             return false;
         }
 
-        fputcsv( $fh, array( 'job_id', 'title', 'job_title_id', 'category_id', 'income_raw', 'investment_raw', 'gender_raw', 'hours_raw', 'days_raw', 'issues' ) );
+        fputcsv( $fh, array( 'job_id', 'field', 'raw_value', 'normalized_value', 'reason', 'wpdb_error' ) );
         fclose( $fh );
         return true;
     }
