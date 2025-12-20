@@ -19,10 +19,17 @@ class BKJA_Parser {
                     'نیاز به سرمایه اولیه ندارد',
                     'نیاز به سرمایه ندارد',
                     'سرمایه اولیه ندارد',
+                    'سرمایه‌ای نیاز ندارد',
+                    'سرمایه مالی نیاز نیست',
+                    'سرمایه مالی نیاز ندارد',
                     'سرمایه صفر',
                     '۰',
                     '0',
                     'صفر',
+                ),
+                'zero_patterns' => array(
+                    '/نیاز\s*(به)?\s*سرمایه\s*(نیست|ندارد|نمی.?خواهد)/u',
+                    '/سرمایه(\s*مالی)?\s*(نیست|ندارد)/u',
                 ),
                 'unknown_keywords' => array(
                     'نامشخص',
@@ -34,6 +41,27 @@ class BKJA_Parser {
                     'حدودا',
                     'مبلغ دقیق ذکر نشده',
                     'نیاز به سرمایه دارد اما مبلغ دقیق ذکر نشده',
+                ),
+                'asset_keywords' => array(
+                    'خودرو',
+                    'ماشین',
+                    'کامیون',
+                    'موتور',
+                    'ابزار',
+                    'ماشین‌آلات',
+                    'ماشین آلات',
+                    'دستگاه',
+                    'تجهیزات',
+                ),
+                'non_money_units' => array(
+                    'سال',
+                    'سابقه',
+                    'ماه',
+                    'روز',
+                    'ساعت',
+                    'هفته',
+                    'شیفت',
+                    'تعداد',
                 ),
                 'allow_zero' => true,
             )
@@ -73,10 +101,22 @@ class BKJA_Parser {
 
     /**
      * @param string|null $raw
-     * @param array{zero_keywords:array,unknown_keywords:array,allow_zero:bool} $options
+     * @param array{zero_keywords:array,zero_patterns?:array,unknown_keywords:array,asset_keywords?:array,non_money_units?:array,allow_zero:bool} $options
      * @return array{status:string,value:?int,note:?string}
      */
     protected static function parse_money_text( $raw, $options ) {
+        $options = array_merge(
+            array(
+                'zero_keywords'    => array(),
+                'zero_patterns'    => array(),
+                'unknown_keywords' => array(),
+                'asset_keywords'   => array(),
+                'non_money_units'  => array(),
+                'allow_zero'       => false,
+            ),
+            is_array( $options ) ? $options : array()
+        );
+
         $result = array(
             'status' => 'unknown',
             'value'  => null,
@@ -99,19 +139,37 @@ class BKJA_Parser {
             $text = bkja_normalize_fa_text( $text );
         }
 
-        if ( self::contains_zero_keyword( $text, $options['zero_keywords'] ) ) {
+        if ( self::contains_zero_keyword( $text, $options['zero_keywords'] )
+            || self::contains_zero_pattern( $text, $options['zero_patterns'] ) ) {
             $result['status'] = 'zero';
             $result['value']  = 0;
             return $result;
         }
 
+        $parse_text = $text;
+        if ( ! empty( $options['non_money_units'] ) ) {
+            $parse_text = self::strip_non_money_units( $parse_text, $options['non_money_units'] );
+        }
+
+        if ( ! empty( $options['asset_keywords'] )
+            && self::contains_keyword( $text, $options['asset_keywords'] )
+            && null === self::detect_unit_multiplier( $text ) ) {
+            $result['status'] = 'asset_or_non_cash';
+            $result['note']   = 'asset';
+            return $result;
+        }
+
         $numeric = function_exists( 'bkja_parse_numeric_range' )
-            ? bkja_parse_numeric_range( $text )
+            ? bkja_parse_numeric_range( $parse_text )
             : array();
 
         $number = isset( $numeric['value'] ) ? (float) $numeric['value'] : null;
         if ( ! $number || $number <= 0 ) {
             $number = null;
+        }
+
+        if ( null === $number ) {
+            $number = self::extract_word_number( $parse_text );
         }
 
         $multiplier = self::detect_unit_multiplier( $text );
@@ -143,6 +201,78 @@ class BKJA_Parser {
         $result['status'] = 'ok';
         $result['value']  = (int) round( $number * $multiplier );
         return $result;
+    }
+
+    /**
+     * @param string $text
+     * @param array $patterns
+     * @return bool
+     */
+    protected static function contains_zero_pattern( $text, $patterns ) {
+        foreach ( (array) $patterns as $pattern ) {
+            if ( '' === $pattern ) {
+                continue;
+            }
+            if ( @preg_match( $pattern, $text ) ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * @param string $text
+     * @param array $units
+     * @return string
+     */
+    protected static function strip_non_money_units( $text, $units ) {
+        $units = array_filter( array_map( 'trim', (array) $units ) );
+        if ( empty( $units ) ) {
+            return $text;
+        }
+
+        $escaped = array_map(
+            static function ( $unit ) {
+                return preg_quote( $unit, '/' );
+            },
+            $units
+        );
+        $unit_pattern = implode( '|', $escaped );
+
+        $patterns = array(
+            '/([0-9۰-۹]+)\s*(?:' . $unit_pattern . ')/u',
+            '/(?:' . $unit_pattern . ')\s*([0-9۰-۹]+)/u',
+        );
+
+        return preg_replace( $patterns, ' ', $text );
+    }
+
+    /**
+     * @param string $text
+     * @return float|null
+     */
+    protected static function extract_word_number( $text ) {
+        $map = array(
+            'یک'  => 1,
+            'دو'  => 2,
+            'سه'  => 3,
+            'چهار' => 4,
+            'پنج' => 5,
+            'شش'  => 6,
+            'هفت' => 7,
+            'هشت' => 8,
+            'نه'  => 9,
+            'ده'  => 10,
+        );
+
+        foreach ( $map as $word => $number ) {
+            if ( preg_match( '/(?<!\p{L})' . preg_quote( $word, '/' ) . '(?!\p{L})/u', $text ) ) {
+                return (float) $number;
+            }
+        }
+
+        return null;
     }
 
     /**

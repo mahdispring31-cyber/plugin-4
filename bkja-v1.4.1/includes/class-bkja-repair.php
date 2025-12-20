@@ -272,7 +272,8 @@ class BKJA_Repair {
                     isset( $title_data['label'] ) ? $title_data['label'] : '',
                     $job_title_id,
                     'job_title_update_failed',
-                    $wpdb->last_error
+                    $wpdb->last_error,
+                    $wpdb->last_query
                 );
                 $unresolved = true;
             } else {
@@ -368,6 +369,7 @@ class BKJA_Repair {
             'investment_unknown'         => 'سرمایه نامشخص بود',
             'investment_invalid'         => 'سرمایه نامعتبر بود',
             'investment_ambiguous_unit'  => 'واحد سرمایه نامشخص بود',
+            'investment_asset_or_non_cash' => 'سرمایه نقدی نبود',
             'income_unknown'             => 'درآمد نامشخص بود',
             'income_invalid'             => 'درآمد نامعتبر بود',
             'income_ambiguous_unit'      => 'واحد درآمد نامشخص بود',
@@ -454,7 +456,7 @@ class BKJA_Repair {
                 if ( null === $value ) {
                     $value = self::sanitize_money_value( $parsed['value'], $field_label, $allow_zero, false );
                 }
-            } elseif ( in_array( $parsed['status'], array( 'unknown', 'invalid', 'ambiguous_unit' ), true ) ) {
+            } elseif ( in_array( $parsed['status'], array( 'unknown', 'invalid', 'ambiguous_unit', 'asset_or_non_cash' ), true ) ) {
                 $value      = null;
                 $min_value  = null;
                 $max_value  = null;
