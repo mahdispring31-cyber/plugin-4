@@ -311,11 +311,35 @@ if ( ! function_exists( 'bkja_parse_numeric_range' ) ) {
             return $result;
         }
 
+        if ( function_exists( 'bkja_normalize_fa_text' ) ) {
+            $text = bkja_normalize_fa_text( $text );
+        }
+
         $persian_digits = array( '۰','۱','۲','۳','۴','۵','۶','۷','۸','۹' );
         $latin_digits   = array( '0','1','2','3','4','5','6','7','8','9' );
-        $normalized     = str_replace( $persian_digits, $latin_digits, $text );
-        $normalized     = str_replace( array( ',', '٬', '،' ), '', $normalized );
-        $normalized     = preg_replace( '/\s+/u', ' ', $normalized );
+        $normalized     = $text;
+
+        $word_numbers = array(
+            'یک'  => '1',
+            'دو'  => '2',
+            'سه'  => '3',
+            'چهار' => '4',
+            'پنج' => '5',
+            'شش'  => '6',
+            'هفت' => '7',
+            'هشت' => '8',
+            'نه'  => '9',
+            'ده'  => '10',
+        );
+
+        foreach ( $word_numbers as $word => $digit ) {
+            $normalized = preg_replace( '/(?<!\p{L})' . preg_quote( $word, '/' ) . '(?!\p{L})/u', $digit, $normalized );
+            $normalized = preg_replace( '/' . preg_quote( $word, '/' ) . '(?=\s*(میلیون|میلیارد|هزار|تومان|تومن))/u', $digit, $normalized );
+        }
+
+        $normalized = str_replace( $persian_digits, $latin_digits, $normalized );
+        $normalized = str_replace( array( ',', '٬', '،' ), '', $normalized );
+        $normalized = preg_replace( '/\s+/u', ' ', $normalized );
 
         $range_patterns = array(
             '/بین\s*([0-9]+(?:[\.\/][0-9]+)?)\s*(?:و|تا|الی)\s*([0-9]+(?:[\.\/][0-9]+)?)/u',

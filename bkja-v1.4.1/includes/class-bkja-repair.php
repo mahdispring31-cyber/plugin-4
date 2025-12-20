@@ -174,7 +174,8 @@ class BKJA_Repair {
                 isset( $title_data['label'] ) ? $title_data['label'] : '',
                 null,
                 isset( $title_data['reason'] ) ? $title_data['reason'] : 'job_title_missing',
-                isset( $title_data['wpdb_error'] ) ? $title_data['wpdb_error'] : ''
+                isset( $title_data['wpdb_error'] ) ? $title_data['wpdb_error'] : '',
+                isset( $title_data['last_query'] ) ? $title_data['last_query'] : ''
             );
             $unresolved = true;
         }
@@ -341,7 +342,7 @@ class BKJA_Repair {
         return $value;
     }
 
-    protected static function record_unresolved( &$issues, &$stats, $job_id, $field, $raw_value, $normalized_value, $reason, $wpdb_error = '' ) {
+    protected static function record_unresolved( &$issues, &$stats, $job_id, $field, $raw_value, $normalized_value, $reason, $wpdb_error = '', $last_query = '' ) {
         $issues[] = array(
             'job_id'           => $job_id,
             'field'            => $field,
@@ -349,6 +350,7 @@ class BKJA_Repair {
             'normalized_value' => $normalized_value,
             'reason'           => $reason,
             'wpdb_error'       => $wpdb_error,
+            'last_query'       => $last_query,
         );
 
         if ( ! isset( $stats[ $reason ] ) ) {
@@ -369,6 +371,7 @@ class BKJA_Repair {
             'income_unknown'             => 'درآمد نامشخص بود',
             'income_invalid'             => 'درآمد نامعتبر بود',
             'income_ambiguous_unit'      => 'واحد درآمد نامشخص بود',
+            'income_ambiguous_composite' => 'درآمد ترکیبی/نامشخص بود',
             'job_title_insert_failed'    => 'ثبت عنوان شغل جدید ممکن نشد',
             'job_title_insert_no_id'     => 'ثبت عنوان شغل جدید شناسه برنگرداند',
             'job_title_update_failed'    => 'به‌روزرسانی عنوان شغل با شکست مواجه شد',
@@ -393,6 +396,7 @@ class BKJA_Repair {
         $label = is_string( $label ) ? $label : (string) $label;
         $label = trim( wp_strip_all_tags( $label ) );
         $label = preg_replace( '/[[:cntrl:]]/u', ' ', $label );
+        $label = preg_replace( '/[\x{1F000}-\x{1FFFF}]/u', ' ', $label );
         $label = preg_replace( '/\s+/u', ' ', $label );
 
         if ( function_exists( 'bkja_normalize_fa_text' ) ) {
@@ -400,6 +404,23 @@ class BKJA_Repair {
         }
 
         return trim( $label );
+    }
+
+    protected static function sanitize_job_title_for_insert( $label ) {
+        $label = self::normalize_job_title_label( $label );
+
+        if ( '' === $label ) {
+            return '';
+        }
+
+        if ( function_exists( 'mb_strlen' ) && mb_strlen( $label, 'UTF-8' ) > 191 ) {
+            $label = function_exists( 'mb_substr' )
+                ? mb_substr( $label, 0, 191, 'UTF-8' )
+                : substr( $label, 0, 191 );
+            $label = trim( $label );
+        }
+
+        return $label;
     }
 
     protected static function normalize_money_set( $toman, $legacy, $text_value, $min_value, $max_value, $field_label, $job_id ) {
@@ -439,6 +460,12 @@ class BKJA_Repair {
                 $max_value  = null;
                 $mark_null  = true;
                 $unresolved = true;
+                $reason     = "{$field_label}_{$parsed['status']}";
+
+                if ( 'income' === $field_label && 'ambiguous_unit' === $parsed['status'] && self::is_income_composite_text( $raw_text ) ) {
+                    $reason = 'income_ambiguous_composite';
+                }
+
                 self::record_unresolved(
                     $issues,
                     $stats,
@@ -446,7 +473,7 @@ class BKJA_Repair {
                     $field_label,
                     $raw_text,
                     $parsed['note'],
-                    "{$field_label}_{$parsed['status']}",
+                    $reason,
                     ''
                 );
             }
@@ -501,6 +528,23 @@ class BKJA_Repair {
         return (int) round( $value );
     }
 
+    protected static function is_income_composite_text( $text ) {
+        $text = is_string( $text ) ? $text : (string) $text;
+        $text = trim( $text );
+        if ( '' === $text ) {
+            return false;
+        }
+
+        $keywords = array( '+', 'ترکیب', 'جمع', 'کارمندی', 'آزاد' );
+        foreach ( $keywords as $keyword ) {
+            if ( false !== mb_stripos( $text, $keyword, 0, 'UTF-8' ) ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     protected static function resolve_job_title( $row ) {
         global $wpdb;
 
@@ -546,7 +590,17 @@ class BKJA_Repair {
             ? bkja_generate_title_variants( $normalized_label )
             : array( $normalized_label );
 
-        $slug        = sanitize_title( $label );
+        $insert_label = self::sanitize_job_title_for_insert( $label );
+        if ( '' === $insert_label ) {
+            return array(
+                'job_title_id' => null,
+                'category_id'  => $category,
+                'label'        => '',
+                'reason'       => 'job_title_missing',
+            );
+        }
+
+        $slug        = sanitize_title( $insert_label );
         $title_table = $wpdb->prefix . 'bkja_job_titles';
         $normalized_column = "TRIM(REPLACE(REPLACE(REPLACE(COALESCE(base_label, label), 'ي', 'ی'), 'ك', 'ک'), '‌', ' '))";
 
@@ -605,15 +659,28 @@ class BKJA_Repair {
             array(
                 'category_id' => $fallback_category,
                 'slug'        => $slug,
-                'label'       => $label,
+                'label'       => $insert_label,
                 'description' => null,
-                'base_label'  => $label,
-                'base_slug'   => sanitize_title( $label ),
+                'base_label'  => $insert_label,
+                'base_slug'   => sanitize_title( $insert_label ),
                 'group_key'   => $group_key,
                 'is_primary'  => 1,
                 'is_visible'  => 0,
                 'created_at'  => $now,
                 'updated_at'  => $now,
+            ),
+            array(
+                '%d',
+                '%s',
+                '%s',
+                '%s',
+                '%s',
+                '%s',
+                '%s',
+                '%d',
+                '%d',
+                '%s',
+                '%s',
             )
         );
 
@@ -621,9 +688,10 @@ class BKJA_Repair {
             return array(
                 'job_title_id' => null,
                 'category_id'  => $category,
-                'label'        => $label,
+                'label'        => $insert_label,
                 'reason'       => 'job_title_insert_failed',
                 'wpdb_error'   => $wpdb->last_error,
+                'last_query'   => $wpdb->last_query,
             );
         }
 
@@ -632,7 +700,7 @@ class BKJA_Repair {
             return array(
                 'job_title_id' => null,
                 'category_id'  => $fallback_category,
-                'label'        => $label,
+                'label'        => $insert_label,
                 'reason'       => 'job_title_insert_no_id',
             );
         }
@@ -690,6 +758,7 @@ class BKJA_Repair {
                     isset( $issue['normalized_value'] ) ? $issue['normalized_value'] : '',
                     isset( $issue['reason'] ) ? $issue['reason'] : '',
                     isset( $issue['wpdb_error'] ) ? $issue['wpdb_error'] : '',
+                    isset( $issue['last_query'] ) ? $issue['last_query'] : '',
                 )
             );
         }
@@ -713,7 +782,7 @@ class BKJA_Repair {
             return false;
         }
 
-        fputcsv( $fh, array( 'job_id', 'field', 'raw_value', 'normalized_value', 'reason', 'wpdb_error' ) );
+        fputcsv( $fh, array( 'job_id', 'field', 'raw_value', 'normalized_value', 'reason', 'wpdb_error', 'last_query' ) );
         fclose( $fh );
         return true;
     }
