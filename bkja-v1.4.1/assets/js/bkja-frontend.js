@@ -2069,16 +2069,22 @@
                     var windowMonths = s.window_months ? parseInt(s.window_months, 10) : 0;
                     var noteText = 'این آمار از گزارش‌های کاربران این شغل جمع‌آوری شده است' + (windowMonths ? ' (حدود ' + windowMonths + ' ماه اخیر)' : '') + ' و منبع رسمی نیست.';
                     html += '<div class="bkja-job-summary-note">' + esc(noteText) + '</div>';
+                    if (s.data_limited && s.count_reports) {
+                        html += '<div class="bkja-job-summary-note">داده‌های ما برای این شغل هنوز کم است (' + esc(parseInt(s.count_reports, 10)) + ' تجربه). اگر شهر/نوع فعالیت/سابقه را بگویی دقیق‌تر می‌گویم.</div>';
+                    }
 
                     var incomeText = '';
+                    var incomeLabelPrefix = (s.avg_income_method === 'median') ? 'میانه' : 'میانگین';
                     var avgIncomeLabel = s.avg_income_label ? s.avg_income_label : (s.avg_income ? fmtMillion(s.avg_income) : '');
                     if(avgIncomeLabel){
-                        incomeText += 'میانگین: ' + esc(avgIncomeLabel);
+                        incomeText += incomeLabelPrefix + ': ' + esc(avgIncomeLabel);
                     }
                     var minIncomeLabel = s.min_income_label ? s.min_income_label : (s.min_income ? fmtMillion(s.min_income) : '');
                     var maxIncomeLabel = s.max_income_label ? s.max_income_label : (s.max_income ? fmtMillion(s.max_income) : '');
                     if(minIncomeLabel && maxIncomeLabel){
                         incomeText += (incomeText ? ' | ' : '') + 'بازه: ' + esc(minIncomeLabel) + ' تا ' + esc(maxIncomeLabel);
+                    } else if (avgIncomeLabel) {
+                        incomeText += (incomeText ? ' | ' : '') + 'بازه: نامشخص';
                     }
                     if(incomeText){
                         html += '<p>💵 درآمد کاربران: ' + incomeText + '</p>';
@@ -2138,7 +2144,10 @@
                             recHtml += '<h5>🧑‍💼 تجربه کاربر</h5>';
                         }
                         if (r.created_at_display) recHtml += '<p>⏱️ ' + esc(r.created_at_display) + '</p>';
-                        if (r.income) recHtml += '<p>💵 درآمد: ' + esc(r.income) + '</p>';
+                        if (r.income) {
+                            var incomeNote = r.income_note ? (' (' + esc(r.income_note) + ')') : '';
+                            recHtml += '<p>💵 درآمد: ' + esc(r.income) + incomeNote + '</p>';
+                        }
                         if (r.investment) recHtml += '<p>💰 سرمایه: ' + esc(r.investment) + '</p>';
                         if (r.city) recHtml += '<p>📍 شهر: ' + esc(r.city) + '</p>';
                         if (r.employment_label) recHtml += '<p>💼 نوع اشتغال: ' + esc(r.employment_label) + '</p>';
@@ -2209,7 +2218,10 @@
                             html += '<h5>🧑‍💼 تجربه کاربر</h5>';
                         }
                         if (r.created_at_display) html += '<p>⏱️ ' + esc(r.created_at_display) + '</p>';
-                        if (r.income) html += '<p>💵 درآمد: ' + esc(r.income) + '</p>';
+                        if (r.income) {
+                            var incomeNote = r.income_note ? (' (' + esc(r.income_note) + ')') : '';
+                            html += '<p>💵 درآمد: ' + esc(r.income) + incomeNote + '</p>';
+                        }
                         if (r.investment) html += '<p>💰 سرمایه: ' + esc(r.investment) + '</p>';
                         if (r.city) html += '<p>📍 شهر: ' + esc(r.city) + '</p>';
                         if (r.employment_label) html += '<p>💼 نوع اشتغال: ' + esc(r.employment_label) + '</p>';

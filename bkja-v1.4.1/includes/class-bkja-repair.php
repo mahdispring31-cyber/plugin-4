@@ -94,10 +94,12 @@ class BKJA_Repair {
 
             if ( ! empty( $result['updated'] ) ) {
                 $updated++;
+                $stats['updated'] = isset( $stats['updated'] ) ? $stats['updated'] + 1 : 1;
             }
 
             if ( ! empty( $result['unresolved'] ) ) {
                 $unresolved++;
+                $stats['unresolved_total'] = isset( $stats['unresolved_total'] ) ? $stats['unresolved_total'] + 1 : 1;
             }
 
             if ( ! empty( $result['stats'] ) ) {
@@ -366,6 +368,8 @@ class BKJA_Repair {
         }
 
         $labels = array(
+            'updated'                    => 'به‌روزرسانی شد',
+            'unresolved_total'           => 'کل ردیف‌های علامت‌خورده',
             'investment_unknown'         => 'سرمایه نامشخص بود',
             'investment_invalid'         => 'سرمایه نامعتبر بود',
             'investment_ambiguous_unit'  => 'واحد سرمایه نامشخص بود',
@@ -382,9 +386,34 @@ class BKJA_Repair {
             'job_title_created'          => 'عنوان شغل جدید ثبت شد (خودکار)',
         );
 
+        $unknown_total = (int) ( $stats['income_unknown'] ?? 0 ) + (int) ( $stats['investment_unknown'] ?? 0 );
+        $invalid_total = (int) ( $stats['income_invalid'] ?? 0 ) + (int) ( $stats['investment_invalid'] ?? 0 );
+        $unresolved_real = (int) ( $stats['income_invalid'] ?? 0 )
+            + (int) ( $stats['investment_invalid'] ?? 0 )
+            + (int) ( $stats['income_ambiguous_unit'] ?? 0 )
+            + (int) ( $stats['investment_ambiguous_unit'] ?? 0 )
+            + (int) ( $stats['income_ambiguous_composite'] ?? 0 )
+            + (int) ( $stats['job_title_update_failed'] ?? 0 );
+
         $lines = array();
+        if ( ! empty( $stats['updated'] ) ) {
+            $lines[] = sprintf( 'به‌روزرسانی انجام شد: %d مورد', (int) $stats['updated'] );
+        }
+        if ( $unknown_total > 0 ) {
+            $lines[] = sprintf( 'نامشخص بود: %d مورد', $unknown_total );
+        }
+        if ( $invalid_total > 0 ) {
+            $lines[] = sprintf( 'نامعتبر بود: %d مورد', $invalid_total );
+        }
+        if ( $unresolved_real > 0 ) {
+            $lines[] = sprintf( 'حل‌نشده واقعی: %d مورد', $unresolved_real );
+        }
+
         foreach ( $stats as $reason => $count ) {
             if ( ! $count ) {
+                continue;
+            }
+            if ( in_array( $reason, array( 'updated', 'unresolved_total' ), true ) ) {
                 continue;
             }
             $label = isset( $labels[ $reason ] ) ? $labels[ $reason ] : $reason;
@@ -438,11 +467,30 @@ class BKJA_Repair {
             $value = self::sanitize_money_value( $legacy, $field_label, $allow_zero, true );
         }
 
-        $raw_text   = is_string( $text_value ) ? $text_value : (string) $text_value;
-        $has_text   = '' !== trim( $raw_text );
+        $raw_text     = is_string( $text_value ) ? $text_value : (string) $text_value;
+        $has_text     = '' !== trim( $raw_text );
         $should_parse = $has_text || ( null === $value && ! $legacy );
 
-        if ( $should_parse && class_exists( 'BKJA_Parser' ) ) {
+        if ( 'income' === $field_label && $has_text && self::is_income_composite_text( $raw_text ) ) {
+            $value      = null;
+            $min_value  = null;
+            $max_value  = null;
+            $mark_null  = true;
+            $unresolved = true;
+
+            self::record_unresolved(
+                $issues,
+                $stats,
+                (int) $job_id,
+                $field_label,
+                $raw_text,
+                null,
+                'income_ambiguous_composite',
+                ''
+            );
+        }
+
+        if ( $should_parse && class_exists( 'BKJA_Parser' ) && ! $unresolved ) {
             $parsed = ( 'investment' === $field_label )
                 ? BKJA_Parser::parse_investment_to_toman( $raw_text )
                 : BKJA_Parser::parse_income_to_toman( $raw_text );
@@ -456,17 +504,45 @@ class BKJA_Repair {
                 if ( null === $value ) {
                     $value = self::sanitize_money_value( $parsed['value'], $field_label, $allow_zero, false );
                 }
-            } elseif ( in_array( $parsed['status'], array( 'unknown', 'invalid', 'ambiguous_unit', 'asset_or_non_cash' ), true ) ) {
+                if ( isset( $parsed['min'] ) || isset( $parsed['max'] ) ) {
+                    $min_value = isset( $parsed['min'] )
+                        ? self::sanitize_money_value( $parsed['min'], "{$field_label}_min", false, false )
+                        : $min_value;
+                    $max_value = isset( $parsed['max'] )
+                        ? self::sanitize_money_value( $parsed['max'], "{$field_label}_max", false, false )
+                        : $max_value;
+                }
+            } elseif ( 'unknown' === $parsed['status'] ) {
+                if ( null === $value ) {
+                    if ( ! isset( $stats[ "{$field_label}_unknown" ] ) ) {
+                        $stats[ "{$field_label}_unknown" ] = 0;
+                    }
+                    $stats[ "{$field_label}_unknown" ]++;
+
+                    $value     = null;
+                    $min_value = null;
+                    $max_value = null;
+                    $mark_null = true;
+                }
+            } elseif ( 'asset_or_non_cash' === $parsed['status'] ) {
+                if ( null === $value ) {
+                    if ( ! isset( $stats[ "{$field_label}_asset_or_non_cash" ] ) ) {
+                        $stats[ "{$field_label}_asset_or_non_cash" ] = 0;
+                    }
+                    $stats[ "{$field_label}_asset_or_non_cash" ]++;
+
+                    $value     = null;
+                    $min_value = null;
+                    $max_value = null;
+                    $mark_null = true;
+                }
+            } elseif ( in_array( $parsed['status'], array( 'invalid', 'ambiguous_unit' ), true ) ) {
                 $value      = null;
                 $min_value  = null;
                 $max_value  = null;
                 $mark_null  = true;
                 $unresolved = true;
                 $reason     = "{$field_label}_{$parsed['status']}";
-
-                if ( 'income' === $field_label && 'ambiguous_unit' === $parsed['status'] && self::is_income_composite_text( $raw_text ) ) {
-                    $reason = 'income_ambiguous_composite';
-                }
 
                 self::record_unresolved(
                     $issues,

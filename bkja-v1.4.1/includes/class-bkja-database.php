@@ -1945,7 +1945,7 @@ class BKJA_Database {
 
         $stat_rows = $wpdb->get_results(
             $prepare_with_params(
-                "SELECT j.income_toman, j.income_min_toman, j.income_max_toman, j.income_num, j.investment_toman, j.investment_num, j.experience_years, j.hours_per_day, j.days_per_week
+                "SELECT j.income, j.income_toman, j.income_min_toman, j.income_max_toman, j.income_num, j.investment, j.investment_toman, j.investment_num, j.experience_years, j.hours_per_day, j.days_per_week
                  FROM {$table} j
                  WHERE {$where_clause}"
             )
@@ -1984,6 +1984,14 @@ class BKJA_Database {
         $income_range_maxes = array();
         $investment_values  = array();
 
+        $total_records          = 0;
+        $income_valid_count     = 0;
+        $income_unknown_count   = 0;
+        $income_invalid_count   = 0;
+        $investment_valid_count = 0;
+        $investment_unknown_count = 0;
+        $investment_invalid_count = 0;
+
         $sum_experience = 0;
         $exp_count      = 0;
         $sum_hours      = 0;
@@ -1991,7 +1999,22 @@ class BKJA_Database {
         $sum_days       = 0;
         $days_count     = 0;
 
+        $is_income_composite = function( $text ) {
+            $text = is_string( $text ) ? trim( $text ) : '';
+            if ( '' === $text ) {
+                return false;
+            }
+            $keywords = array( '+', 'ترکیب', 'جمع', 'کارمندی', 'آزاد' );
+            foreach ( $keywords as $keyword ) {
+                if ( false !== mb_stripos( $text, $keyword, 0, 'UTF-8' ) ) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
         foreach ( $stat_rows as $srow ) {
+            $total_records++;
             $income_base = $normalize_value( $srow->income_toman );
             if ( null === $income_base && isset( $srow->income_num ) ) {
                 $income_base = $normalize_legacy_or_maybe_million( $srow->income_num );
@@ -2007,10 +2030,44 @@ class BKJA_Database {
                 $income_range_maxes[] = $income_max;
             }
 
+            $income_value = null;
             if ( $income_base ) {
-                $income_values[] = $income_base;
+                $income_value = $income_base;
             } elseif ( $income_min && $income_max ) {
-                $income_values[] = (int) round( ( $income_min + $income_max ) / 2 );
+                $income_value = (int) round( ( $income_min + $income_max ) / 2 );
+            }
+
+            if ( $income_value ) {
+                $income_values[] = $income_value;
+                $income_valid_count++;
+            } else {
+                $income_text = isset( $srow->income ) ? trim( (string) $srow->income ) : '';
+                if ( '' !== $income_text && class_exists( 'BKJA_Parser' ) ) {
+                    if ( $is_income_composite( $income_text ) ) {
+                        $income_invalid_count++;
+                    } else {
+                        $parsed = BKJA_Parser::parse_income_to_toman( $income_text );
+                        if ( 'unknown' === $parsed['status'] ) {
+                            $income_unknown_count++;
+                        } elseif ( in_array( $parsed['status'], array( 'invalid', 'ambiguous_unit' ), true ) ) {
+                            $income_invalid_count++;
+                        } elseif ( 'ok' === $parsed['status'] && ! empty( $parsed['value'] ) ) {
+                            $parsed_value = $normalize_value( $parsed['value'] );
+                            if ( $parsed_value ) {
+                                $income_values[] = $parsed_value;
+                                $income_valid_count++;
+                            }
+                            $parsed_min = isset( $parsed['min'] ) ? $normalize_value( $parsed['min'] ) : null;
+                            $parsed_max = isset( $parsed['max'] ) ? $normalize_value( $parsed['max'] ) : null;
+                            if ( $parsed_min ) {
+                                $income_range_mins[] = $parsed_min;
+                            }
+                            if ( $parsed_max ) {
+                                $income_range_maxes[] = $parsed_max;
+                            }
+                        }
+                    }
+                }
             }
 
             $investment_base = $normalize_value( $srow->investment_toman );
@@ -2019,6 +2076,23 @@ class BKJA_Database {
             }
             if ( $investment_base ) {
                 $investment_values[] = $investment_base;
+                $investment_valid_count++;
+            } else {
+                $investment_text = isset( $srow->investment ) ? trim( (string) $srow->investment ) : '';
+                if ( '' !== $investment_text && class_exists( 'BKJA_Parser' ) ) {
+                    $parsed = BKJA_Parser::parse_investment_to_toman( $investment_text );
+                    if ( 'unknown' === $parsed['status'] ) {
+                        $investment_unknown_count++;
+                    } elseif ( in_array( $parsed['status'], array( 'invalid', 'ambiguous_unit' ), true ) ) {
+                        $investment_invalid_count++;
+                    } elseif ( 'ok' === $parsed['status'] && ! empty( $parsed['value'] ) ) {
+                        $parsed_value = $normalize_value( $parsed['value'] );
+                        if ( $parsed_value ) {
+                            $investment_values[] = $parsed_value;
+                            $investment_valid_count++;
+                        }
+                    }
+                }
             }
 
             if ( isset( $srow->experience_years ) && (int) $srow->experience_years > 0 ) {
@@ -2036,6 +2110,7 @@ class BKJA_Database {
         }
 
         $income_numeric_total = count( $income_values );
+        $income_valid_count   = max( $income_valid_count, $income_numeric_total );
 
         $quantile = function( $values, $q ) {
             $count = count( $values );
@@ -2055,7 +2130,7 @@ class BKJA_Database {
         };
 
         $filter_outliers = function( $values ) use ( $quantile ) {
-            if ( count( $values ) < 5 ) {
+            if ( count( $values ) < 10 ) {
                 return $values;
             }
             $p5  = $quantile( $values, 0.05 );
@@ -2075,6 +2150,20 @@ class BKJA_Database {
         $income_filtered = $filter_outliers( $income_values );
         $income_used     = count( $income_filtered );
 
+        $calc_median = function( $values ) {
+            $values = array_filter( $values, function( $v ) { return is_numeric( $v ) && $v > 0; } );
+            $count  = count( $values );
+            if ( 0 === $count ) {
+                return null;
+            }
+            sort( $values, SORT_NUMERIC );
+            $mid = (int) floor( ( $count - 1 ) / 2 );
+            if ( $count % 2 ) {
+                return $values[ $mid ];
+            }
+            return ( $values[ $mid ] + $values[ $mid + 1 ] ) / 2;
+        };
+
         $calc_avg = function( $values ) {
             $values = array_filter( $values, function( $v ) { return is_numeric( $v ) && $v > 0; } );
             if ( empty( $values ) ) {
@@ -2084,8 +2173,21 @@ class BKJA_Database {
         };
 
         $avg_income = $calc_avg( $income_filtered );
+        $median_income = $calc_median( $income_filtered );
         $min_income = ! empty( $income_filtered ) ? min( $income_filtered ) : null;
         $max_income = ! empty( $income_filtered ) ? max( $income_filtered ) : null;
+
+        $data_limited = ( $income_valid_count < 5 );
+        if ( $data_limited && $median_income ) {
+            $avg_income = $median_income;
+        }
+
+        $income_range_available = false;
+        if ( ! empty( $income_range_mins ) || ! empty( $income_range_maxes ) ) {
+            $income_range_available = true;
+        } elseif ( $income_used >= 2 ) {
+            $income_range_available = true;
+        }
 
         if ( empty( $income_range_mins ) && empty( $income_range_maxes ) ) {
             $range_min = $min_income;
@@ -2107,6 +2209,11 @@ class BKJA_Database {
             } elseif ( $avg_income > $range_max ) {
                 $avg_income = $range_max;
             }
+        }
+
+        if ( ! $income_range_available ) {
+            $range_min = null;
+            $range_max = null;
         }
 
         $avg_investment = $calc_avg( $investment_values );
@@ -2251,12 +2358,19 @@ class BKJA_Database {
             'job_title_ids'     => $job_ids,
             'avg_income'        => $avg_income ? round( (float) $avg_income, 1 ) : null,
             'avg_income_label'  => $format_label( $avg_income ),
+            'avg_income_method' => $data_limited ? 'median' : 'mean',
+            'median_income'     => $median_income ? (float) $median_income : null,
+            'median_income_label' => $format_label( $median_income ),
             'min_income'        => $range_min ? (float) $range_min : null,
             'max_income'        => $range_max ? (float) $range_max : null,
             'min_income_label'  => $format_label( $range_min ),
             'max_income_label'  => $format_label( $range_max ),
             'income_count'      => $income_used,
             'income_numeric_total' => $income_numeric_total,
+            'total_records'     => $total_records,
+            'income_valid_count'   => $income_valid_count,
+            'income_unknown_count' => $income_unknown_count,
+            'income_invalid_count' => $income_invalid_count,
             'avg_investment'    => $avg_investment ? round( (float) $avg_investment, 1 ) : null,
             'avg_investment_label' => $format_label( $avg_investment ),
             'min_investment'    => $min_investment ? (float) $min_investment : null,
@@ -2264,6 +2378,10 @@ class BKJA_Database {
             'min_investment_label' => $format_label( $min_investment ),
             'max_investment_label' => $format_label( $max_investment ),
             'investment_count'  => count( $investment_values ),
+            'investment_valid_count'   => $investment_valid_count,
+            'investment_unknown_count' => $investment_unknown_count,
+            'investment_invalid_count' => $investment_invalid_count,
+            'data_limited'      => $data_limited,
             'avg_experience_years' => $avg_experience_years ? round( (float) $avg_experience_years, 1 ) : null,
             'avg_hours_per_day'    => $avg_hours_per_day ? round( (float) $avg_hours_per_day, 1 ) : null,
             'avg_days_per_week'    => $avg_days_per_week ? round( (float) $avg_days_per_week, 1 ) : null,
@@ -2345,6 +2463,20 @@ class BKJA_Database {
 
         $records = array();
         foreach ( $results as $row ) {
+                $income_note = null;
+                $income_num  = isset( $row->income_toman ) && $row->income_toman > 0
+                    ? (int) $row->income_toman
+                    : ( ( isset( $row->income_num ) && $row->income_num > 0 ) ? (int) $row->income_num : 0 );
+
+                if ( 0 === $income_num && ! empty( $row->income ) && class_exists( 'BKJA_Parser' ) ) {
+                    $parsed_income = BKJA_Parser::parse_income_to_toman( (string) $row->income );
+                    if ( 'ambiguous_unit' === $parsed_income['status'] ) {
+                        $income_note = 'واحد نامشخص';
+                    } else {
+                        $income_note = 'عدد دقیق قابل استخراج نبود';
+                    }
+                }
+
                 $records[] = array(
                     'id'                     => (int) $row->id,
                     'job_title'              => $row->title,
@@ -2352,7 +2484,8 @@ class BKJA_Database {
                     'job_title_slug'         => $row->job_title_slug ? $row->job_title_slug : sanitize_title( $row->title ),
                     'variant_title'          => $row->variant_title ? $row->variant_title : $row->title,
                     'income'                 => $row->income,
-                    'income_num'             => isset( $row->income_toman ) && $row->income_toman > 0 ? (int) $row->income_toman : ( ( isset( $row->income_num ) && $row->income_num > 0 ) ? (int) $row->income_num : 0 ),
+                    'income_num'             => $income_num,
+                    'income_note'            => $income_note,
                     'income_min_toman'       => isset( $row->income_min_toman ) ? (int) $row->income_min_toman : null,
                     'income_max_toman'       => isset( $row->income_max_toman ) ? (int) $row->income_max_toman : null,
                     'investment'             => $row->investment,
