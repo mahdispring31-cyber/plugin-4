@@ -8,7 +8,7 @@ class BKJA_Parser {
      * Parse investment text into toman value and status.
      *
      * @param string|null $raw
-     * @return array{status:string,value:?int,note:?string}
+     * @return array{status:string,value:?int,note:?string,min:?int,max:?int}
      */
     public static function parse_investment_to_toman( $raw ) {
         return self::parse_money_text(
@@ -72,7 +72,7 @@ class BKJA_Parser {
      * Parse income text into toman value and status.
      *
      * @param string|null $raw
-     * @return array{status:string,value:?int,note:?string}
+     * @return array{status:string,value:?int,note:?string,min:?int,max:?int}
      */
     public static function parse_income_to_toman( $raw ) {
         return self::parse_money_text(
@@ -102,7 +102,7 @@ class BKJA_Parser {
     /**
      * @param string|null $raw
      * @param array{zero_keywords:array,zero_patterns?:array,unknown_keywords:array,asset_keywords?:array,non_money_units?:array,allow_zero:bool} $options
-     * @return array{status:string,value:?int,note:?string}
+     * @return array{status:string,value:?int,note:?string,min:?int,max:?int}
      */
     protected static function parse_money_text( $raw, $options ) {
         $options = array_merge(
@@ -121,6 +121,8 @@ class BKJA_Parser {
             'status' => 'unknown',
             'value'  => null,
             'note'   => null,
+            'min'    => null,
+            'max'    => null,
         );
 
         if ( null === $raw ) {
@@ -164,6 +166,8 @@ class BKJA_Parser {
             : array();
 
         $number = isset( $numeric['value'] ) ? (float) $numeric['value'] : null;
+        $range_min = isset( $numeric['min'] ) ? (float) $numeric['min'] : null;
+        $range_max = isset( $numeric['max'] ) ? (float) $numeric['max'] : null;
         if ( ! $number || $number <= 0 ) {
             $number = null;
         }
@@ -173,6 +177,7 @@ class BKJA_Parser {
         }
 
         $multiplier = self::detect_unit_multiplier( $text );
+        $unit_note  = null;
 
         if ( null === $number ) {
             if ( self::contains_keyword( $text, $options['unknown_keywords'] ) ) {
@@ -186,13 +191,19 @@ class BKJA_Parser {
         }
 
         if ( null === $multiplier ) {
-            if ( $number >= 1000000 ) {
-                $result['status'] = 'ok';
-                $result['value']  = (int) round( $number );
-                $result['note']   = 'unit_assumed_toman';
-                return $result;
+            if ( $number >= 1 && $number <= 999 ) {
+                $multiplier = 1000000;
+                $unit_note  = 'unit_assumed_million';
+            } elseif ( $number >= 1000 && $number <= 999999 ) {
+                $multiplier = 1000;
+                $unit_note  = 'unit_assumed_thousand';
+            } elseif ( $number >= 1000000 ) {
+                $multiplier = 1;
+                $unit_note  = 'unit_assumed_toman';
             }
+        }
 
+        if ( null === $multiplier ) {
             $result['status'] = 'ambiguous_unit';
             $result['note']   = (string) $number;
             return $result;
@@ -200,7 +211,50 @@ class BKJA_Parser {
 
         $result['status'] = 'ok';
         $result['value']  = (int) round( $number * $multiplier );
+        $result['note']   = $unit_note;
+
+        if ( null !== $range_min && $range_min > 0 ) {
+            $result['min'] = (int) round( $range_min * $multiplier );
+        }
+        if ( null !== $range_max && $range_max > 0 ) {
+            $result['max'] = (int) round( $range_max * $multiplier );
+        }
         return $result;
+    }
+
+    /**
+     * Debug sample parses (useful for manual validation in WP_DEBUG).
+     *
+     * @return array<int,array{input:string,parsed:array}>
+     */
+    public static function debug_sample_parses() {
+        $samples = array(
+            'حکم 16500',
+            '۱۵',
+            '۲۲ میلیون',
+            '۱۰۰ تا ۱۶۰ میلیون',
+            'ترکیب ۴۰ + ۱۸',
+        );
+
+        $results = array();
+        foreach ( $samples as $sample ) {
+            $parsed = self::parse_income_to_toman( $sample );
+            if ( function_exists( 'bkja_parse_money_to_toman' ) ) {
+                $parsed['range'] = bkja_parse_money_to_toman( $sample );
+            }
+            $results[] = array(
+                'input'  => $sample,
+                'parsed' => $parsed,
+            );
+        }
+
+        if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+            foreach ( $results as $result ) {
+                error_log( 'BKJA Parser sample: ' . wp_json_encode( $result ) );
+            }
+        }
+
+        return $results;
     }
 
     /**

@@ -885,6 +885,7 @@ class BKJA_Chat {
             $count_reports = isset( $summary['count_reports'] ) ? (int) $summary['count_reports'] : 0;
             $window_months = isset( $summary['window_months'] ) ? (int) $summary['window_months'] : null;
             $income_numeric_total = isset( $summary['income_numeric_total'] ) ? (int) $summary['income_numeric_total'] : 0;
+            $data_limited = ! empty( $summary['data_limited'] );
 
             $count_line = 'تعداد گزارش‌های معتبر';
             if ( $window_months ) {
@@ -898,6 +899,9 @@ class BKJA_Chat {
             if ( $income_numeric_total > 0 && $income_numeric_total < 3 ) {
                 $lines[] = 'هشدار: تعداد گزارش‌های عددی کم است و دقت پایین است.';
             }
+            if ( $data_limited && $count_reports > 0 ) {
+                $lines[] = 'داده‌های ما برای این شغل هنوز کم است (' . $count_reports . ' تجربه). اگر شهر/نوع فعالیت/سابقه را بگویی دقیق‌تر می‌گویم.';
+            }
 
             $avg_income  = isset( $summary['avg_income'] ) ? $summary['avg_income'] : null;
             $min_income  = isset( $summary['min_income'] ) ? $summary['min_income'] : null;
@@ -905,12 +909,15 @@ class BKJA_Chat {
             $avg_invest  = isset( $summary['avg_investment'] ) ? $summary['avg_investment'] : null;
             $min_invest  = isset( $summary['min_investment'] ) ? $summary['min_investment'] : null;
             $max_invest  = isset( $summary['max_investment'] ) ? $summary['max_investment'] : null;
+            $income_method = isset( $summary['avg_income_method'] ) && 'median' === $summary['avg_income_method'] ? 'میانه' : 'میانگین';
 
             if ( $avg_income || $min_income || $max_income ) {
-                $income_line = 'میانگین درآمد ماهانه: ' . self::format_amount_label( $avg_income );
+                $income_line = $income_method . ' درآمد ماهانه: ' . self::format_amount_label( $avg_income );
                 $range       = self::format_range_label( $min_income, $max_income );
                 if ( $range ) {
                     $income_line .= ' | بازه رایج: ' . $range;
+                } else {
+                    $income_line .= ' | بازه رایج: نامشخص';
                 }
                 $lines[] = $income_line;
             }
@@ -947,6 +954,9 @@ class BKJA_Chat {
                 $income_value = isset( $record['income_num'] ) && $record['income_num'] > 0
                     ? self::format_amount_label( $record['income_num'] )
                     : ( ! empty( $record['income'] ) ? $record['income'] : 'نامشخص' );
+                if ( ! empty( $record['income_note'] ) ) {
+                    $income_value .= ' (' . $record['income_note'] . ')';
+                }
                 $investment_value = isset( $record['investment_num'] ) && $record['investment_num'] > 0
                     ? self::format_amount_label( $record['investment_num'] )
                     : ( ! empty( $record['investment'] ) ? $record['investment'] : 'نامشخص' );
@@ -983,6 +993,7 @@ class BKJA_Chat {
         $sections[] = "📌 خلاصه داده‌های واقعی درباره «{$title}»:";
         $count_reports = isset( $summary['count_reports'] ) ? (int) $summary['count_reports'] : 0;
         $window_months = isset( $summary['window_months'] ) ? (int) $summary['window_months'] : null;
+        $data_limited  = ! empty( $summary['data_limited'] );
 
         $window_label = $window_months ? 'حدود ' . $window_months . ' ماه اخیر' : '';
         $income_numeric_total = isset( $summary['income_numeric_total'] ) ? (int) $summary['income_numeric_total'] : 0;
@@ -998,6 +1009,10 @@ class BKJA_Chat {
             if ( $count_reports < 3 ) {
                 $sections[] = '• ⚠️ داده‌های موجود محدود است و دقت پایین است.';
             }
+            if ( $data_limited ) {
+                $sections[] = '• داده‌های ما برای این شغل هنوز کم است (' . $count_reports . ' تجربه). اگر شهر/نوع فعالیت/سابقه را بگویی دقیق‌تر می‌گویم.';
+                $sections[] = '• پیشنهاد: ثبت تجربه جدید برای این شغل.';
+            }
         } else {
             $sections[] = '• در ۱۲ ماه اخیر گزارشی برای این شغل ثبت نشده. می‌خوای کل زمان رو هم بررسی کنم؟';
         }
@@ -1005,10 +1020,13 @@ class BKJA_Chat {
 
         $sections[] = '';
         $sections[] = '💵 درآمد ماهانه (میلیون تومان):';
-        $income_line = '• میانگین: ' . self::format_amount_label( isset( $summary['avg_income'] ) ? $summary['avg_income'] : null );
+        $income_method = ( isset( $summary['avg_income_method'] ) && 'median' === $summary['avg_income_method'] ) ? 'میانه' : 'میانگین';
+        $income_line = '• ' . $income_method . ': ' . self::format_amount_label( isset( $summary['avg_income'] ) ? $summary['avg_income'] : null );
         $income_range = self::format_range_label( $summary['min_income'] ?? null, $summary['max_income'] ?? null );
         if ( $income_range ) {
             $income_line .= ' | بازه رایج: ' . $income_range;
+        } else {
+            $income_line .= ' | بازه رایج: نامشخص';
         }
         if ( $income_numeric_total > 0 && $income_numeric_total < 3 ) {
             $income_line .= ' (دقت پایین به دلیل گزارش‌های محدود)';
@@ -1053,7 +1071,11 @@ class BKJA_Chat {
                 if ( ! empty( $record['income_num'] ) ) {
                     $parts[] = 'درآمد: ' . self::format_amount_label( $record['income_num'] );
                 } elseif ( ! empty( $record['income'] ) ) {
-                    $parts[] = 'درآمد: ' . $record['income'];
+                    $income_text = $record['income'];
+                    if ( ! empty( $record['income_note'] ) ) {
+                        $income_text .= ' (' . $record['income_note'] . ')';
+                    }
+                    $parts[] = 'درآمد: ' . $income_text;
                 }
                 if ( ! empty( $record['investment_num'] ) ) {
                     $parts[] = 'سرمایه: ' . self::format_amount_label( $record['investment_num'] );
@@ -1099,6 +1121,10 @@ class BKJA_Chat {
         $job_title = '';
         if ( ! empty( $context['job_title'] ) ) {
             $job_title = trim( (string) $context['job_title'] );
+        }
+
+        if ( ! empty( $context['summary'] ) && is_array( $context['summary'] ) && ! empty( $context['summary']['data_limited'] ) ) {
+            $push( 'ثبت تجربه جدید' );
         }
 
         $clarification_candidates = array();
@@ -1257,6 +1283,84 @@ class BKJA_Chat {
         }
 
         return array_slice( $suggestions, 0, 3 );
+    }
+
+    protected static function is_followup_message( $message ) {
+        $text = is_string( $message ) ? trim( $message ) : '';
+        if ( '' === $text ) {
+            return false;
+        }
+
+        $word_count = preg_split( '/\s+/u', $text );
+        $word_count = is_array( $word_count ) ? count( $word_count ) : 0;
+        $is_short   = ( $word_count > 0 && $word_count <= 5 ) || ( function_exists( 'mb_strlen' ) ? mb_strlen( $text, 'UTF-8' ) <= 30 : strlen( $text ) <= 30 );
+
+        if ( ! $is_short ) {
+            return false;
+        }
+
+        $keywords = array( 'درآمد', 'حقوق', 'دستمزد', 'سرمایه', 'هزینه', 'بودجه', 'چقد', 'چقدر', 'چنده', 'لازم', 'نیاز' );
+        foreach ( $keywords as $keyword ) {
+            if ( false !== mb_stripos( $text, $keyword, 0, 'UTF-8' ) ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected static function get_last_job_context( $session_id, $user_id ) {
+        $session_id = is_string( $session_id ) ? trim( $session_id ) : '';
+        $user_id    = (int) $user_id;
+        $data       = null;
+
+        if ( $user_id > 0 ) {
+            $data = get_user_meta( $user_id, 'bkja_last_job_context', true );
+        }
+
+        if ( empty( $data ) && $session_id ) {
+            $data = get_transient( 'bkja_last_job_context_' . $session_id );
+        }
+
+        if ( empty( $data ) || ! is_array( $data ) ) {
+            return 0;
+        }
+
+        $timestamp = isset( $data['timestamp'] ) ? (int) $data['timestamp'] : 0;
+        $job_id    = isset( $data['job_title_id'] ) ? (int) $data['job_title_id'] : 0;
+        if ( $job_id <= 0 || $timestamp <= 0 ) {
+            return 0;
+        }
+
+        $max_age = 2 * HOUR_IN_SECONDS;
+        if ( ( current_time( 'timestamp' ) - $timestamp ) > $max_age ) {
+            return 0;
+        }
+
+        return $job_id;
+    }
+
+    protected static function store_last_job_context( $job_title_id, $session_id, $user_id ) {
+        $job_title_id = (int) $job_title_id;
+        $session_id   = is_string( $session_id ) ? trim( $session_id ) : '';
+        $user_id      = (int) $user_id;
+
+        if ( $job_title_id <= 0 ) {
+            return;
+        }
+
+        $data = array(
+            'job_title_id' => $job_title_id,
+            'timestamp'    => current_time( 'timestamp' ),
+        );
+
+        if ( $user_id > 0 ) {
+            update_user_meta( $user_id, 'bkja_last_job_context', $data );
+        }
+
+        if ( $session_id ) {
+            set_transient( 'bkja_last_job_context_' . $session_id, $data, 6 * HOUR_IN_SECONDS );
+        }
     }
 
     protected static function try_answer_from_db( $original_message, &$context = null, $model = '', $category = '', $normalized_message = null, $job_title_hint = '', $job_slug = '' ) {
@@ -1603,7 +1707,20 @@ class BKJA_Chat {
         $job_group_key     = is_string( $args['job_group_key'] ) ? trim( $args['job_group_key'] ) : '';
 
         $normalized_message = self::normalize_message( $message );
-        $context            = self::get_job_context( $normalized_message, $job_title_hint, $job_slug, $job_title_id, $job_group_key );
+
+        if ( $job_title_id <= 0 && self::is_followup_message( $normalized_message ) ) {
+            $recent_job_id = self::get_last_job_context( $args['session_id'], (int) $args['user_id'] );
+            if ( $recent_job_id > 0 ) {
+                $job_title_id = $recent_job_id;
+            }
+        }
+
+        $context = self::get_job_context( $normalized_message, $job_title_hint, $job_slug, $job_title_id, $job_group_key );
+        if ( ! empty( $context['primary_job_title_id'] )
+            && empty( $context['needs_clarification'] )
+            && empty( $context['ambiguous'] ) ) {
+            self::store_last_job_context( (int) $context['primary_job_title_id'], $args['session_id'], (int) $args['user_id'] );
+        }
 
         $api_key = self::get_api_key();
 
