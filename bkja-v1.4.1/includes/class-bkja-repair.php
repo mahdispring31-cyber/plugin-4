@@ -162,7 +162,7 @@ class BKJA_Repair {
         $stats      = array();
         $unresolved = false;
 
-        $title_data = self::resolve_job_title( $row );
+        $title_data = self::resolve_job_title( $row, $issues, $stats );
         $job_title_id = isset( $title_data['job_title_id'] ) ? (int) $title_data['job_title_id'] : 0;
         if ( $job_title_id ) {
             $should_update_job_title = (int) $row->job_title_id !== $job_title_id;
@@ -170,17 +170,19 @@ class BKJA_Repair {
             $title_error = isset( $title_data['wpdb_error'] ) ? $title_data['wpdb_error'] : '';
             $title_query = isset( $title_data['last_query'] ) ? $title_data['last_query'] : '';
             $should_update_job_title = false;
-            self::record_unresolved(
-                $issues,
-                $stats,
-                (int) $row->id,
-                'job_title_id',
-                isset( $title_data['label'] ) ? $title_data['label'] : '',
-                null,
-                isset( $title_data['reason'] ) ? $title_data['reason'] : 'job_title_missing',
-                $title_error,
-                $title_query
-            );
+            if ( empty( $title_data['recorded'] ) ) {
+                self::record_unresolved(
+                    $issues,
+                    $stats,
+                    (int) $row->id,
+                    'job_title_id',
+                    isset( $title_data['label'] ) ? $title_data['label'] : '',
+                    null,
+                    isset( $title_data['reason'] ) ? $title_data['reason'] : 'job_title_missing',
+                    $title_error,
+                    $title_query
+                );
+            }
             $unresolved = true;
         }
 
@@ -446,10 +448,10 @@ class BKJA_Repair {
             return '';
         }
 
-        if ( function_exists( 'mb_strlen' ) && mb_strlen( $label, 'UTF-8' ) > 191 ) {
+        if ( function_exists( 'mb_strlen' ) && mb_strlen( $label, 'UTF-8' ) > 190 ) {
             $label = function_exists( 'mb_substr' )
-                ? mb_substr( $label, 0, 191, 'UTF-8' )
-                : substr( $label, 0, 191 );
+                ? mb_substr( $label, 0, 190, 'UTF-8' )
+                : substr( $label, 0, 190 );
             $label = trim( $label );
         }
 
@@ -625,7 +627,7 @@ class BKJA_Repair {
         return false;
     }
 
-    protected static function resolve_job_title( $row ) {
+    protected static function resolve_job_title( $row, &$issues = null, &$stats = null ) {
         global $wpdb;
 
         $category = isset( $row->category_id ) ? (int) $row->category_id : 0;
@@ -768,6 +770,20 @@ class BKJA_Repair {
             $err = $wpdb->last_error;
             $q   = $wpdb->last_query;
 
+            if ( null !== $issues && null !== $stats ) {
+                self::record_unresolved(
+                    $issues,
+                    $stats,
+                    (int) $row->id,
+                    'job_title_id',
+                    $insert_label,
+                    null,
+                    'job_title_insert_failed',
+                    $err,
+                    $q
+                );
+            }
+
             return array(
                 'job_title_id' => null,
                 'category_id'  => $category,
@@ -775,6 +791,7 @@ class BKJA_Repair {
                 'reason'       => 'job_title_insert_failed',
                 'wpdb_error'   => $err,
                 'last_query'   => $q,
+                'recorded'     => true,
             );
         }
 
