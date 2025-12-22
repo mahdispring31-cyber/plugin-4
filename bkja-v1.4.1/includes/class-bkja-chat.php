@@ -833,7 +833,7 @@ class BKJA_Chat {
         return bkja_format_toman_as_million_label( $value );
     }
 
-    protected static function format_range_label( $min, $max ) {
+    protected static function format_range_label( $min, $max, $unit_label = 'میلیون تومان' ) {
         if ( ! is_numeric( $min ) || ! is_numeric( $max ) || $min <= 0 || $max <= 0 ) {
             return '';
         }
@@ -852,7 +852,10 @@ class BKJA_Chat {
         $min_label = $format_number( $min );
         $max_label = $format_number( $max );
 
-        return trim( $min_label ) . ' تا ' . trim( $max_label ) . ' میلیون تومان';
+        $unit_label = trim( (string) $unit_label );
+        $suffix     = $unit_label ? ' ' . $unit_label : '';
+
+        return trim( $min_label ) . ' تا ' . trim( $max_label ) . $suffix;
     }
 
     protected static function trim_snippet( $text, $length = 140 ) {
@@ -871,6 +874,29 @@ class BKJA_Chat {
         return rtrim( substr( $text, 0, max( 0, $length - 1 ) ) ) . '…';
     }
 
+    protected static function detect_job_category( $title ) {
+        $title = is_string( $title ) ? $title : '';
+        if ( '' === $title ) {
+            return 'general';
+        }
+
+        $categories = array(
+            'technical' => array( 'مکانیک', 'برق', 'تعمیر', 'تاسیسات', 'لوله', 'جوش', 'نجار', 'کابینت', 'تراشکار', 'نصاب' ),
+            'office'    => array( 'اداری', 'کارمند', 'منشی', 'حسابدار', 'کارشناس', 'مدیر', 'بانک', 'دفتری', 'کارگزینی' ),
+            'health'    => array( 'پزشک', 'پزشکی', 'پرستار', 'دارو', 'درمان', 'بهداشت', 'کلینیک', 'دندان', 'آزمایشگاه' ),
+        );
+
+        foreach ( $categories as $key => $keywords ) {
+            foreach ( $keywords as $keyword ) {
+                if ( false !== mb_stripos( $title, $keyword, 0, 'UTF-8' ) ) {
+                    return $key;
+                }
+            }
+        }
+
+        return 'general';
+    }
+
     protected static function build_context_prompt( $context ) {
         if ( empty( $context['job_title'] ) ) {
             return '';
@@ -886,6 +912,9 @@ class BKJA_Chat {
             $window_months = isset( $summary['window_months'] ) ? (int) $summary['window_months'] : null;
             $income_numeric_total = isset( $summary['income_numeric_total'] ) ? (int) $summary['income_numeric_total'] : 0;
             $data_limited = ! empty( $summary['data_limited'] );
+            $total_records = isset( $summary['total_records'] ) ? (int) $summary['total_records'] : $count_reports;
+            $income_valid_count = isset( $summary['income_valid_count'] ) ? (int) $summary['income_valid_count'] : 0;
+            $income_data_low = ( $total_records <= 2 || $income_valid_count <= 2 );
 
             $count_line = 'تعداد گزارش‌های معتبر';
             if ( $window_months ) {
@@ -911,9 +940,12 @@ class BKJA_Chat {
             $max_invest  = isset( $summary['max_investment'] ) ? $summary['max_investment'] : null;
             $income_method = isset( $summary['avg_income_method'] ) && 'median' === $summary['avg_income_method'] ? 'میانه' : 'میانگین';
 
-            if ( $avg_income || $min_income || $max_income ) {
-                $income_line = $income_method . ' درآمد ماهانه: ' . self::format_amount_label( $avg_income );
-                $range       = self::format_range_label( $min_income, $max_income );
+            if ( $total_records > 0 && $income_valid_count <= 0 ) {
+                $lines[] = 'درآمد: داده کافی برای عدد دقیق نداریم.';
+            } elseif ( $avg_income || $min_income || $max_income ) {
+                $label_prefix = $income_data_low ? 'برآورد تقریبی' : $income_method;
+                $income_line = $label_prefix . ' درآمد ماهانه: ' . self::format_amount_label( $avg_income );
+                $range       = self::format_range_label( $min_income, $max_income, 'میلیون تومان در ماه' );
                 if ( $range ) {
                     $income_line .= ' | بازه رایج: ' . $range;
                 } else {
@@ -1019,23 +1051,61 @@ class BKJA_Chat {
         $sections[] = '• اعداد زیر بر اساس گزارش‌های کاربران این سیستم است و آمار رسمی نیست.';
 
         $sections[] = '';
-        $sections[] = '💵 درآمد ماهانه (میلیون تومان):';
-        $income_method = ( isset( $summary['avg_income_method'] ) && 'median' === $summary['avg_income_method'] ) ? 'میانه' : 'میانگین';
-        $income_line = '• ' . $income_method . ': ' . self::format_amount_label( isset( $summary['avg_income'] ) ? $summary['avg_income'] : null );
-        $income_range = self::format_range_label( $summary['min_income'] ?? null, $summary['max_income'] ?? null );
-        if ( $income_range ) {
-            $income_line .= ' | بازه رایج: ' . $income_range;
+        $sections[] = '💵 درآمد ماهانه (میلیون تومان در ماه):';
+        $total_records = isset( $summary['total_records'] ) ? (int) $summary['total_records'] : 0;
+        $income_valid_count = isset( $summary['income_valid_count'] ) ? (int) $summary['income_valid_count'] : 0;
+        $income_unit_guessed = ! empty( $summary['income_unit_guessed'] );
+        $income_composite_count = isset( $summary['income_composite_count'] ) ? (int) $summary['income_composite_count'] : 0;
+        $income_data_low = ( $total_records <= 2 || $income_valid_count <= 2 );
+        $single_income = ( 1 === $income_valid_count );
+
+        if ( $income_data_low ) {
+            $sections[] = '• ⚠️ داده‌ها کم است؛ عددها تقریبی است و ممکن است با شهر/نوع کار متفاوت باشد.';
+        }
+
+        if ( $total_records > 0 && $income_valid_count <= 0 ) {
+            $sections[] = '• درآمد: داده کافی برای عدد دقیق نداریم.';
+            $sections[] = '• اگر شهر/نوع فعالیت را بگویی دقیق‌تر می‌گویم.';
         } else {
-            $income_line .= ' | بازه رایج: نامشخص';
+            $income_method = ( isset( $summary['avg_income_method'] ) && 'median' === $summary['avg_income_method'] ) ? 'میانه' : 'میانگین';
+            $label_prefix  = $income_data_low ? 'برآورد تقریبی' : $income_method;
+            $avg_income_value = isset( $summary['avg_income'] ) ? $summary['avg_income'] : null;
+            if ( $single_income && empty( $avg_income_value ) ) {
+                $avg_income_value = isset( $summary['min_income'] ) ? $summary['min_income'] : null;
+            }
+            $income_line = '• ' . $label_prefix . ': ' . self::format_amount_label( $avg_income_value );
+            if ( $single_income ) {
+                $income_line .= ' (تنها 1 گزارش معتبر)';
+            }
+            if ( $income_unit_guessed ) {
+                $income_line .= ' (واحد از متن حدس زده شده)';
+            }
+            $income_range = self::format_range_label(
+                $summary['min_income'] ?? null,
+                $summary['max_income'] ?? null,
+                'میلیون تومان در ماه'
+            );
+            if ( $income_range ) {
+                $income_line .= ' | بازه رایج: ' . $income_range;
+            } else {
+                $income_line .= ' | بازه رایج: نامشخص';
+            }
+            $sections[] = $income_line;
         }
-        if ( $income_numeric_total > 0 && $income_numeric_total < 3 ) {
-            $income_line .= ' (دقت پایین به دلیل گزارش‌های محدود)';
+
+        if ( $income_composite_count > 0 ) {
+            $sections[] = '';
+            $sections[] = '💡 درآمد ترکیبی (حقوق + پورسانت/کار آزاد)';
+            $sections[] = 'برخی گزارش‌ها درآمد را به صورت ترکیبی نوشته‌اند (مثلاً حقوق ثابت + پورسانت). این موارد در محاسبه میانگین لحاظ نشده‌اند.';
+            $sections[] = 'تعداد گزارش‌های درآمد ترکیبی: ' . $income_composite_count;
         }
-        $sections[] = $income_line;
 
         $sections[] = '';
         $sections[] = '💰 سرمایه لازم (میلیون تومان):';
         $invest_line = '• میانگین: ' . self::format_amount_label( isset( $summary['avg_investment'] ) ? $summary['avg_investment'] : null );
+        if ( ! empty( $summary['investment_unit_guessed'] ) ) {
+            $invest_line .= ' (واحد از متن حدس زده شده)';
+        }
         $invest_range = self::format_range_label( $summary['min_investment'] ?? null, $summary['max_investment'] ?? null );
         if ( $invest_range ) {
             $invest_line .= ' | بازه رایج: ' . $invest_range;
@@ -1097,7 +1167,22 @@ class BKJA_Chat {
         $sections[] = '';
         $sections[] = '🚀 جمع‌بندی و اقدام بعدی:';
         $sections[] = '• اعداد بالا تنها از گزارش‌های کاربران سایت استخراج شده است؛ پیش از تصمیم نهایی با دو فعال حوزه ' . $title . ' مشورت کن.';
-        $sections[] = '• مهارت‌ها و هزینه‌های ضروری را در یک لیست کوتاه یادداشت کن و با شرایط شخصی و بودجه خود تطبیق بده.';
+        $low_data_for_next = ( $total_records <= 2 || $income_valid_count <= 2 );
+        if ( $low_data_for_next ) {
+            $sections[] = '• برای دقیق‌تر شدن، این 2 مورد را بگو: شهر + نوع کار (کارگاهی/نمایندگی/آزاد) + سطح تجربه.';
+        } else {
+            $category = self::detect_job_category( $title );
+            if ( 'technical' === $category ) {
+                $sections[] = '• مسیر پیشنهادی: یادگیری مهارت‌های پایه، تهیه ابزار ضروری، و گذراندن شاگردی یا دوره فنی‌وحرفه‌ای.';
+            } elseif ( 'office' === $category ) {
+                $sections[] = '• مسیر پیشنهادی: آماده‌سازی رزومه و مسیر استخدام، تقویت مهارت‌های نرم، و تکمیل مدارک مرتبط.';
+            } elseif ( 'health' === $category ) {
+                $sections[] = '• مسیر پیشنهادی: بررسی مسیر تحصیل و مجوزها، شناخت مسئولیت‌ها و ریسک‌ها، و شروع با دوره‌های معتبر.';
+            } else {
+                $sections[] = '• مسیر پیشنهادی: بررسی مهارت‌های کلیدی این شغل، برآورد هزینه‌های شروع، و صحبت با افراد فعال در این حوزه.';
+            }
+        }
+        $sections[] = '• اگر دوست داری، می‌تونی تجربه خودت رو هم ثبت کنی تا آمار دقیق‌تر بشه.';
 
         if ( empty( $summary ) ) {
             $sections[] = '';
@@ -1293,13 +1378,18 @@ class BKJA_Chat {
 
         $word_count = preg_split( '/\s+/u', $text );
         $word_count = is_array( $word_count ) ? count( $word_count ) : 0;
-        $is_short   = ( $word_count > 0 && $word_count <= 5 ) || ( function_exists( 'mb_strlen' ) ? mb_strlen( $text, 'UTF-8' ) <= 30 : strlen( $text ) <= 30 );
+        $is_short   = ( $word_count > 0 && $word_count <= 7 ) || ( function_exists( 'mb_strlen' ) ? mb_strlen( $text, 'UTF-8' ) <= 60 : strlen( $text ) <= 60 );
 
         if ( ! $is_short ) {
             return false;
         }
 
-        $keywords = array( 'درآمد', 'حقوق', 'دستمزد', 'سرمایه', 'هزینه', 'بودجه', 'چقد', 'چقدر', 'چنده', 'لازم', 'نیاز' );
+        $keywords = array(
+            'درآمد', 'درامد', 'حقوق', 'حقوقش', 'درآمدش', 'چقدر', 'چقد', 'چقدره', 'چنده', 'چقدر درمیاره',
+            'دستمزد', 'سرمایه', 'سرمایه میخواد', 'سرمایه می‌خواد', 'هزینه', 'هزینه شروع', 'بودجه',
+            'مزایا', 'معایب', 'چالش', 'بازار', 'بازار کار', 'خارج', 'مهارت', 'مهارت‌ها', 'قدم بعدی',
+            'از کجا شروع کنم', 'شغل‌های جایگزین', 'شغلهای جایگزین', 'میانگین', 'بازه', 'شرایط'
+        );
         foreach ( $keywords as $keyword ) {
             if ( false !== mb_stripos( $text, $keyword, 0, 'UTF-8' ) ) {
                 return true;

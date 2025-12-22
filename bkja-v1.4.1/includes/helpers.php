@@ -387,12 +387,13 @@ if ( ! function_exists( 'bkja_format_toman_as_million_label' ) ) {
         $million = (float) $toman / 1000000;
 
         if ( $million < 20 ) {
-            $formatted = number_format( $million, 1, '.', '' );
+            $formatted = number_format( $million, 1, '.', ',' );
         } else {
-            $formatted = number_format( round( $million ), 0, '.', '' );
+            $formatted = number_format( round( $million ), 0, '.', ',' );
         }
 
         $formatted = str_replace( array( '.0', '.00' ), '', $formatted );
+        $formatted = str_replace( ',', '٬', $formatted );
 
         // Localize digits to Persian if available
         $digits_en = array( '0','1','2','3','4','5','6','7','8','9' );

@@ -1962,7 +1962,7 @@ class BKJA_Database {
             return $value;
         };
 
-        $normalize_legacy_or_maybe_million = function( $value ) use ( $normalize_value ) {
+        $normalize_legacy_or_maybe_million = function( $value, &$guessed_unit = false ) use ( $normalize_value ) {
             if ( ! is_numeric( $value ) ) {
                 return null;
             }
@@ -1974,6 +1974,7 @@ class BKJA_Database {
 
             if ( $value < 1000000 ) {
                 $value = $value * 1000000;
+                $guessed_unit = true;
             }
 
             return $normalize_value( $value );
@@ -1988,9 +1989,12 @@ class BKJA_Database {
         $income_valid_count     = 0;
         $income_unknown_count   = 0;
         $income_invalid_count   = 0;
+        $income_composite_count = 0;
         $investment_valid_count = 0;
         $investment_unknown_count = 0;
         $investment_invalid_count = 0;
+        $income_unit_guessed    = false;
+        $investment_unit_guessed = false;
 
         $sum_experience = 0;
         $exp_count      = 0;
@@ -2004,7 +2008,7 @@ class BKJA_Database {
             if ( '' === $text ) {
                 return false;
             }
-            $keywords = array( '+', 'ترکیب', 'جمع', 'کارمندی', 'آزاد' );
+            $keywords = array( '+', 'ترکیب', 'جمع', 'کارمندی', 'آزاد', 'پورسانت', 'حقوق +' );
             foreach ( $keywords as $keyword ) {
                 if ( false !== mb_stripos( $text, $keyword, 0, 'UTF-8' ) ) {
                     return true;
@@ -2017,7 +2021,7 @@ class BKJA_Database {
             $total_records++;
             $income_base = $normalize_value( $srow->income_toman );
             if ( null === $income_base && isset( $srow->income_num ) ) {
-                $income_base = $normalize_legacy_or_maybe_million( $srow->income_num );
+                $income_base = $normalize_legacy_or_maybe_million( $srow->income_num, $income_unit_guessed );
             }
 
             $income_min  = $normalize_value( $srow->income_min_toman );
@@ -2028,6 +2032,11 @@ class BKJA_Database {
             }
             if ( $income_max ) {
                 $income_range_maxes[] = $income_max;
+            }
+
+            $income_text = isset( $srow->income ) ? trim( (string) $srow->income ) : '';
+            if ( '' !== $income_text && $is_income_composite( $income_text ) ) {
+                $income_composite_count++;
             }
 
             $income_value = null;
@@ -2041,7 +2050,6 @@ class BKJA_Database {
                 $income_values[] = $income_value;
                 $income_valid_count++;
             } else {
-                $income_text = isset( $srow->income ) ? trim( (string) $srow->income ) : '';
                 if ( '' !== $income_text && class_exists( 'BKJA_Parser' ) ) {
                     if ( $is_income_composite( $income_text ) ) {
                         $income_invalid_count++;
@@ -2072,7 +2080,7 @@ class BKJA_Database {
 
             $investment_base = $normalize_value( $srow->investment_toman );
             if ( null === $investment_base && isset( $srow->investment_num ) ) {
-                $investment_base = $normalize_legacy_or_maybe_million( $srow->investment_num );
+                $investment_base = $normalize_legacy_or_maybe_million( $srow->investment_num, $investment_unit_guessed );
             }
             if ( $investment_base ) {
                 $investment_values[] = $investment_base;
@@ -2371,6 +2379,8 @@ class BKJA_Database {
             'income_valid_count'   => $income_valid_count,
             'income_unknown_count' => $income_unknown_count,
             'income_invalid_count' => $income_invalid_count,
+            'income_composite_count' => $income_composite_count,
+            'income_unit_guessed' => $income_unit_guessed,
             'avg_investment'    => $avg_investment ? round( (float) $avg_investment, 1 ) : null,
             'avg_investment_label' => $format_label( $avg_investment ),
             'min_investment'    => $min_investment ? (float) $min_investment : null,
@@ -2381,6 +2391,7 @@ class BKJA_Database {
             'investment_valid_count'   => $investment_valid_count,
             'investment_unknown_count' => $investment_unknown_count,
             'investment_invalid_count' => $investment_invalid_count,
+            'investment_unit_guessed' => $investment_unit_guessed,
             'data_limited'      => $data_limited,
             'avg_experience_years' => $avg_experience_years ? round( (float) $avg_experience_years, 1 ) : null,
             'avg_hours_per_day'    => $avg_hours_per_day ? round( (float) $avg_hours_per_day, 1 ) : null,
