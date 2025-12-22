@@ -349,8 +349,8 @@ class BKJA_Repair {
         return $value;
     }
 
-    protected static function record_unresolved( &$issues, &$stats, $job_id, $field, $raw_value, $normalized_value, $reason, $wpdb_error = '', $last_query = '' ) {
-        $issues[] = array(
+    protected static function record_unresolved( &$issues, &$stats, $job_id, $field, $raw_value, $normalized_value, $reason, $wpdb_error = '', $last_query = '', $context = array() ) {
+        $issue = array(
             'job_id'           => $job_id,
             'field'            => $field,
             'raw_value'        => $raw_value,
@@ -359,6 +359,12 @@ class BKJA_Repair {
             'wpdb_error'       => $wpdb_error,
             'last_query'       => $last_query,
         );
+
+        if ( ! empty( $context ) && is_array( $context ) ) {
+            $issue = array_merge( $issue, $context );
+        }
+
+        $issues[] = $issue;
 
         if ( ! isset( $stats[ $reason ] ) ) {
             $stats[ $reason ] = 0;
@@ -769,6 +775,22 @@ class BKJA_Repair {
         if ( false === $inserted ) {
             $err = $wpdb->last_error;
             $q   = $wpdb->last_query;
+            $sanitized_title = sanitize_text_field( $label );
+            $title_length    = function_exists( 'mb_strlen' )
+                ? mb_strlen( $sanitized_title, 'UTF-8' )
+                : strlen( $sanitized_title );
+            $insert_payload  = wp_json_encode(
+                array(
+                    'title'       => $insert_label,
+                    'category_id' => $fallback_category,
+                    'is_primary'  => 1,
+                )
+            );
+            $context = array(
+                'insert_payload'  => $insert_payload,
+                'sanitized_title' => $sanitized_title,
+                'title_length'    => $title_length,
+            );
 
             if ( null !== $issues && null !== $stats ) {
                 self::record_unresolved(
@@ -780,7 +802,8 @@ class BKJA_Repair {
                     null,
                     'job_title_insert_failed',
                     $err,
-                    $q
+                    $q,
+                    $context
                 );
             }
 
@@ -792,6 +815,9 @@ class BKJA_Repair {
                 'wpdb_error'   => $err,
                 'last_query'   => $q,
                 'recorded'     => true,
+                'insert_payload'  => $insert_payload,
+                'sanitized_title' => $sanitized_title,
+                'title_length'    => $title_length,
             );
         }
 
@@ -859,6 +885,9 @@ class BKJA_Repair {
                     isset( $issue['reason'] ) ? $issue['reason'] : '',
                     isset( $issue['wpdb_error'] ) ? $issue['wpdb_error'] : '',
                     isset( $issue['last_query'] ) ? $issue['last_query'] : '',
+                    isset( $issue['insert_payload'] ) ? $issue['insert_payload'] : '',
+                    isset( $issue['sanitized_title'] ) ? $issue['sanitized_title'] : '',
+                    isset( $issue['title_length'] ) ? $issue['title_length'] : '',
                 )
             );
         }
@@ -882,7 +911,21 @@ class BKJA_Repair {
             return false;
         }
 
-        fputcsv( $fh, array( 'job_id', 'field', 'raw_value', 'normalized_value', 'reason', 'wpdb_error', 'last_query' ) );
+        fputcsv(
+            $fh,
+            array(
+                'job_id',
+                'field',
+                'raw_value',
+                'normalized_value',
+                'reason',
+                'wpdb_error',
+                'last_query',
+                'insert_payload',
+                'sanitized_title',
+                'title_length',
+            )
+        );
         fclose( $fh );
         return true;
     }
