@@ -763,16 +763,16 @@ class BKJA_Repair {
         );
 
         if ( false === $inserted ) {
-            $last_error = $wpdb->last_error;
-            $last_query = $wpdb->last_query;
+            $err = $wpdb->last_error;
+            $q   = $wpdb->last_query;
 
             return array(
                 'job_title_id' => null,
                 'category_id'  => $category,
                 'label'        => $insert_label,
                 'reason'       => 'job_title_insert_failed',
-                'wpdb_error'   => $last_error,
-                'last_query'   => $last_query,
+                'wpdb_error'   => $err,
+                'last_query'   => $q,
             );
         }
 
