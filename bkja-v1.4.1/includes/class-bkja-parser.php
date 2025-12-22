@@ -30,7 +30,7 @@ class BKJA_Parser {
                     'صفر',
                 ),
                 'zero_patterns' => array(
-                    '/سرمایه(?:‌|\s)*ای\s*نیاز\s*ندارد/u',
+                    '/سرمایه(?:‌|\s)*ای\s*نیاز\s*(?:نیست|ندارد)/u',
                     '/سرمایه(?:‌|\s)*(?:مالی)?\s*نیاز\s*(?:نیست|ندارد)/u',
                     '/سرمایه(?:‌|\s)*گذاری\s*(?:شخصی|خاصی)?\s*نیاز\s*(?:نیست|ندارد)/u',
                     '/نیاز\s*(?:به)?\s*سرمایه\s*(?:نیست|ندارد|نمی\s*خواهد)/u',
@@ -51,12 +51,17 @@ class BKJA_Parser {
                     'خودرو',
                     'ماشین',
                     'کامیون',
+                    'وانت',
                     'موتور',
                     'ابزار',
                     'ماشین‌آلات',
                     'ماشین آلات',
                     'دستگاه',
                     'تجهیزات',
+                ),
+                'unknown_patterns' => array(
+                    '/سرمایه\s*برای/u',
+                    '/هزینه\s*(?:دوره(?:\s*آموزشی)?|تحصیل)/u',
                 ),
                 'non_money_units' => array(
                     'سال',
@@ -106,7 +111,7 @@ class BKJA_Parser {
 
     /**
      * @param string|null $raw
-     * @param array{zero_keywords:array,zero_patterns?:array,unknown_keywords:array,asset_keywords?:array,non_money_units?:array,allow_zero:bool} $options
+     * @param array{zero_keywords:array,zero_patterns?:array,unknown_keywords:array,unknown_patterns?:array,asset_keywords?:array,non_money_units?:array,allow_zero:bool} $options
      * @return array{status:string,value:?int,note:?string,min:?int,max:?int}
      */
     protected static function parse_money_text( $raw, $options ) {
@@ -115,6 +120,7 @@ class BKJA_Parser {
                 'zero_keywords'    => array(),
                 'zero_patterns'    => array(),
                 'unknown_keywords' => array(),
+                'unknown_patterns' => array(),
                 'asset_keywords'   => array(),
                 'non_money_units'  => array(),
                 'allow_zero'       => false,
@@ -158,14 +164,6 @@ class BKJA_Parser {
             $parse_text = self::strip_non_money_units( $parse_text, $options['non_money_units'] );
         }
 
-        if ( ! empty( $options['asset_keywords'] )
-            && self::contains_keyword( $text, $options['asset_keywords'] )
-            && null === self::detect_unit_multiplier( $text ) ) {
-            $result['status'] = 'asset_or_non_cash';
-            $result['note']   = 'asset';
-            return $result;
-        }
-
         $numeric = function_exists( 'bkja_parse_numeric_range' )
             ? bkja_parse_numeric_range( $parse_text )
             : array();
@@ -191,7 +189,28 @@ class BKJA_Parser {
                 return $result;
             }
 
+            if ( self::contains_pattern( $text, $options['unknown_patterns'] ) ) {
+                $result['status'] = 'unknown';
+                $result['note']   = 'pattern';
+                return $result;
+            }
+
+            if ( ! empty( $options['asset_keywords'] )
+                && self::contains_keyword( $text, $options['asset_keywords'] ) ) {
+                $result['status'] = 'unknown';
+                $result['note']   = 'asset_reference';
+                return $result;
+            }
+
             $result['status'] = 'invalid';
+            return $result;
+        }
+
+        if ( ! empty( $options['asset_keywords'] )
+            && self::contains_keyword( $text, $options['asset_keywords'] )
+            && null === $multiplier ) {
+            $result['status'] = 'asset_or_non_cash';
+            $result['note']   = 'asset';
             return $result;
         }
 
@@ -225,6 +244,24 @@ class BKJA_Parser {
             $result['max'] = (int) round( $range_max * $multiplier );
         }
         return $result;
+    }
+
+    /**
+     * @param string $text
+     * @param array $patterns
+     * @return bool
+     */
+    protected static function contains_pattern( $text, $patterns ) {
+        foreach ( (array) $patterns as $pattern ) {
+            if ( '' === $pattern ) {
+                continue;
+            }
+            if ( @preg_match( $pattern, $text ) ) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
