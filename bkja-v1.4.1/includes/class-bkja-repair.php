@@ -167,6 +167,8 @@ class BKJA_Repair {
         if ( $job_title_id ) {
             $should_update_job_title = (int) $row->job_title_id !== $job_title_id;
         } else {
+            $title_error = isset( $title_data['wpdb_error'] ) ? $title_data['wpdb_error'] : '';
+            $title_query = isset( $title_data['last_query'] ) ? $title_data['last_query'] : '';
             $should_update_job_title = false;
             self::record_unresolved(
                 $issues,
@@ -176,8 +178,8 @@ class BKJA_Repair {
                 isset( $title_data['label'] ) ? $title_data['label'] : '',
                 null,
                 isset( $title_data['reason'] ) ? $title_data['reason'] : 'job_title_missing',
-                isset( $title_data['wpdb_error'] ) ? $title_data['wpdb_error'] : '',
-                isset( $title_data['last_query'] ) ? $title_data['last_query'] : ''
+                $title_error,
+                $title_query
             );
             $unresolved = true;
         }
