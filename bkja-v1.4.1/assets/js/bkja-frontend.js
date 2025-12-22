@@ -1311,8 +1311,14 @@
                 if(!normalized){
                     return false;
                 }
-                var followupKeywords = ['چقدر','چقدره','درآمد','درامد','حقوق','سرمایه','مزایا','معایب','چالش','بازار','ریسک','سود','چطوره','چطور','چیه','چنده','درآمدش','حقوقش','سخته','امکان','شرایط'];
-                if(normalized.length <= 28){
+                var followupKeywords = [
+                    'چقدر','چقدره','درآمد','درامد','حقوق','حقوقش','درآمدش','چقدر درمیاره','چنده','دستمزد',
+                    'سرمایه','هزینه','هزینه شروع','بودجه','سرمایه میخواد','سرمایه می‌خواد',
+                    'مزایا','معایب','چالش','بازار','بازار کار','ریسک','سود','چطوره','چطور','چیه',
+                    'سخته','امکان','شرایط','مهارت','مهارت‌ها','قدم بعدی','از کجا شروع کنم',
+                    'شغل‌های جایگزین','شغلهای جایگزین','میانگین','بازه'
+                ];
+                if(normalized.length <= 60){
                     for(var i=0;i<followupKeywords.length;i++){
                         if(normalized.indexOf(followupKeywords[i]) !== -1){
                             return true;
@@ -2039,13 +2045,40 @@
                         formatted = formatted.replace(/\.0+$/, '');
                     }
 
+                    var parts = formatted.split('.');
+                    var intPart = parts[0] || '';
+                    var decPart = parts.length > 1 ? parts[1] : '';
+                    intPart = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+                    formatted = decPart ? (intPart + '.' + decPart) : intPart;
+
                     var digitsEn = ['0','1','2','3','4','5','6','7','8','9'];
                     var digitsFa = ['۰','۱','۲','۳','۴','۵','۶','۷','۸','۹'];
                     for(var i=0; i<digitsEn.length; i++){
                         formatted = formatted.replace(new RegExp(digitsEn[i], 'g'), digitsFa[i]);
                     }
+                    formatted = formatted.replace(/,/g, '٬');
 
                     return formatted + ' میلیون تومان';
+                }
+
+                function ensureMonthlyUnit(label){
+                    if(!label){
+                        return '';
+                    }
+                    if(label.indexOf('در ماه') !== -1){
+                        return label;
+                    }
+                    if(label.indexOf('میلیون تومان') !== -1){
+                        return label.replace('میلیون تومان', 'میلیون تومان در ماه');
+                    }
+                    return label + ' در ماه';
+                }
+
+                function stripMillionUnit(label){
+                    if(!label){
+                        return '';
+                    }
+                    return label.replace(/\s*میلیون تومان(?:\s*در ماه)?/g, '').trim();
                 }
 
                 var titleToShow = displayTitle || (s && (s.job_title_label || s.job_title)) || (typeof job_title === 'object' && job_title.label ? job_title.label : job_title);
@@ -2073,27 +2106,62 @@
                         html += '<div class="bkja-job-summary-note">داده‌های ما برای این شغل هنوز کم است (' + esc(parseInt(s.count_reports, 10)) + ' تجربه). اگر شهر/نوع فعالیت/سابقه را بگویی دقیق‌تر می‌گویم.</div>';
                     }
 
-                    var incomeText = '';
-                    var incomeLabelPrefix = (s.avg_income_method === 'median') ? 'میانه' : 'میانگین';
-                    var avgIncomeLabel = s.avg_income_label ? s.avg_income_label : (s.avg_income ? fmtMillion(s.avg_income) : '');
-                    if(avgIncomeLabel){
-                        incomeText += incomeLabelPrefix + ': ' + esc(avgIncomeLabel);
+                    var totalRecords = s.total_records ? parseInt(s.total_records, 10) : reportCount;
+                    var incomeValidCount = s.income_valid_count ? parseInt(s.income_valid_count, 10) : 0;
+                    var incomeDataLow = (totalRecords <= 2 || incomeValidCount <= 2);
+                    var singleIncome = incomeValidCount === 1;
+                    var incomeUnitGuessed = !!s.income_unit_guessed;
+                    var incomeCompositeCount = s.income_composite_count ? parseInt(s.income_composite_count, 10) : 0;
+
+                    if(incomeDataLow){
+                        html += '<div class="bkja-job-summary-note">⚠️ داده‌ها کم است؛ عددها تقریبی است و ممکن است با شهر/نوع کار متفاوت باشد.</div>';
                     }
-                    var minIncomeLabel = s.min_income_label ? s.min_income_label : (s.min_income ? fmtMillion(s.min_income) : '');
-                    var maxIncomeLabel = s.max_income_label ? s.max_income_label : (s.max_income ? fmtMillion(s.max_income) : '');
-                    if(minIncomeLabel && maxIncomeLabel){
-                        incomeText += (incomeText ? ' | ' : '') + 'بازه: ' + esc(minIncomeLabel) + ' تا ' + esc(maxIncomeLabel);
-                    } else if (avgIncomeLabel) {
-                        incomeText += (incomeText ? ' | ' : '') + 'بازه: نامشخص';
+
+                    if(totalRecords > 0 && incomeValidCount <= 0){
+                        html += '<p>💵 درآمد ماهانه: داده کافی برای عدد دقیق نداریم.</p>';
+                        html += '<p>اگر شهر/نوع فعالیت را بگویی دقیق‌تر می‌گویم.</p>';
+                    } else {
+                        var incomeText = '';
+                        var incomeLabelPrefix = (s.avg_income_method === 'median') ? 'میانه' : 'میانگین';
+                        var labelPrefix = incomeDataLow ? 'برآورد تقریبی' : incomeLabelPrefix;
+                        var avgIncomeLabel = s.avg_income_label ? s.avg_income_label : (s.avg_income ? fmtMillion(s.avg_income) : '');
+                        if(avgIncomeLabel){
+                            avgIncomeLabel = ensureMonthlyUnit(avgIncomeLabel);
+                            incomeText += labelPrefix + ': ' + esc(avgIncomeLabel);
+                        }
+                        if(singleIncome && avgIncomeLabel){
+                            incomeText += ' (تنها 1 گزارش معتبر)';
+                        }
+                        if(incomeUnitGuessed && avgIncomeLabel){
+                            incomeText += ' (واحد از متن حدس زده شده)';
+                        }
+                        var minIncomeLabel = s.min_income_label ? s.min_income_label : (s.min_income ? fmtMillion(s.min_income) : '');
+                        var maxIncomeLabel = s.max_income_label ? s.max_income_label : (s.max_income ? fmtMillion(s.max_income) : '');
+                        if(minIncomeLabel && maxIncomeLabel){
+                            var minValue = stripMillionUnit(minIncomeLabel);
+                            var maxValue = stripMillionUnit(maxIncomeLabel);
+                            incomeText += (incomeText ? ' | ' : '') + 'بازه: ' + esc(minValue) + ' تا ' + esc(maxValue) + ' میلیون تومان در ماه';
+                        } else if (avgIncomeLabel) {
+                            incomeText += (incomeText ? ' | ' : '') + 'بازه: نامشخص';
+                        }
+                        if(incomeText){
+                            html += '<p>💵 درآمد ماهانه کاربران: ' + incomeText + '</p>';
+                        }
                     }
-                    if(incomeText){
-                        html += '<p>💵 درآمد کاربران: ' + incomeText + '</p>';
+
+                    if(incomeCompositeCount > 0){
+                        html += '<div class="bkja-job-summary-note">💡 درآمد ترکیبی (حقوق + پورسانت/کار آزاد)</div>';
+                        html += '<div class="bkja-job-summary-note">برخی گزارش‌ها درآمد را به صورت ترکیبی نوشته‌اند (مثلاً حقوق ثابت + پورسانت). این موارد در محاسبه میانگین لحاظ نشده‌اند.</div>';
+                        html += '<div class="bkja-job-summary-note">تعداد گزارش‌های درآمد ترکیبی: ' + esc(incomeCompositeCount) + '</div>';
                     }
 
                     var investText = '';
                     var avgInvestmentLabel = s.avg_investment_label ? s.avg_investment_label : (s.avg_investment ? fmtMillion(s.avg_investment) : '');
                     if(avgInvestmentLabel){
                         investText += 'میانگین: ' + esc(avgInvestmentLabel);
+                        if(s.investment_unit_guessed){
+                            investText += ' (واحد از متن حدس زده شده)';
+                        }
                     }
                     var minInvestmentLabel = s.min_investment_label ? s.min_investment_label : (s.min_investment ? fmtMillion(s.min_investment) : '');
                     var maxInvestmentLabel = s.max_investment_label ? s.max_investment_label : (s.max_investment ? fmtMillion(s.max_investment) : '');
