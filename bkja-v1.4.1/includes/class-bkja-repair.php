@@ -742,54 +742,61 @@ class BKJA_Repair {
         $now       = current_time( 'mysql' );
         $group_key = 'auto:' . md5( $normalized_label );
 
-        $inserted = $wpdb->insert(
-            $title_table,
-            array(
-                'category_id' => $fallback_category,
-                'slug'        => $slug,
-                'label'       => $insert_label,
-                'description' => null,
-                'base_label'  => $insert_label,
-                'base_slug'   => sanitize_title( $insert_label ),
-                'group_key'   => $group_key,
-                'is_primary'  => 1,
-                'is_visible'  => 0,
-                'created_at'  => $now,
-                'updated_at'  => $now,
-            ),
-            array(
-                '%d',
-                '%s',
-                '%s',
-                '%s',
-                '%s',
-                '%s',
-                '%s',
-                '%d',
-                '%d',
-                '%s',
-                '%s',
-            )
+        $insert_data = array(
+            'category_id' => $fallback_category,
+            'slug'        => $slug,
+            'label'       => $insert_label,
+            'description' => null,
+            'base_label'  => $insert_label,
+            'base_slug'   => sanitize_title( $insert_label ),
+            'group_key'   => $group_key,
+            'is_primary'  => 1,
+            'is_visible'  => 0,
+            'created_at'  => $now,
+            'updated_at'  => $now,
+        );
+        $insert_format = array(
+            '%d',
+            '%s',
+            '%s',
+            '%s',
+            '%s',
+            '%s',
+            '%s',
+            '%d',
+            '%d',
+            '%s',
+            '%s',
+        );
+        $attempt = array(
+            'table'  => $title_table,
+            'data'   => $insert_data,
+            'format' => $insert_format,
         );
 
+        $inserted = $wpdb->insert( $title_table, $insert_data, $insert_format );
+        $insert_error = $wpdb->last_error;
+        $insert_query = $wpdb->last_query;
+
         if ( false === $inserted ) {
-            $err = $wpdb->last_error;
-            $q   = $wpdb->last_query;
+            $insert_error = is_string( $insert_error ) ? $insert_error : '';
+            if ( function_exists( 'mb_substr' ) ) {
+                $insert_error = mb_substr( $insert_error, 0, 2000, 'UTF-8' );
+            } else {
+                $insert_error = substr( $insert_error, 0, 2000 );
+            }
             $sanitized_title = sanitize_text_field( $label );
             $title_length    = function_exists( 'mb_strlen' )
                 ? mb_strlen( $sanitized_title, 'UTF-8' )
                 : strlen( $sanitized_title );
-            $insert_payload  = wp_json_encode(
-                array(
-                    'title'       => $insert_label,
-                    'category_id' => $fallback_category,
-                    'is_primary'  => 1,
-                )
-            );
+            $insert_payload  = wp_json_encode( $attempt );
             $context = array(
-                'insert_payload'  => $insert_payload,
-                'sanitized_title' => $sanitized_title,
-                'title_length'    => $title_length,
+                'insert_attempted' => 1,
+                'insert_payload'   => $insert_payload,
+                'insert_query'     => $insert_query,
+                'insert_error'     => $insert_error,
+                'sanitized_title'  => $sanitized_title,
+                'title_length'     => $title_length,
             );
 
             if ( null !== $issues && null !== $stats ) {
@@ -801,8 +808,8 @@ class BKJA_Repair {
                     $insert_label,
                     null,
                     'job_title_insert_failed',
-                    $err,
-                    $q,
+                    $insert_error,
+                    $insert_query,
                     $context
                 );
             }
@@ -812,10 +819,13 @@ class BKJA_Repair {
                 'category_id'  => $category,
                 'label'        => $insert_label,
                 'reason'       => 'job_title_insert_failed',
-                'wpdb_error'   => $err,
-                'last_query'   => $q,
+                'wpdb_error'   => $insert_error,
+                'last_query'   => $insert_query,
                 'recorded'     => true,
+                'insert_attempted' => 1,
                 'insert_payload'  => $insert_payload,
+                'insert_query'    => $insert_query,
+                'insert_error'    => $insert_error,
                 'sanitized_title' => $sanitized_title,
                 'title_length'    => $title_length,
             );
@@ -885,7 +895,10 @@ class BKJA_Repair {
                     isset( $issue['reason'] ) ? $issue['reason'] : '',
                     isset( $issue['wpdb_error'] ) ? $issue['wpdb_error'] : '',
                     isset( $issue['last_query'] ) ? $issue['last_query'] : '',
+                    isset( $issue['insert_attempted'] ) ? $issue['insert_attempted'] : '',
                     isset( $issue['insert_payload'] ) ? $issue['insert_payload'] : '',
+                    isset( $issue['insert_query'] ) ? $issue['insert_query'] : '',
+                    isset( $issue['insert_error'] ) ? $issue['insert_error'] : '',
                     isset( $issue['sanitized_title'] ) ? $issue['sanitized_title'] : '',
                     isset( $issue['title_length'] ) ? $issue['title_length'] : '',
                 )
@@ -921,7 +934,10 @@ class BKJA_Repair {
                 'reason',
                 'wpdb_error',
                 'last_query',
+                'insert_attempted',
                 'insert_payload',
+                'insert_query',
+                'insert_error',
                 'sanitized_title',
                 'title_length',
             )
