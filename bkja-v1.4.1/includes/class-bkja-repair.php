@@ -774,11 +774,11 @@ class BKJA_Repair {
             'format' => $insert_format,
         );
 
-        $ok        = $wpdb->insert( $title_table, $insert_data, $insert_format );
-        $ins_query = $wpdb->last_query;
-        $ins_error = $wpdb->last_error;
-        $ins_id    = $wpdb->insert_id;
-        $record = array(
+        $ok         = $wpdb->insert( $title_table, $insert_data, $insert_format );
+        $ins_query  = $wpdb->last_query;
+        $ins_error  = $wpdb->last_error;
+        $ins_id     = $wpdb->insert_id;
+        $record     = array(
             'insert_attempted' => 1,
             'insert_ok'        => ( false !== $ok ) ? 1 : 0,
             'insert_query'     => $ins_query,
@@ -787,7 +787,6 @@ class BKJA_Repair {
         );
 
         if ( false === $ok ) {
-            $record['insert_error'] = is_string( $record['insert_error'] ) ? $record['insert_error'] : '';
             $sanitized_title = sanitize_text_field( $label );
             $title_length    = function_exists( 'mb_strlen' )
                 ? mb_strlen( $sanitized_title, 'UTF-8' )
