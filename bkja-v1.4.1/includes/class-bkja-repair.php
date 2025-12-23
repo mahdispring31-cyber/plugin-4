@@ -775,21 +775,26 @@ class BKJA_Repair {
         );
 
         $ok = $wpdb->insert( $title_table, $insert_data, $insert_format );
-        $insert_error = $wpdb->last_error;
-        $insert_query = $wpdb->last_query;
+        $record = array(
+            'insert_attempted' => 1,
+            'insert_ok'        => ( false !== $ok ) ? 1 : 0,
+            'insert_query'     => $wpdb->last_query,
+            'insert_error'     => $wpdb->last_error,
+        );
 
         if ( false === $ok ) {
-            $insert_error = is_string( $insert_error ) ? $insert_error : '';
+            $record['insert_error'] = is_string( $record['insert_error'] ) ? $record['insert_error'] : '';
             $sanitized_title = sanitize_text_field( $label );
             $title_length    = function_exists( 'mb_strlen' )
                 ? mb_strlen( $sanitized_title, 'UTF-8' )
                 : strlen( $sanitized_title );
             $insert_payload  = json_encode( $attempt );
             $context = array(
-                'insert_attempted' => 1,
+                'insert_attempted' => $record['insert_attempted'],
+                'insert_ok'        => $record['insert_ok'],
                 'insert_payload'   => $insert_payload,
-                'insert_query'     => $insert_query,
-                'insert_error'     => $insert_error,
+                'insert_query'     => $record['insert_query'],
+                'insert_error'     => $record['insert_error'],
                 'sanitized_title'  => $sanitized_title,
                 'title_length'     => $title_length,
             );
@@ -803,8 +808,8 @@ class BKJA_Repair {
                     $insert_label,
                     null,
                     'job_title_insert_failed',
-                    $insert_error,
-                    $insert_query,
+                    $record['insert_error'],
+                    $record['insert_query'],
                     $context
                 );
             }
@@ -814,13 +819,14 @@ class BKJA_Repair {
                 'category_id'  => $category,
                 'label'        => $insert_label,
                 'reason'       => 'job_title_insert_failed',
-                'wpdb_error'   => $insert_error,
-                'last_query'   => $insert_query,
+                'wpdb_error'   => $record['insert_error'],
+                'last_query'   => $record['insert_query'],
                 'recorded'     => true,
-                'insert_attempted' => 1,
+                'insert_attempted' => $record['insert_attempted'],
+                'insert_ok'        => $record['insert_ok'],
                 'insert_payload'  => $insert_payload,
-                'insert_query'    => $insert_query,
-                'insert_error'    => $insert_error,
+                'insert_query'    => $record['insert_query'],
+                'insert_error'    => $record['insert_error'],
                 'sanitized_title' => $sanitized_title,
                 'title_length'    => $title_length,
             );
