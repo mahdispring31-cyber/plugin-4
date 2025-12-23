@@ -774,22 +774,17 @@ class BKJA_Repair {
             'format' => $insert_format,
         );
 
-        $inserted = $wpdb->insert( $title_table, $insert_data, $insert_format );
+        $ok = $wpdb->insert( $title_table, $insert_data, $insert_format );
         $insert_error = $wpdb->last_error;
         $insert_query = $wpdb->last_query;
 
-        if ( false === $inserted ) {
+        if ( false === $ok ) {
             $insert_error = is_string( $insert_error ) ? $insert_error : '';
-            if ( function_exists( 'mb_substr' ) ) {
-                $insert_error = mb_substr( $insert_error, 0, 2000, 'UTF-8' );
-            } else {
-                $insert_error = substr( $insert_error, 0, 2000 );
-            }
             $sanitized_title = sanitize_text_field( $label );
             $title_length    = function_exists( 'mb_strlen' )
                 ? mb_strlen( $sanitized_title, 'UTF-8' )
                 : strlen( $sanitized_title );
-            $insert_payload  = wp_json_encode( $attempt );
+            $insert_payload  = json_encode( $attempt );
             $context = array(
                 'insert_attempted' => 1,
                 'insert_payload'   => $insert_payload,
