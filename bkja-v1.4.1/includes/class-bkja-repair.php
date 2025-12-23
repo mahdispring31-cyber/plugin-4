@@ -774,12 +774,16 @@ class BKJA_Repair {
             'format' => $insert_format,
         );
 
-        $ok = $wpdb->insert( $title_table, $insert_data, $insert_format );
+        $ok        = $wpdb->insert( $title_table, $insert_data, $insert_format );
+        $ins_query = $wpdb->last_query;
+        $ins_error = $wpdb->last_error;
+        $ins_id    = $wpdb->insert_id;
         $record = array(
             'insert_attempted' => 1,
             'insert_ok'        => ( false !== $ok ) ? 1 : 0,
-            'insert_query'     => $wpdb->last_query,
-            'insert_error'     => $wpdb->last_error,
+            'insert_query'     => $ins_query,
+            'insert_error'     => $ins_error,
+            'insert_id'        => $ins_id,
         );
 
         if ( false === $ok ) {
@@ -795,6 +799,7 @@ class BKJA_Repair {
                 'insert_payload'   => $insert_payload,
                 'insert_query'     => $record['insert_query'],
                 'insert_error'     => $record['insert_error'],
+                'insert_id'        => $record['insert_id'],
                 'sanitized_title'  => $sanitized_title,
                 'title_length'     => $title_length,
             );
@@ -827,6 +832,7 @@ class BKJA_Repair {
                 'insert_payload'  => $insert_payload,
                 'insert_query'    => $record['insert_query'],
                 'insert_error'    => $record['insert_error'],
+                'insert_id'       => $record['insert_id'],
                 'sanitized_title' => $sanitized_title,
                 'title_length'    => $title_length,
             );
@@ -900,6 +906,7 @@ class BKJA_Repair {
                     isset( $issue['insert_payload'] ) ? $issue['insert_payload'] : '',
                     isset( $issue['insert_query'] ) ? $issue['insert_query'] : '',
                     isset( $issue['insert_error'] ) ? $issue['insert_error'] : '',
+                    isset( $issue['insert_id'] ) ? $issue['insert_id'] : '',
                     isset( $issue['sanitized_title'] ) ? $issue['sanitized_title'] : '',
                     isset( $issue['title_length'] ) ? $issue['title_length'] : '',
                 )
@@ -939,6 +946,7 @@ class BKJA_Repair {
                 'insert_payload',
                 'insert_query',
                 'insert_error',
+                'insert_id',
                 'sanitized_title',
                 'title_length',
             )
