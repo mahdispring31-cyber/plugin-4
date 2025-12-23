@@ -774,16 +774,14 @@ class BKJA_Repair {
             'format' => $insert_format,
         );
 
-        $ok         = $wpdb->insert( $title_table, $insert_data, $insert_format );
-        $ins_query  = $wpdb->last_query;
-        $ins_error  = $wpdb->last_error;
-        $ins_id     = $wpdb->insert_id;
-        $record     = array(
+        $ok = $wpdb->insert( $title_table, $insert_data, $insert_format );
+
+        $record = array(
             'insert_attempted' => 1,
             'insert_ok'        => ( false !== $ok ) ? 1 : 0,
-            'insert_query'     => $ins_query,
-            'insert_error'     => $ins_error,
-            'insert_id'        => $ins_id,
+            'insert_query'     => $wpdb->last_query,
+            'insert_error'     => $wpdb->last_error,
+            'insert_id'        => (int) $wpdb->insert_id,
         );
 
         if ( false === $ok ) {
