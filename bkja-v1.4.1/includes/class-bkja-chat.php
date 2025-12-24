@@ -897,6 +897,58 @@ class BKJA_Chat {
         return 'general';
     }
 
+    protected static function is_high_income_query( $normalized_message ) {
+        $text = is_string( $normalized_message ) ? $normalized_message : '';
+        if ( '' === $text ) {
+            return false;
+        }
+
+        $patterns = array(
+            '/پردرآمدترین/u',
+            '/پر\s*درآمد/u',
+            '/بیشترین\s+درآمد/u',
+            '/highest\s+pay/i',
+            '/top\s+pay/i',
+        );
+
+        foreach ( $patterns as $pattern ) {
+            if ( preg_match( $pattern, $text ) ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected static function build_high_income_guidance( $context ) {
+        $job_title = isset( $context['job_title'] ) ? $context['job_title'] : '';
+        $category  = self::detect_job_category( $job_title );
+
+        $lines   = array();
+        $lines[] = 'پردرآمد بودن به شهر، مهارت و نوع فعالیت بستگی دارد.';
+        if ( $job_title ) {
+            $lines[] = "بر اساس تجربه‌های ثبت‌شده درباره «{$job_title}» می‌تونیم این مسیرها رو جلو ببریم:";
+        } else {
+            $lines[] = 'با تکیه بر گزارش‌های کاربران همین پلتفرم می‌تونیم این مسیرها رو جلو ببریم:';
+        }
+
+        if ( 'technical' === $category ) {
+            $lines[] = '• مهارت یا زیرحوزه فنی پرتکرار را پیدا کنیم و درآمد پروژه‌ای/شرکتی گزارش‌شده را مقایسه کنیم.';
+            $lines[] = '• از تجربه‌های ثبت‌شده ببینیم چه نوع پروژه یا استک تکنولوژی درآمد بهتری داشته است.';
+            $lines[] = '• مسیر ساخت نمونه‌کار یا قرارداد کوتاه‌مدت را از گزارش‌های مشابه بررسی کنیم.';
+        } elseif ( 'office' === $category ) {
+            $lines[] = '• تفاوت درآمد بین نقش‌های کارشناس، سرپرست یا مدیر را در گزارش‌های این شغل مقایسه کنیم.';
+            $lines[] = '• بررسی کنیم قرارداد ثابت، پورسانتی یا ترکیبی در کدام شهر/صنعت درآمد بالاتری داشته است.';
+            $lines[] = '• از داده‌ها ببینیم چه سابقه یا مدرکی باعث ارتقای درآمد شده است.';
+        } else {
+            $lines[] = '• شغل‌های مشابه را در همین پلتفرم مقایسه کنیم تا ببینیم کدام مسیر درآمد بهتری گزارش شده است.';
+            $lines[] = '• ترکیب نوع قرارداد و سابقه را در داده‌های کاربران بررسی کنیم تا مسیر افزایش درآمد مشخص شود.';
+            $lines[] = '• شهر یا صنعت پرتقاضا را از گزارش‌های ثبت‌شده فیلتر کنیم.';
+        }
+
+        return implode( "\n", array_filter( array_map( 'trim', $lines ) ) );
+    }
+
     protected static function build_context_prompt( $context ) {
         if ( empty( $context['job_title'] ) ) {
             return '';
@@ -1339,7 +1391,22 @@ class BKJA_Chat {
                     $push( 'اگر بخوای بررسی کنی این حوزه با شخصیت من هماهنگ است از چه سوالاتی شروع می‌کنی؟' );
                 }
             }
-            $push( 'به من کمک کن بدانم قدم بعدی منطقی برای تحقیق بیشتر درباره این موضوع چیست.' );
+            $category = self::detect_job_category( $job_title );
+            $guidance_lines = array( 'برای ادامه، بر اساس داده‌های همین پلتفرم می‌تونیم:' );
+            if ( 'technical' === $category ) {
+                $guidance_lines[] = "• مهارت یا زیرحوزه تخصصی «{$job_fragment}» را مشخص کنیم که کاربران درآمد بهتری گزارش کرده‌اند.";
+                $guidance_lines[] = '• تفاوت درآمد پروژه‌ای و شرکتی را با تجربه‌های ثبت‌شده مقایسه کنیم.';
+                $guidance_lines[] = '• مسیر ساخت نمونه‌کار یا پروژه‌ی آزمایشی را مرور کنیم.';
+            } elseif ( 'office' === $category ) {
+                $guidance_lines[] = "• نقش‌های بالاتر یا هم‌خانواده {$job_fragment} را مقایسه کنیم (کارشناس، سرپرست، مدیر).";
+                $guidance_lines[] = '• نوع قرارداد (ثابت، پورسانتی، ترکیبی) را با داده‌های درآمدی کاربران بسنجیم.';
+                $guidance_lines[] = '• شهر یا صنعت پربازده را در گزارش‌ها پیدا کنیم.';
+            } else {
+                $guidance_lines[] = '• شغل یا صنعت مشابه را که در داده‌ها درآمد بالاتری دارد بررسی کنیم.';
+                $guidance_lines[] = '• اثر سابقه و نوع قرارداد را روی درآمد مقایسه کنیم.';
+                $guidance_lines[] = '• مسیر افزایش درآمد مرحله‌ای همین حوزه را مشخص کنیم.';
+            }
+            $push( implode( "\n", array_filter( array_map( 'trim', $guidance_lines ) ) ) );
         }
 
         $capital_keywords = '/سرمایه|بودجه|سرمایه‌گذاری|پول|سرمایه گذاری/u';
@@ -1808,6 +1875,22 @@ class BKJA_Chat {
         }
 
         $api_key = self::get_api_key();
+
+        if ( self::is_high_income_query( $normalized_message ) ) {
+            $guided_answer = self::build_high_income_guidance( $context );
+
+            return self::build_response_payload(
+                $guided_answer,
+                $context,
+                $message,
+                false,
+                'guided_high_income',
+                array(
+                    'model'    => $model,
+                    'category' => $resolved_category,
+                )
+            );
+        }
 
         $cache_enabled   = self::is_cache_enabled();
         $cache_job_title = '';

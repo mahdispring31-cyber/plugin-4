@@ -899,6 +899,29 @@
             });
         }
 
+        var lastFollowupSignature = '';
+
+        function detectJobTypeFromMeta(meta){
+            var title = '';
+            if(meta){
+                title = meta.job_title || meta.job_title_label || '';
+            }
+            var normalized = (title || '').replace(/[\s‌]+/g,' ').toLowerCase();
+            var techKeywords = ['برنامه', 'نرم افزار', 'نرم‌افزار', 'مهندس', 'توسعه', 'dev', 'developer', 'data', 'هوش مصنوعی'];
+            var salesOfficeKeywords = ['فروش', 'بازاریابی', 'اداری', 'منشی', 'کارمند', 'پشتیبان', 'فروشنده'];
+            for(var i=0;i<techKeywords.length;i++){
+                if(normalized.indexOf(techKeywords[i]) !== -1){
+                    return 'technical';
+                }
+            }
+            for(var j=0;j<salesOfficeKeywords.length;j++){
+                if(normalized.indexOf(salesOfficeKeywords[j]) !== -1){
+                    return 'business';
+                }
+            }
+            return 'general';
+        }
+
         function renderFollowups(items, meta){
             removeFollowups();
             var clarificationOptions = [];
@@ -907,6 +930,14 @@
             }
 
             var hasJobContext = !!(meta && meta.job_title);
+            var signature = '';
+            if(hasJobContext){
+                signature = String(meta.job_title) + '|' + clarificationOptions.map(function(opt){ return opt && opt.label ? opt.label : String(opt||''); }).join('|');
+            }
+            if(signature && signature === lastFollowupSignature){
+                return [];
+            }
+
             if(!hasJobContext && !clarificationOptions.length){
                 return [];
             }
@@ -938,9 +969,23 @@
                     $wrap.append($btnOpt);
                 });
             }
-
             if(hasJobContext){
-                var followupText = 'برای ادامه می‌تونیم:\n• بررسی شغل مشابه\n• مقایسه با شغل دیگر\n• بررسی مسیر افزایش درآمد\nبگو کدوم؟';
+                var jobType = detectJobTypeFromMeta(meta);
+                var followupLines = ['برای ادامه می‌تونیم (با تکیه بر تجربه‌های کاربران همین پلتفرم):'];
+                if(jobType === 'technical'){
+                    followupLines.push('• زیرحوزه یا مهارت تخصصی «' + esc(meta.job_title) + '» را پیدا کنیم که درآمد بالاتری گزارش شده');
+                    followupLines.push('• تفاوت درآمد پروژه‌ای/شرکتی را در گزارش‌ها مقایسه کنیم');
+                    followupLines.push('• مسیر ساخت نمونه‌کار و همکاری‌های کوتاه‌مدت را بررسی کنیم');
+                } else if(jobType === 'business'){
+                    followupLines.push('• نقش‌های بالاتر (مثلاً سرپرست یا کارشناس ارشد) را در همین شغل مقایسه کنیم');
+                    followupLines.push('• ببینیم قرارداد ثابت، پورسانتی یا ترکیبی در گزارش‌ها کدام درآمد بهتری داده');
+                    followupLines.push('• شهر یا صنعت پرفروش‌تر را از داده‌های ثبت‌شده بررسی کنیم');
+                } else {
+                    followupLines.push('• شغل یا صنعت مشابه را با داده‌های ثبت‌شده مقایسه کنیم');
+                    followupLines.push('• ترکیب نوع قرارداد و سابقه را برای بهبود درآمد بسنجیم');
+                    followupLines.push('• مسیر رشد مرحله‌ای همین حوزه را مرور کنیم');
+                }
+                var followupText = followupLines.join('\n');
                 var $nextStep = $('<div class="bkja-followup-hint"></div>').html(formatMessage(followupText));
                 $wrap.append($nextStep);
             }
@@ -951,6 +996,7 @@
 
             $messages.append($wrap);
             $messages.scrollTop($messages.prop('scrollHeight'));
+            lastFollowupSignature = signature || (hasJobContext ? String(meta.job_title) : '');
             return [];
         }
 
@@ -2175,14 +2221,15 @@
                         html += '<p>⚠️ معایب: ' + esc(s.disadvantages.join('، ')) + '</p>';
                     }
 
-                    if(isTechnicalJob){
-                        html += '<div class="bkja-job-summary-note">📌 قدم بعدی پیشنهادی:<br>اگر تازه‌کار هستی، مسیر رایج از کارآموزی یا کار در کارگاه‌ها شروع می‌شود.<br>اگر سابقه داری، تخصص (مثلاً حوزه خاص یا مهارت پیشرفته) بیشترین اثر را روی درآمد دارد.</div>';
-                    } else {
-                        html += '<div class="bkja-job-summary-note">📌 قدم بعدی پیشنهادی:<br>اگر تازه‌کار هستی، از پروژه‌های کوچک یا همکاری پاره‌وقت شروع کن تا سابقه بسازی.<br>اگر سابقه داری، با تمرکز بر یک زیرحوزه مشخص و شبکه‌سازی در همان حوزه می‌توانی درآمد را بهبود بدهی.</div>';
-                    }
                 }
                 html += '</div>';
                 pushBotHtml(html);
+                renderFollowups([], {
+                    job_title: summaryJobTitle,
+                    job_title_label: summaryJobTitle,
+                    clarification_options: [],
+                    followup_variant: 'job_summary'
+                });
                 // نمایش رکوردهای کاربران
                 if(records && records.length){
                     records.forEach(function(r){
