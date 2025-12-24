@@ -932,7 +932,15 @@
             var $wrap = $('<div class="bkja-followups" role="list"></div>');
 
             if(clarificationOptions.length){
-                var $hint = $('<div class="bkja-followup-hint"></div>').text('منظورت کدام شغل است؟');
+                var hintHtml = '' +
+                    '<div>برای اینکه دقیق‌تر کمک کنم، می‌تونیم از این مسیرها جلو بریم:</div>' +
+                    '<ul style="margin:6px 0 0 16px; list-style: disc;">' +
+                        '<li>بررسی درآمد یک شغل مشخص</li>' +
+                        '<li>مقایسه چند شغل با هم</li>' +
+                        '<li>معرفی مشاغل پردرآمد با سرمایه کم یا بدون سرمایه</li>' +
+                    '</ul>' +
+                    '<div style="margin-top:6px;">بگو کدوم رو می‌خوای؟</div>';
+                var $hint = $('<div class="bkja-followup-hint"></div>').html(hintHtml);
                 $wrap.append($hint);
                 clarificationOptions.forEach(function(opt){
                     if(opt === null || opt === undefined){ return; }
@@ -2099,10 +2107,24 @@
                 }
                 html += '</div>';
                 if (s) {
+                    var isTechnicalJob = false;
+                    var normalizedTitle = (titleToShow || '').replace(/[\s‌]+/g, ' ').toLowerCase();
+                    var techKeywords = ['برنامه', 'نرم افزار', 'نرم‌افزار', 'مهندس', 'توسعه', 'dev', 'developer', 'data', 'هوش مصنوعی'];
+                    for(var tk=0; tk<techKeywords.length; tk++){
+                        if(normalizedTitle.indexOf(techKeywords[tk]) !== -1){
+                            isTechnicalJob = true;
+                            break;
+                        }
+                    }
+
                     var windowMonths = s.window_months ? parseInt(s.window_months, 10) : 0;
                     var noteText = 'این آمار از گزارش‌های کاربران این شغل جمع‌آوری شده است' + (windowMonths ? ' (حدود ' + windowMonths + ' ماه اخیر)' : '') + ' و منبع رسمی نیست.';
                     html += '<div class="bkja-job-summary-note">' + esc(noteText) + '</div>';
-                    if (s.data_limited && s.count_reports) {
+                    var experienceCount = s.count_reports ? parseInt(s.count_reports, 10) : reportCount;
+                    var lowExperienceData = experienceCount > 0 && experienceCount < 3;
+                    if (lowExperienceData) {
+                        html += '<div class="bkja-job-summary-note">⚠️ داده‌ها برای این شغل هنوز محدود است (' + esc(experienceCount) + ' تجربه). عددها تقریبی هستند و ممکن است با شهر، نوع فعالیت یا سابقه تغییر کنند.</div>';
+                    } else if (s.data_limited && s.count_reports) {
                         html += '<div class="bkja-job-summary-note">داده‌های ما برای این شغل هنوز کم است (' + esc(parseInt(s.count_reports, 10)) + ' تجربه). اگر شهر/نوع فعالیت/سابقه را بگویی دقیق‌تر می‌گویم.</div>';
                     }
 
@@ -2113,7 +2135,7 @@
                     var incomeUnitGuessed = !!s.income_unit_guessed;
                     var incomeCompositeCount = s.income_composite_count ? parseInt(s.income_composite_count, 10) : 0;
 
-                    if(incomeDataLow){
+                    if(incomeDataLow && !lowExperienceData){
                         html += '<div class="bkja-job-summary-note">⚠️ داده‌ها کم است؛ عددها تقریبی است و ممکن است با شهر/نوع کار متفاوت باشد.</div>';
                     }
 
@@ -2150,9 +2172,11 @@
                     }
 
                     if(incomeCompositeCount > 0){
-                        html += '<div class="bkja-job-summary-note">💡 درآمد ترکیبی (حقوق + پورسانت/کار آزاد)</div>';
-                        html += '<div class="bkja-job-summary-note">برخی گزارش‌ها درآمد را به صورت ترکیبی نوشته‌اند (مثلاً حقوق ثابت + پورسانت). این موارد در محاسبه میانگین لحاظ نشده‌اند.</div>';
-                        html += '<div class="bkja-job-summary-note">تعداد گزارش‌های درآمد ترکیبی: ' + esc(incomeCompositeCount) + '</div>';
+                        html += '<div class="bkja-job-summary-note bkja-income-composite">';
+                        html += '<div><strong>💵 درآمد ترکیبی (حقوق + فعالیت جانبی)</strong></div>';
+                        html += '<div>برخی کاربران ترکیب حقوق ثابت و کار آزاد دارند؛ این اعداد در میانگین لحاظ نشده‌اند.</div>';
+                        html += '<div>تعداد تجربه‌های درآمد ترکیبی: ' + esc(incomeCompositeCount) + '</div>';
+                        html += '</div>';
                     }
 
                     var investText = '';
@@ -2196,6 +2220,14 @@
                     }
                     if (s.disadvantages && s.disadvantages.length){
                         html += '<p>⚠️ معایب: ' + esc(s.disadvantages.join('، ')) + '</p>';
+                    }
+
+                    if(lowExperienceData){
+                        html += '<div class="bkja-job-summary-note">📌 برای دقیق‌تر شدن: اگر شهر، نوع فعالیت یا سابقه را بگویی، برآورد دقیق‌تری می‌دهم.</div>';
+                    } else if(isTechnicalJob){
+                        html += '<div class="bkja-job-summary-note">📌 قدم بعدی پیشنهادی:<br>اگر تازه‌کار هستی، مسیر رایج از کارآموزی یا کار در کارگاه‌ها شروع می‌شود.<br>اگر سابقه داری، تخصص (مثلاً حوزه خاص یا مهارت پیشرفته) بیشترین اثر را روی درآمد دارد.</div>';
+                    } else {
+                        html += '<div class="bkja-job-summary-note">📌 قدم بعدی پیشنهادی:<br>اگر تازه‌کار هستی، از پروژه‌های کوچک یا همکاری پاره‌وقت شروع کن تا سابقه بسازی.<br>اگر سابقه داری، با تمرکز بر یک زیرحوزه مشخص و شبکه‌سازی در همان حوزه می‌توانی درآمد را بهبود بدهی.</div>';
                     }
                 }
                 html += '</div>';
