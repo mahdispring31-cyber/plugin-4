@@ -901,46 +901,20 @@
 
         function renderFollowups(items, meta){
             removeFollowups();
-            if(!Array.isArray(items) || !items.length){
-                items = [];
-            }
-            items = sanitizeSuggestions(items, meta);
             var clarificationOptions = [];
             if(meta && Array.isArray(meta.clarification_options)){
                 clarificationOptions = meta.clarification_options.slice(0,3);
             }
-            var unique = [];
-            items.forEach(function(item){
-                if(item === null || item === undefined) return;
-                var text = String(item).trim();
-                if(text && unique.indexOf(text) === -1){
-                    unique.push(text);
-                }
-            });
-            var metaJob = meta && meta.job_title ? $.trim(meta.job_title) : '';
-            if(!unique.length && metaJob){
-                var jobFragment = '«' + metaJob + '»';
-                unique.push('اگر بخوام بررسی کنم آیا ' + jobFragment + ' برای من مناسبه از کجا شروع کنم؟');
-                unique.push('برای موفقیت در ' + jobFragment + ' چه مهارت‌هایی رو باید تقویت کنم؟');
+
+            var hasJobContext = !!(meta && meta.job_title);
+            if(!hasJobContext && !clarificationOptions.length){
+                return [];
             }
-            if(!unique.length){
-                unique = [];
-            }
-            if(unique.length > 3){
-                unique = unique.slice(0,3);
-            }
+
             var $wrap = $('<div class="bkja-followups" role="list"></div>');
 
             if(clarificationOptions.length){
-                var hintHtml = '' +
-                    '<div>برای اینکه دقیق‌تر کمک کنم، می‌تونیم از این مسیرها جلو بریم:</div>' +
-                    '<ul style="margin:6px 0 0 16px; list-style: disc;">' +
-                        '<li>بررسی درآمد یک شغل مشخص</li>' +
-                        '<li>مقایسه چند شغل با هم</li>' +
-                        '<li>معرفی مشاغل پردرآمد با سرمایه کم یا بدون سرمایه</li>' +
-                    '</ul>' +
-                    '<div style="margin-top:6px;">بگو کدوم رو می‌خوای؟</div>';
-                var $hint = $('<div class="bkja-followup-hint"></div>').html(hintHtml);
+                var $hint = $('<div class="bkja-followup-hint"></div>').text('یکی از گزینه‌های زیر را انتخاب کن تا ادامه دهیم:');
                 $wrap.append($hint);
                 clarificationOptions.forEach(function(opt){
                     if(opt === null || opt === undefined){ return; }
@@ -965,40 +939,19 @@
                 });
             }
 
-            if(!unique.length && !clarificationOptions.length){
+            if(hasJobContext){
+                var followupText = 'برای ادامه می‌تونیم:\n• بررسی شغل مشابه\n• مقایسه با شغل دیگر\n• بررسی مسیر افزایش درآمد\nبگو کدوم؟';
+                var $nextStep = $('<div class="bkja-followup-hint"></div>').html(formatMessage(followupText));
+                $wrap.append($nextStep);
+            }
+
+            if(!$wrap.children().length){
                 return [];
             }
 
-            unique.forEach(function(text){
-                var $btn = $('<button type="button" class="bkja-followup-btn" role="listitem"></button>');
-                if(meta && typeof meta === 'object'){
-                    var cat = meta.category || meta.cat || '';
-                    var jobTitle = meta.job_title || meta.jobTitle || '';
-                    var jobSlug = meta.job_slug || meta.jobSlug || '';
-                    var groupKey = meta.group_key || '';
-                    var jobTitleId = meta.job_title_id || '';
-                    if(cat){
-                        $btn.attr('data-category', String(cat));
-                    }
-                    if(jobTitle){
-                        $btn.attr('data-job-title', String(jobTitle));
-                    }
-                    if(jobSlug){
-                        $btn.attr('data-job-slug', String(jobSlug));
-                    }
-                    if(groupKey){
-                        $btn.attr('data-group-key', String(groupKey));
-                    }
-                    if(jobTitleId){
-                        $btn.attr('data-job-title-id', String(jobTitleId));
-                    }
-                }
-                $btn.html(formatMessage(text));
-                $wrap.append($btn);
-            });
             $messages.append($wrap);
             $messages.scrollTop($messages.prop('scrollHeight'));
-            return unique;
+            return [];
         }
 
         // Delegated click handler for dynamically-rendered followup buttons
@@ -2116,32 +2069,32 @@
                             break;
                         }
                     }
-
                     var windowMonths = s.window_months ? parseInt(s.window_months, 10) : 0;
-                    var noteText = 'این آمار از گزارش‌های کاربران این شغل جمع‌آوری شده است' + (windowMonths ? ' (حدود ' + windowMonths + ' ماه اخیر)' : '') + ' و منبع رسمی نیست.';
-                    html += '<div class="bkja-job-summary-note">' + esc(noteText) + '</div>';
                     var experienceCount = s.count_reports ? parseInt(s.count_reports, 10) : reportCount;
                     var lowExperienceData = experienceCount > 0 && experienceCount < 3;
-                    if (lowExperienceData) {
-                        html += '<div class="bkja-job-summary-note">⚠️ داده‌ها برای این شغل هنوز محدود است (' + esc(experienceCount) + ' تجربه). عددها تقریبی هستند و ممکن است با شهر، نوع فعالیت یا سابقه تغییر کنند.</div>';
-                    } else if (s.data_limited && s.count_reports) {
-                        html += '<div class="bkja-job-summary-note">داده‌های ما برای این شغل هنوز کم است (' + esc(parseInt(s.count_reports, 10)) + ' تجربه). اگر شهر/نوع فعالیت/سابقه را بگویی دقیق‌تر می‌گویم.</div>';
-                    }
-
                     var totalRecords = s.total_records ? parseInt(s.total_records, 10) : reportCount;
                     var incomeValidCount = s.income_valid_count ? parseInt(s.income_valid_count, 10) : 0;
                     var incomeDataLow = (totalRecords <= 2 || incomeValidCount <= 2);
+                    var noteParts = [];
+                    var noteText = 'ℹ️ این آمار از گزارش‌های کاربران این شغل جمع‌آوری شده است' + (windowMonths ? ' (حدود ' + windowMonths + ' ماه اخیر)' : '') + ' و منبع رسمی نیست.';
+                    noteParts.push(esc(noteText));
+                    var warningText = '';
+                    if (lowExperienceData) {
+                        warningText = '⚠️ داده‌ها برای این شغل محدود است (' + esc(experienceCount) + ' تجربه) و اعداد تقریبی هستند.';
+                    } else if ((s.data_limited && s.count_reports) || incomeDataLow) {
+                        warningText = '⚠️ داده‌های موجود محدود است و نتایج تقریبی گزارش می‌شود.';
+                    }
+                    if (warningText) {
+                        noteParts.push(esc(warningText));
+                    }
+                    html += '<div class="bkja-job-summary-note">' + noteParts.join('<br>') + '</div>';
+
                     var singleIncome = incomeValidCount === 1;
                     var incomeUnitGuessed = !!s.income_unit_guessed;
                     var incomeCompositeCount = s.income_composite_count ? parseInt(s.income_composite_count, 10) : 0;
 
-                    if(incomeDataLow && !lowExperienceData){
-                        html += '<div class="bkja-job-summary-note">⚠️ داده‌ها کم است؛ عددها تقریبی است و ممکن است با شهر/نوع کار متفاوت باشد.</div>';
-                    }
-
                     if(totalRecords > 0 && incomeValidCount <= 0){
                         html += '<p>💵 درآمد ماهانه: داده کافی برای عدد دقیق نداریم.</p>';
-                        html += '<p>اگر شهر/نوع فعالیت را بگویی دقیق‌تر می‌گویم.</p>';
                     } else {
                         var incomeText = '';
                         var incomeLabelPrefix = (s.avg_income_method === 'median') ? 'میانه' : 'میانگین';
@@ -2222,9 +2175,7 @@
                         html += '<p>⚠️ معایب: ' + esc(s.disadvantages.join('، ')) + '</p>';
                     }
 
-                    if(lowExperienceData){
-                        html += '<div class="bkja-job-summary-note">📌 برای دقیق‌تر شدن: اگر شهر، نوع فعالیت یا سابقه را بگویی، برآورد دقیق‌تری می‌دهم.</div>';
-                    } else if(isTechnicalJob){
+                    if(isTechnicalJob){
                         html += '<div class="bkja-job-summary-note">📌 قدم بعدی پیشنهادی:<br>اگر تازه‌کار هستی، مسیر رایج از کارآموزی یا کار در کارگاه‌ها شروع می‌شود.<br>اگر سابقه داری، تخصص (مثلاً حوزه خاص یا مهارت پیشرفته) بیشترین اثر را روی درآمد دارد.</div>';
                     } else {
                         html += '<div class="bkja-job-summary-note">📌 قدم بعدی پیشنهادی:<br>اگر تازه‌کار هستی، از پروژه‌های کوچک یا همکاری پاره‌وقت شروع کن تا سابقه بسازی.<br>اگر سابقه داری، با تمرکز بر یک زیرحوزه مشخص و شبکه‌سازی در همان حوزه می‌توانی درآمد را بهبود بدهی.</div>';
