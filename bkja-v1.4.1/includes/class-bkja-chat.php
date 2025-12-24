@@ -949,6 +949,39 @@ class BKJA_Chat {
         return implode( "\n", array_filter( array_map( 'trim', $lines ) ) );
     }
 
+    protected static function detect_query_intent( $normalized_message, $context = array() ) {
+        $text        = is_string( $normalized_message ) ? trim( $normalized_message ) : '';
+        $has_job     = ! empty( $context['job_title'] );
+        $ambiguous   = ! empty( $context['ambiguous'] ) || ! empty( $context['needs_clarification'] );
+
+        if ( '' === $text ) {
+            return $ambiguous ? 'clarification' : 'unknown';
+        }
+
+        if ( self::is_high_income_query( $text ) ) {
+            return 'general_high_income';
+        }
+
+        if ( $ambiguous ) {
+            return 'clarification';
+        }
+
+        $income_pattern = '/درآمد|حقوق|دستمزد|salary|income/i';
+        if ( $has_job && preg_match( $income_pattern, $text ) ) {
+            return 'job_income';
+        }
+
+        if ( ! $has_job ) {
+            return 'general_exploratory';
+        }
+
+        if ( preg_match( '/مقایسه|مشابه|جایگزین|بررسی|ایده|سرمایه گذاری|سرمایه‌گذاری|invest/u', $text ) ) {
+            return 'general_exploratory';
+        }
+
+        return 'unknown';
+    }
+
     protected static function build_context_prompt( $context ) {
         if ( empty( $context['job_title'] ) ) {
             return '';
@@ -981,7 +1014,7 @@ class BKJA_Chat {
                 $lines[] = 'هشدار: تعداد گزارش‌های عددی کم است و دقت پایین است.';
             }
             if ( $data_limited && $count_reports > 0 ) {
-                $lines[] = 'داده‌های ما برای این شغل هنوز کم است (' . $count_reports . ' تجربه). اگر شهر/نوع فعالیت/سابقه را بگویی دقیق‌تر می‌گویم.';
+                $lines[] = 'داده‌های ما برای این شغل هنوز کم است (' . $count_reports . ' تجربه) و نتایج تقریبی است.';
             }
 
             $avg_income  = isset( $summary['avg_income'] ) ? $summary['avg_income'] : null;
@@ -1083,12 +1116,12 @@ class BKJA_Chat {
         $income_numeric_total = isset( $summary['income_numeric_total'] ) ? (int) $summary['income_numeric_total'] : 0;
 
         if ( $count_reports > 0 ) {
-            $sections[] = '• ' . ( $window_label ? $window_label . ' - ' : '' ) . $count_reports . ' گزارش کاربری ثبت شده است.';
+                $sections[] = '• ' . ( $window_label ? $window_label . ' - ' : '' ) . $count_reports . ' گزارش کاربری ثبت شده است.';
 
             if ( $income_numeric_total > 0 ) {
                 $sections[] = '• از ' . $count_reports . ' گزارش، ' . $income_numeric_total . ' گزارش درآمد عددی قابل تحلیل داشت.';
             } else {
-                $sections[] = '• دادهٔ کافی برای محاسبهٔ دقیق درآمد ندارم (مثلاً فقط ۰ گزارش عددی). اگر چند تجربهٔ دیگر اضافه شود، میانگین دقیق‌تر می‌شود.';
+                $sections[] = '• دادهٔ کافی برای محاسبهٔ دقیق درآمد ندارم (مثلاً فقط ۰ گزارش عددی).';
             }
 
             $warning_bits = array();
@@ -1101,7 +1134,7 @@ class BKJA_Chat {
                 $sections[] = '• ' . implode( ' ', $warning_bits );
             }
         } else {
-            $sections[] = '• در ۱۲ ماه اخیر گزارشی برای این شغل ثبت نشده. می‌خوای کل زمان رو هم بررسی کنم؟';
+            $sections[] = '• در ۱۲ ماه اخیر گزارشی برای این شغل ثبت نشده است.';
         }
         $sections[] = '• اعداد زیر بر اساس گزارش‌های کاربران این سیستم است و آمار رسمی نیست.';
 
@@ -1233,177 +1266,19 @@ class BKJA_Chat {
             $job_title = trim( (string) $context['job_title'] );
         }
 
-        if ( ! empty( $context['summary'] ) && is_array( $context['summary'] ) && ! empty( $context['summary']['data_limited'] ) ) {
-            $push( 'ثبت تجربه جدید' );
+        $data_limited = false;
+        if ( ! empty( $context['summary'] ) && is_array( $context['summary'] ) ) {
+            $data_limited = ! empty( $context['summary']['data_limited'] ) || ( isset( $context['summary']['count_reports'] ) && (int) $context['summary']['count_reports'] > 0 && (int) $context['summary']['count_reports'] < 3 );
         }
 
-        $clarification_candidates = array();
-        if ( ! empty( $context['candidates'] ) && is_array( $context['candidates'] ) ) {
-            $clarification_candidates = array_slice( $context['candidates'], 0, 3 );
-        }
-
-        $needs_clarification = ! empty( $context['ambiguous'] )
-            || ( isset( $context['resolved_confidence'] ) && (float) $context['resolved_confidence'] < 0.55 )
-            || ! empty( $context['needs_clarification'] );
-        if ( $clarification_candidates && $needs_clarification ) {
-            $labels = array();
-            foreach ( $clarification_candidates as $cand ) {
-                if ( is_array( $cand ) ) {
-                    $labels[] = isset( $cand['label'] ) ? $cand['label'] : '';
-                } elseif ( is_object( $cand ) && isset( $cand->label ) ) {
-                    $labels[] = $cand->label;
-                }
-            }
-            $labels = array_filter( array_map( 'trim', $labels ) );
-            if ( $labels ) {
-                $push( 'یکی از گزینه‌های پیشنهادی بالا را انتخاب کن تا دقیق‌تر ادامه بدهم.' );
-            }
-        } elseif ( $needs_clarification ) {
-            $push( 'عنوان شغل مدنظرت را مشخص کن تا دقیق‌تر راهنمایی کنم.' );
-        }
-
-        $normalize = function( $text ) {
-            if ( ! is_string( $text ) ) {
-                $text = (string) $text;
-            }
-
-            if ( function_exists( 'mb_strtolower' ) ) {
-                $text = mb_strtolower( $text, 'UTF-8' );
-            } else {
-                $text = strtolower( $text );
-            }
-
-            return trim( preg_replace( '/\s+/u', ' ', $text ) );
-        };
-
-        $message_norm = $normalize( $message );
-        $answer_norm  = $normalize( $answer );
-
-        $topics = array(
-            'income'      => array( 'درآمد', 'حقوق', 'دستمزد' ),
-            'investment'  => array( 'سرمایه', 'هزینه', 'بودجه', 'تجهیز' ),
-            'skills'      => array( 'مهارت', 'آموزش', 'یادگیری', 'دوره' ),
-            'market'      => array( 'بازار', 'تقاضا', 'استخدام', 'فرصت' ),
-            'risk'        => array( 'چالش', 'ریسک', 'مشکل', 'دغدغه', 'سختی' ),
-            'growth'      => array( 'پیشرفت', 'رشد', 'مسیر', 'نقشه راه' ),
-            'tools'       => array( 'ابزار', 'گواهی', 'مدرک', 'تجهیزات' ),
-            'personality' => array( 'شخصیت', 'تیپ', 'روحیه' ),
-            'compare'     => array( 'مقایسه', 'جایگزین', 'مشابه', 'دیگر' ),
-        );
-
-        $topic_state = array();
-        foreach ( $topics as $topic => $keywords ) {
-            $topic_state[ $topic ] = array(
-                'message' => false,
-                'answer'  => false,
-            );
-
-            foreach ( $keywords as $keyword ) {
-                $keyword = trim( $keyword );
-                if ( '' === $keyword ) {
-                    continue;
-                }
-
-                $found_in_message = function_exists( 'mb_strpos' )
-                    ? mb_strpos( $message_norm, $keyword )
-                    : strpos( $message_norm, $keyword );
-                $found_in_answer  = function_exists( 'mb_strpos' )
-                    ? mb_strpos( $answer_norm, $keyword )
-                    : strpos( $answer_norm, $keyword );
-
-                if ( false !== $found_in_message ) {
-                    $topic_state[ $topic ]['message'] = true;
-                }
-                if ( false !== $found_in_answer ) {
-                    $topic_state[ $topic ]['answer'] = true;
-                }
-            }
-        }
-
-        $job_fragment = $job_title ? "«{$job_title}»" : 'این حوزه';
-
-        $topic_prompts = array(
-            'income'     => "حدود درآمد {$job_fragment} در سطوح مختلف تجربه چقدر است؟",
-            'investment' => "برای شروع {$job_fragment} چه مقدار سرمایه و تجهیزات لازم است؟",
-            'skills'     => "چه مهارت‌های نرم و سختی برای موفقیت در {$job_fragment} ضروری است؟",
-            'market'     => "چشم‌انداز بازار کار {$job_fragment} در یک تا سه سال آینده چگونه است؟",
-            'risk'       => "مهم‌ترین چالش‌ها و ریسک‌های {$job_fragment} چیست و چطور باید مدیریت‌شان کرد؟",
-            'growth'     => "یک نقشه راه مرحله‌به‌مرحله برای پیشرفت در {$job_fragment} پیشنهاد بده.",
-            'tools'      => "کدام ابزار، گواهی یا دوره برای شروع {$job_fragment} توصیه می‌شود؟",
-        );
-
-        foreach ( $topic_prompts as $topic => $prompt ) {
-            if ( empty( $topic_state[ $topic ] ) ) {
-                continue;
-            }
-
-            $was_asked   = ! empty( $topic_state[ $topic ]['message'] );
-            $was_answered = ! empty( $topic_state[ $topic ]['answer'] );
-
-            if ( $was_asked && ! $was_answered ) {
-                $push( $prompt );
-            }
-        }
-
-        if ( $job_title ) {
-            if ( empty( $topic_state['skills']['answer'] ) ) {
-                $push( "برای موفقیت در {$job_fragment} چه مهارت‌هایی را باید از همین حالا تمرین کنم؟" );
-            }
-            if ( empty( $topic_state['market']['answer'] ) ) {
-                $push( "بازار کار {$job_fragment} در ایران و خارج چه تفاوت‌هایی دارد؟" );
-            }
-            if ( empty( $topic_state['risk']['answer'] ) ) {
-                $push( "بزرگ‌ترین اشتباهات رایج در مسیر {$job_fragment} چیست و چطور از آن‌ها دوری کنم؟" );
-            }
-            if ( empty( $topic_state['compare']['message'] ) ) {
-                $push( "شغل‌های جایگزین نزدیک به {$job_fragment} که ارزش بررسی دارند را معرفی کن." );
-            }
-        }
-
-        if ( empty( $suggestions ) ) {
-            if ( empty( $topic_state['personality']['message'] ) ) {
-                if ( $job_title ) {
-                    $push( "آیا {$job_fragment} با ویژگی‌های شخصیتی من هماهنگ است؟ اگر لازم است سوال بپرس." );
-                } else {
-                    $push( 'اگر بخوای بررسی کنی این حوزه با شخصیت من هماهنگ است از چه سوالاتی شروع می‌کنی؟' );
-                }
-            }
-            $category = self::detect_job_category( $job_title );
-            $guidance_lines = array( 'برای ادامه، بر اساس داده‌های همین پلتفرم می‌تونیم:' );
-            if ( 'technical' === $category ) {
-                $guidance_lines[] = "• مهارت یا زیرحوزه تخصصی «{$job_fragment}» را مشخص کنیم که کاربران درآمد بهتری گزارش کرده‌اند.";
-                $guidance_lines[] = '• تفاوت درآمد پروژه‌ای و شرکتی را با تجربه‌های ثبت‌شده مقایسه کنیم.';
-                $guidance_lines[] = '• مسیر ساخت نمونه‌کار یا پروژه‌ی آزمایشی را مرور کنیم.';
-            } elseif ( 'office' === $category ) {
-                $guidance_lines[] = "• نقش‌های بالاتر یا هم‌خانواده {$job_fragment} را مقایسه کنیم (کارشناس، سرپرست، مدیر).";
-                $guidance_lines[] = '• نوع قرارداد (ثابت، پورسانتی، ترکیبی) را با داده‌های درآمدی کاربران بسنجیم.';
-                $guidance_lines[] = '• شهر یا صنعت پربازده را در گزارش‌ها پیدا کنیم.';
-            } else {
-                $guidance_lines[] = '• شغل یا صنعت مشابه را که در داده‌ها درآمد بالاتری دارد بررسی کنیم.';
-                $guidance_lines[] = '• اثر سابقه و نوع قرارداد را روی درآمد مقایسه کنیم.';
-                $guidance_lines[] = '• مسیر افزایش درآمد مرحله‌ای همین حوزه را مشخص کنیم.';
-            }
-            $push( implode( "\n", array_filter( array_map( 'trim', $guidance_lines ) ) ) );
-        }
-
-        $capital_keywords = '/سرمایه|بودجه|سرمایه‌گذاری|پول|سرمایه گذاری/u';
-        if ( preg_match( $capital_keywords, $message_norm ) ) {
-            $capital_prompt = '';
-            if ( preg_match( '/([0-9۰-۹]+[0-9۰-۹\.,]*)\s*(میلیارد|میلیون|هزار)?\s*(تومان|تومن|ریال)?/u', $message_norm, $amount_match ) ) {
-                $amount_text = trim( $amount_match[0] );
-                if ( $amount_text ) {
-                    $capital_prompt = 'برای سرمایه ' . $amount_text . ' چه مسیرهای شغلی مطمئن و قابل راه‌اندازی پیشنهاد می‌کنی؟';
-                }
-            }
-
-            if ( '' === $capital_prompt ) {
-                $capital_prompt = 'اگر سرمایه مشخصی دارم چطور انتخاب کنم کدام شغل با آن بودجه قابل شروع است؟';
-            }
-
-            $capital_prompt = trim( $capital_prompt );
-            if ( $capital_prompt && ! in_array( $capital_prompt, $suggestions, true ) ) {
-                array_unshift( $suggestions, $capital_prompt );
-            }
+        if ( $data_limited ) {
+            $push( 'شغل‌های مشابه با داده بیشتر' );
+            $push( 'مسیر رشد درآمد در همین شغل' );
+            $push( 'دیدن تجربه‌های مرتبط' );
+        } else {
+            $push( 'مقایسه با شغل مشابه' );
+            $push( 'مسیر رشد درآمد در همین شغل' );
+            $push( 'دیدن تجربه‌های مرتبط' );
         }
 
         return array_slice( $suggestions, 0, 3 );
@@ -1603,6 +1478,9 @@ class BKJA_Chat {
     protected static function build_response_payload( $text, $context, $message, $from_cache = false, $source = 'openai', $extra = array() ) {
         $context_used = ! empty( $context['job_title'] );
 
+        $normalized_message = isset( $extra['normalized_message'] ) ? (string) $extra['normalized_message'] : self::normalize_message( $message );
+        $query_intent        = self::detect_query_intent( $normalized_message, $context );
+
         $payload = array(
             'text'         => (string) $text,
             'suggestions'  => self::build_followup_suggestions( $message, $context, $text ),
@@ -1616,6 +1494,7 @@ class BKJA_Chat {
             'clarification_options' => isset( $context['candidates'] ) && is_array( $context['candidates'] ) ? array_slice( $context['candidates'], 0, 3 ) : array(),
             'resolved_confidence'   => isset( $context['resolved_confidence'] ) ? $context['resolved_confidence'] : null,
             'resolution_source'     => isset( $context['resolution_source'] ) ? $context['resolution_source'] : null,
+            'query_intent'          => $query_intent,
         );
 
         if ( ! empty( $extra ) && is_array( $extra ) ) {
@@ -1655,6 +1534,7 @@ class BKJA_Chat {
             'clarification_options' => isset( $payload['clarification_options'] ) ? $payload['clarification_options'] : array(),
             'resolved_confidence'   => isset( $payload['resolved_confidence'] ) ? $payload['resolved_confidence'] : null,
             'resolution_source'     => isset( $payload['resolution_source'] ) ? $payload['resolution_source'] : null,
+            'query_intent'          => $query_intent,
         );
 
         return self::refresh_job_stats_payload( $payload, $context );
