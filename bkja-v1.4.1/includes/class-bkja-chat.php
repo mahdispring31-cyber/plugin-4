@@ -1861,8 +1861,16 @@ class BKJA_Chat {
         $cache_job_title = '';
         if ( ! empty( $context['job_title'] ) ) {
             $cache_job_title = $context['job_title'];
+        } elseif ( ! empty( $context['resolved_job_title'] ) ) {
+            $cache_job_title = $context['resolved_job_title'];
         } elseif ( '' !== $job_title_hint ) {
             $cache_job_title = $job_title_hint;
+        }
+
+        $followup_only = self::is_followup_message( $normalized_message );
+        if ( '' === $cache_job_title && $followup_only ) {
+            $cache_enabled   = false;
+            $cache_job_title = '__missing__';
         }
 
         $cache_key           = self::build_cache_key( $normalized_message, $resolved_category, $model, $cache_job_title );
