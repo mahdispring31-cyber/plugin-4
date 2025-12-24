@@ -943,10 +943,9 @@
             }
 
             var $wrap = $('<div class="bkja-followups bkja-chat-hint" role="group"></div>');
-            $wrap.append('<div class="bkja-chat-hint-separator" aria-hidden="true">---</div>');
+            var followupJobTitle = meta.job_title || lastKnownJobTitle || '';
 
             if(hasAmbiguity){
-                $wrap.append('<div class="bkja-followup-hint">چند مورد نزدیک پیدا کردم؛ کدوم منظورت بود؟</div>');
                 clarificationOptions.forEach(function(opt){
                     if(opt === null || opt === undefined){ return; }
                     var label = '';
@@ -960,7 +959,7 @@
                     var $btnOpt = $('<button type="button" class="bkja-followup-btn" role="listitem"></button>');
                     $btnOpt.text(label);
                     $btnOpt.attr('data-message', label);
-                    $btnOpt.attr('data-job-title', label);
+                    $btnOpt.attr('data-job-title', followupJobTitle);
                     if(opt && typeof opt === 'object'){
                         if(opt.group_key){ $btnOpt.attr('data-group-key', String(opt.group_key)); }
                         if(opt.job_title_id){ $btnOpt.attr('data-job-title-id', String(opt.job_title_id)); }
@@ -968,10 +967,6 @@
                     }
                     $wrap.append($btnOpt);
                 });
-            } else if(lowData){
-                $wrap.append('<div class="bkja-followup-hint">داده کم است؛ اگر خواستی می‌توانم شغل‌های مشابه با داده بیشتر را پیشنهاد بدهم یا مسیر رشد درآمد را توضیح بدهم.</div>');
-            } else {
-                $wrap.append('<div class="bkja-followup-hint">اگر دوست داری ادامه بدیم، یکی از این‌ها رو انتخاب کن:</div>');
             }
 
             if(!hasAmbiguity){
@@ -982,8 +977,8 @@
                     var $btn = $('<button type="button" class="bkja-followup-btn" role="listitem"></button>');
                     $btn.text(clean);
                     $btn.attr('data-message', clean);
+                    $btn.attr('data-job-title', followupJobTitle);
                     if(hasJobContext){
-                        if(meta.job_title){ $btn.attr('data-job-title', String(meta.job_title)); }
                         if(meta.job_slug){ $btn.attr('data-job-slug', String(meta.job_slug)); }
                         if(meta.job_title_id){ $btn.attr('data-job-title-id', String(meta.job_title_id)); }
                         if(meta.group_key){ $btn.attr('data-group-key', String(meta.group_key)); }
@@ -1052,7 +1047,8 @@
                 var jobTitleIdAttr = target.getAttribute('data-job-title-id') || '';
                 var groupKeyAttr = target.getAttribute('data-group-key') || '';
                 if(catAttr){ opts.category = catAttr; }
-                if(jobTitleAttr){ opts.jobTitle = jobTitleAttr; }
+                var resolvedJobTitle = jobTitleAttr || lastKnownJobTitle || '';
+                if(resolvedJobTitle){ opts.jobTitle = resolvedJobTitle; }
                 if(jobSlugAttr){ opts.jobSlug = jobSlugAttr; }
                 if(jobTitleIdAttr){
                     var parsedId = parseInt(jobTitleIdAttr, 10);
