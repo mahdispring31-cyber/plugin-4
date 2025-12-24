@@ -901,52 +901,48 @@
 
         var lastFollowupSignature = '';
 
-        function detectJobTypeFromMeta(meta){
-            var title = '';
-            if(meta){
-                title = meta.job_title || meta.job_title_label || '';
-            }
-            var normalized = (title || '').replace(/[\s‌]+/g,' ').toLowerCase();
-            var techKeywords = ['برنامه', 'نرم افزار', 'نرم‌افزار', 'مهندس', 'توسعه', 'dev', 'developer', 'data', 'هوش مصنوعی'];
-            var salesOfficeKeywords = ['فروش', 'بازاریابی', 'اداری', 'منشی', 'کارمند', 'پشتیبان', 'فروشنده'];
-            for(var i=0;i<techKeywords.length;i++){
-                if(normalized.indexOf(techKeywords[i]) !== -1){
-                    return 'technical';
-                }
-            }
-            for(var j=0;j<salesOfficeKeywords.length;j++){
-                if(normalized.indexOf(salesOfficeKeywords[j]) !== -1){
-                    return 'business';
-                }
-            }
-            return 'general';
-        }
-
         function renderFollowups(items, meta){
             removeFollowups();
-            var clarificationOptions = [];
-            if(meta && Array.isArray(meta.clarification_options)){
-                clarificationOptions = meta.clarification_options.slice(0,3);
-            }
-
-            var hasJobContext = !!(meta && meta.job_title);
-            var signature = '';
-            if(hasJobContext){
-                signature = String(meta.job_title) + '|' + clarificationOptions.map(function(opt){ return opt && opt.label ? opt.label : String(opt||''); }).join('|');
-            }
+            meta = meta || {};
+            var clarificationOptions = Array.isArray(meta.clarification_options) ? meta.clarification_options.slice(0,3) : [];
+            var hasJobContext = !!meta.job_title;
+            var signature = hasJobContext ? String(meta.job_title) + '|' + clarificationOptions.map(function(opt){ return opt && opt.label ? opt.label : String(opt||''); }).join('|') : '';
             if(signature && signature === lastFollowupSignature){
                 return [];
             }
 
-            if(!hasJobContext && !clarificationOptions.length){
+            var expCount = null;
+            if(typeof meta.job_report_count !== 'undefined' && meta.job_report_count !== null){
+                var parsedCount = parseInt(meta.job_report_count, 10);
+                if(!isNaN(parsedCount)){
+                    expCount = parsedCount;
+                }
+            }
+            var lowData = expCount !== null && expCount >= 0 && expCount < 3;
+            var hasAmbiguity = clarificationOptions.length > 0 || (meta.resolved_confidence && meta.resolved_confidence < 0.55);
+            var queryIntent = meta.query_intent || '';
+            var generalIntents = ['general_exploratory', 'general_high_income', 'compare', 'invest_idea', 'open_question'];
+            var isGeneral = !hasJobContext || generalIntents.indexOf(String(queryIntent)) !== -1;
+            var isIncomeWithEnoughData = queryIntent === 'job_income' && !hasAmbiguity && !lowData;
+            if(isIncomeWithEnoughData){
                 return [];
             }
 
-            var $wrap = $('<div class="bkja-followups" role="list"></div>');
+            var shouldShow = hasAmbiguity || lowData || isGeneral;
+            if(!shouldShow){
+                return [];
+            }
 
-            if(clarificationOptions.length){
-                var $hint = $('<div class="bkja-followup-hint"></div>').text('یکی از گزینه‌های زیر را انتخاب کن تا ادامه دهیم:');
-                $wrap.append($hint);
+            var suggestions = sanitizeSuggestions(items, meta);
+            if(!suggestions.length){
+                suggestions = ['مقایسه با شغل مشابه', 'مسیر رشد درآمد در همین شغل', 'دیدن تجربه‌های مرتبط'];
+            }
+
+            var $wrap = $('<div class="bkja-followups bkja-chat-hint" role="group"></div>');
+            $wrap.append('<div class="bkja-chat-hint-separator" aria-hidden="true">---</div>');
+
+            if(hasAmbiguity){
+                $wrap.append('<div class="bkja-followup-hint">چند مورد نزدیک پیدا کردم؛ کدوم منظورت بود؟</div>');
                 clarificationOptions.forEach(function(opt){
                     if(opt === null || opt === undefined){ return; }
                     var label = '';
@@ -968,26 +964,22 @@
                     }
                     $wrap.append($btnOpt);
                 });
+            } else if(lowData){
+                $wrap.append('<div class="bkja-followup-hint">داده کم است؛ اگر خواستی می‌توانم شغل‌های مشابه با داده بیشتر را پیشنهاد بدهم یا مسیر رشد درآمد را توضیح بدهم.</div>');
+            } else {
+                $wrap.append('<div class="bkja-followup-hint">اگر دوست داری ادامه بدیم، یکی از این‌ها رو انتخاب کن:</div>');
             }
-            if(hasJobContext){
-                var jobType = detectJobTypeFromMeta(meta);
-                var followupLines = ['برای ادامه می‌تونیم (با تکیه بر تجربه‌های کاربران همین پلتفرم):'];
-                if(jobType === 'technical'){
-                    followupLines.push('• زیرحوزه یا مهارت تخصصی «' + esc(meta.job_title) + '» را پیدا کنیم که درآمد بالاتری گزارش شده');
-                    followupLines.push('• تفاوت درآمد پروژه‌ای/شرکتی را در گزارش‌ها مقایسه کنیم');
-                    followupLines.push('• مسیر ساخت نمونه‌کار و همکاری‌های کوتاه‌مدت را بررسی کنیم');
-                } else if(jobType === 'business'){
-                    followupLines.push('• نقش‌های بالاتر (مثلاً سرپرست یا کارشناس ارشد) را در همین شغل مقایسه کنیم');
-                    followupLines.push('• ببینیم قرارداد ثابت، پورسانتی یا ترکیبی در گزارش‌ها کدام درآمد بهتری داده');
-                    followupLines.push('• شهر یا صنعت پرفروش‌تر را از داده‌های ثبت‌شده بررسی کنیم');
-                } else {
-                    followupLines.push('• شغل یا صنعت مشابه را با داده‌های ثبت‌شده مقایسه کنیم');
-                    followupLines.push('• ترکیب نوع قرارداد و سابقه را برای بهبود درآمد بسنجیم');
-                    followupLines.push('• مسیر رشد مرحله‌ای همین حوزه را مرور کنیم');
-                }
-                var followupText = followupLines.join('\n');
-                var $nextStep = $('<div class="bkja-followup-hint"></div>').html(formatMessage(followupText));
-                $wrap.append($nextStep);
+
+            if(!hasAmbiguity){
+                suggestions.forEach(function(text){
+                    if(text === null || text === undefined){ return; }
+                    var clean = $.trim(String(text));
+                    if(!clean){ return; }
+                    var $btn = $('<button type="button" class="bkja-followup-btn" role="listitem"></button>');
+                    $btn.text(clean);
+                    $btn.attr('data-message', clean);
+                    $wrap.append($btn);
+                });
             }
 
             if(!$wrap.children().length){
@@ -2224,12 +2216,6 @@
                 }
                 html += '</div>';
                 pushBotHtml(html);
-                renderFollowups([], {
-                    job_title: summaryJobTitle,
-                    job_title_label: summaryJobTitle,
-                    clarification_options: [],
-                    followup_variant: 'job_summary'
-                });
                 // نمایش رکوردهای کاربران
                 if(records && records.length){
                     records.forEach(function(r){
@@ -2267,6 +2253,14 @@
                 } else {
                     pushBotHtml('<div>📭 تجربه‌ای برای این شغل ثبت نشده است.</div>');
                 }
+
+                renderFollowups([], {
+                    job_title: summaryJobTitle,
+                    job_title_label: summaryJobTitle,
+                    job_report_count: typeof totalCount !== 'undefined' ? totalCount : null,
+                    clarification_options: [],
+                    query_intent: 'general_exploratory'
+                });
             }).fail(function(){
                 pushBotHtml('<div style="color:#d32f2f;">خطا در دریافت اطلاعات شغل.</div>');
             });
