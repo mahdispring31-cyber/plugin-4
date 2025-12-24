@@ -195,11 +195,12 @@ class BKJA_Chat {
         return 'gpt-4o-mini';
     }
 
-    public static function build_cache_key( $message, $category = '', $model = '', $job_title = '' ) {
+    public static function build_cache_key( $message, $category = '', $model = '', $job_title = '', $query_intent = '' ) {
         $normalized = self::normalize_message( $message );
         $category   = is_string( $category ) ? trim( $category ) : '';
         $model      = self::resolve_model( $model );
         $job_title  = is_string( $job_title ) ? trim( $job_title ) : '';
+        $query_intent = is_string( $query_intent ) ? trim( $query_intent ) : '';
         $version    = self::get_cache_version();
 
         $parts = array(
@@ -210,6 +211,10 @@ class BKJA_Chat {
 
         if ( '' !== $job_title ) {
             $parts[] = 'job:' . self::normalize_message( $job_title );
+        }
+
+        if ( '' !== $query_intent ) {
+            $parts[] = 'intent:' . $query_intent;
         }
 
         return 'bkja_cache_v' . $version . '_' . md5( implode( '|', $parts ) );
@@ -927,8 +932,8 @@ class BKJA_Chat {
         }
 
         $patterns = array(
-            '/مقایسه\s*(?:با)?\s*شغل(?:‌|\s*)های?\s*مشابه/u',
-            '/شغل(?:‌|\s*)های\s*مشابه/u',
+            '/مقایسه\s*(?:با)?\s*شغل(?:‌|\s*)?(?:ها)?ی?\s*مشابه/u',
+            '/شغل(?:‌|\s*)?(?:ها)?ی?\s*مشابه/u',
             '/مشاغل\s*مشابه/u',
             '/compare\s+similar/i',
         );
@@ -1641,25 +1646,25 @@ class BKJA_Chat {
         return self::refresh_job_stats_payload( $payload, $context );
     }
 
-    public static function delete_cache_for( $message, $category = '', $model = '', $job_title = '' ) {
-        $key = self::build_cache_key( $message, $category, $model, $job_title );
+    public static function delete_cache_for( $message, $category = '', $model = '', $job_title = '', $query_intent = '' ) {
+        $key = self::build_cache_key( $message, $category, $model, $job_title, $query_intent );
         delete_transient( $key );
 
         if ( '' !== $job_title ) {
-            $legacy_key = self::build_cache_key( $message, $category, $model );
+            $legacy_key = self::build_cache_key( $message, $category, $model, '', $query_intent );
             delete_transient( $legacy_key );
         }
     }
 
-    public static function extend_cache_ttl( $message, $category = '', $model = '', $ttl = 0, $job_title = '' ) {
+    public static function extend_cache_ttl( $message, $category = '', $model = '', $ttl = 0, $job_title = '', $query_intent = '' ) {
         if ( ! self::is_cache_enabled() ) {
             return;
         }
 
-        $key      = self::build_cache_key( $message, $category, $model, $job_title );
+        $key      = self::build_cache_key( $message, $category, $model, $job_title, $query_intent );
         $payload  = get_transient( $key );
         if ( false === $payload && '' !== $job_title ) {
-            $legacy_key = self::build_cache_key( $message, $category, $model );
+            $legacy_key = self::build_cache_key( $message, $category, $model, '', $query_intent );
             $legacy     = get_transient( $legacy_key );
             if ( false !== $legacy ) {
                 $key     = $legacy_key;
@@ -1873,10 +1878,12 @@ class BKJA_Chat {
             $cache_job_title = '__missing__';
         }
 
-        $cache_key           = self::build_cache_key( $normalized_message, $resolved_category, $model, $cache_job_title );
+        $query_intent = self::detect_query_intent( $normalized_message, $context );
+
+        $cache_key           = self::build_cache_key( $normalized_message, $resolved_category, $model, $cache_job_title, $query_intent );
         $legacy_cache_key    = '';
         if ( $cache_enabled && '' !== $cache_job_title ) {
-            $legacy_cache_key = self::build_cache_key( $normalized_message, $resolved_category, $model );
+            $legacy_cache_key = self::build_cache_key( $normalized_message, $resolved_category, $model, '', $query_intent );
         }
         if ( $cache_enabled ) {
             $cached = get_transient( $cache_key );
@@ -2142,8 +2149,8 @@ class BKJA_Chat {
             }
 
             if ( '' !== $result_job_title && $result_job_title !== $cache_job_title ) {
-                $legacy_key_to_clear = self::build_cache_key( $normalized_message, $resolved_category, $model, $cache_job_title );
-                $cache_key           = self::build_cache_key( $normalized_message, $resolved_category, $model, $result_job_title );
+                $legacy_key_to_clear = self::build_cache_key( $normalized_message, $resolved_category, $model, $cache_job_title, $query_intent );
+                $cache_key           = self::build_cache_key( $normalized_message, $resolved_category, $model, $result_job_title, $query_intent );
 
                 if ( $legacy_key_to_clear !== $cache_key ) {
                     delete_transient( $legacy_key_to_clear );

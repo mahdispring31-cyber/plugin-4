@@ -942,7 +942,7 @@
                 suggestions = sanitizeSuggestions(['مقایسه با شغل مشابه', 'مسیر رشد درآمد در همین شغل', 'دیدن تجربه‌های مرتبط'], meta);
             }
 
-            var $wrap = $('<div class="bkja-followups bkja-chat-hint" role="group"></div>');
+            var $wrap = $('<div class="bkja-followups" role="group"></div>');
             var followupJobTitle = meta.job_title || lastKnownJobTitle || '';
 
             if(hasAmbiguity){
@@ -1716,7 +1716,14 @@
                                         appendResponseMeta('📊 برای این پاسخ از داده‌های داخلی ثبت‌شده استفاده شد.');
                                     }
                                 }
-                                var finalSuggestions = renderFollowups(suggestions, meta);
+                                var assistantHtml = typeof reply === 'string' ? reply : '';
+                                var jobCardsCount = (assistantHtml.match(/####\s*💼/g) || []).length;
+                                var finalSuggestions = [];
+                                if(jobCardsCount > 1){
+                                    removeFollowups();
+                                } else {
+                                    finalSuggestions = renderFollowups(suggestions, meta);
+                                }
                                 var highlightFeedback = !!opts.highlightFeedback || finalSuggestions.length === 0;
                                 if(feedbackEnabled && reply && reply.length){
                                     attachFeedbackControls($bubble, meta, contextMessage, reply, { highlight: highlightFeedback });
