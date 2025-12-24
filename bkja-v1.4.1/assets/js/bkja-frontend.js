@@ -881,6 +881,7 @@
             if(meta && meta.job_title){
                 job = String(meta.job_title).toLowerCase().replace(/\s+/g,'');
             }
+            var hasJobContext = !!(meta && (meta.job_title_id || meta.group_key || (Array.isArray(meta.job_title_ids) && meta.job_title_ids.length) || meta.job_title));
             return arr.filter(function(entry){
                 if(entry === null || entry === undefined){
                     return false;
@@ -890,6 +891,9 @@
                     return false;
                 }
                 var lower = text.toLowerCase();
+                if((lower.indexOf('مقایسه') !== -1 && lower.indexOf('مشابه') !== -1) && !hasJobContext){
+                    return false;
+                }
                 if(/آرایش|زیبایی|سالن/.test(lower)){
                     if(!job || lower.indexOf(job) === -1){
                         return false;
@@ -905,7 +909,7 @@
             removeFollowups();
             meta = meta || {};
             var clarificationOptions = Array.isArray(meta.clarification_options) ? meta.clarification_options.slice(0,3) : [];
-            var hasJobContext = !!meta.job_title;
+            var hasJobContext = !!(meta.job_title || meta.job_title_id || meta.group_key || (Array.isArray(meta.job_title_ids) && meta.job_title_ids.length));
             var signature = hasJobContext ? String(meta.job_title) + '|' + clarificationOptions.map(function(opt){ return opt && opt.label ? opt.label : String(opt||''); }).join('|') : '';
             if(signature && signature === lastFollowupSignature){
                 return [];
@@ -935,7 +939,7 @@
 
             var suggestions = sanitizeSuggestions(items, meta);
             if(!suggestions.length){
-                suggestions = ['مقایسه با شغل مشابه', 'مسیر رشد درآمد در همین شغل', 'دیدن تجربه‌های مرتبط'];
+                suggestions = sanitizeSuggestions(['مقایسه با شغل مشابه', 'مسیر رشد درآمد در همین شغل', 'دیدن تجربه‌های مرتبط'], meta);
             }
 
             var $wrap = $('<div class="bkja-followups bkja-chat-hint" role="group"></div>');
@@ -978,6 +982,12 @@
                     var $btn = $('<button type="button" class="bkja-followup-btn" role="listitem"></button>');
                     $btn.text(clean);
                     $btn.attr('data-message', clean);
+                    if(hasJobContext){
+                        if(meta.job_title){ $btn.attr('data-job-title', String(meta.job_title)); }
+                        if(meta.job_slug){ $btn.attr('data-job-slug', String(meta.job_slug)); }
+                        if(meta.job_title_id){ $btn.attr('data-job-title-id', String(meta.job_title_id)); }
+                        if(meta.group_key){ $btn.attr('data-group-key', String(meta.group_key)); }
+                    }
                     $wrap.append($btn);
                 });
             }
@@ -1315,7 +1325,7 @@
                     'سرمایه','هزینه','هزینه شروع','بودجه','سرمایه میخواد','سرمایه می‌خواد',
                     'مزایا','معایب','چالش','بازار','بازار کار','ریسک','سود','چطوره','چطور','چیه',
                     'سخته','امکان','شرایط','مهارت','مهارت‌ها','قدم بعدی','از کجا شروع کنم',
-                    'شغل‌های جایگزین','شغلهای جایگزین','میانگین','بازه'
+                    'شغل‌های جایگزین','شغلهای جایگزین','میانگین','بازه','مقایسه','مشابه'
                 ];
                 if(normalized.length <= 60){
                     for(var i=0;i<followupKeywords.length;i++){
