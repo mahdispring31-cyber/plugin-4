@@ -1018,6 +1018,93 @@ class BKJA_Database {
     }
 
     /**
+     * Resolve group_key for a given job_title_id.
+     */
+    public static function get_group_key_for_job_title( $job_title_id ) {
+        global $wpdb;
+
+        $job_title_id  = (int) $job_title_id;
+        $table_titles  = $wpdb->prefix . 'bkja_job_titles';
+        $group_key_row = $wpdb->get_row(
+            $wpdb->prepare(
+                "SELECT group_key FROM {$table_titles} WHERE id = %d LIMIT 1",
+                $job_title_id
+            )
+        );
+
+        return ( $group_key_row && ! empty( $group_key_row->group_key ) ) ? $group_key_row->group_key : null;
+    }
+
+    /**
+     * Fetch similar job titles from the same cluster (group_key) while excluding the base job.
+     */
+    public static function get_similar_jobs_in_group( $context, $limit = 4 ) {
+        global $wpdb;
+
+        $table_titles = $wpdb->prefix . 'bkja_job_titles';
+        $table_jobs   = $wpdb->prefix . 'bkja_jobs';
+
+        $group_key = '';
+        $base_id   = isset( $context['primary_job_title_id'] ) ? (int) $context['primary_job_title_id'] : 0;
+
+        if ( ! empty( $context['group_key'] ) ) {
+            $group_key = $context['group_key'];
+        } elseif ( ! empty( $context['job_title_ids'] ) && is_array( $context['job_title_ids'] ) ) {
+            $first = (int) reset( $context['job_title_ids'] );
+            if ( $first > 0 ) {
+                $group_key = self::get_group_key_for_job_title( $first );
+                if ( $base_id <= 0 ) {
+                    $base_id = $first;
+                }
+            }
+        } elseif ( $base_id > 0 ) {
+            $group_key = self::get_group_key_for_job_title( $base_id );
+        }
+
+        if ( '' === $group_key ) {
+            return array();
+        }
+
+        $sql    = "SELECT jt.id, COALESCE(jt.base_label, jt.label) AS label, COALESCE(jt.base_slug, jt.slug) AS slug, jt.is_primary, COALESCE(cnt.cnt, 0) AS jobs_count
+                    FROM {$table_titles} jt
+                    LEFT JOIN (
+                        SELECT job_title_id, COUNT(*) AS cnt
+                        FROM {$table_jobs}
+                        GROUP BY job_title_id
+                    ) cnt ON cnt.job_title_id = jt.id
+                    WHERE jt.group_key = %s AND jt.is_visible = 1";
+        $params = array( $group_key );
+
+        if ( $base_id > 0 ) {
+            $sql     .= ' AND jt.id <> %d';
+            $params[] = $base_id;
+        }
+
+        $sql     .= ' ORDER BY jt.is_primary DESC, cnt.cnt DESC, jt.label ASC LIMIT %d';
+        $params[] = (int) $limit;
+
+        $prepared = $wpdb->prepare( $sql, $params );
+        $rows     = $wpdb->get_results( $prepared );
+
+        if ( empty( $rows ) ) {
+            return array();
+        }
+
+        $mapped = array();
+        foreach ( (array) $rows as $row ) {
+            $mapped[] = array(
+                'job_title_id' => isset( $row->id ) ? (int) $row->id : 0,
+                'label'        => isset( $row->label ) ? $row->label : '',
+                'slug'         => isset( $row->slug ) ? $row->slug : '',
+                'jobs_count'   => isset( $row->jobs_count ) ? (int) $row->jobs_count : 0,
+                'is_primary'   => isset( $row->is_primary ) ? (int) $row->is_primary : 0,
+            );
+        }
+
+        return $mapped;
+    }
+
+    /**
      * Normalize incoming free-text job queries for consistent matching.
      */
     protected static function normalize_job_query_text( $text ) {

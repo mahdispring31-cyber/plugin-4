@@ -920,6 +920,107 @@ class BKJA_Chat {
         return false;
     }
 
+    protected static function is_compare_similar_intent( $normalized_message ) {
+        $text = is_string( $normalized_message ) ? trim( $normalized_message ) : '';
+        if ( '' === $text ) {
+            return false;
+        }
+
+        $patterns = array(
+            '/مقایسه\s*(?:با)?\s*شغل(?:‌|\s*)های?\s*مشابه/u',
+            '/شغل(?:‌|\s*)های\s*مشابه/u',
+            '/مشاغل\s*مشابه/u',
+            '/compare\s+similar/i',
+        );
+
+        foreach ( $patterns as $pattern ) {
+            if ( preg_match( $pattern, $text ) ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected static function build_compare_fallback_message() {
+        return "برای این شغل داده مقایسه‌ای کافی نداریم. می‌توانم:\n• مسیر رشد درآمد را توضیح بدهم\n• شغل‌های هم‌خانواده با داده بیشتر پیشنهاد بدهم";
+    }
+
+    protected static function handle_compare_similar_jobs( $context, $message, $category, $model ) {
+        $has_base_job = ! empty( $context['primary_job_title_id'] ) || ! empty( $context['group_key'] ) || ! empty( $context['job_title'] );
+
+        if ( ! $has_base_job ) {
+            return self::build_response_payload(
+                self::build_compare_fallback_message(),
+                array(),
+                $message,
+                false,
+                'compare_similar_jobs',
+                array(
+                    'model'                  => self::resolve_model( $model ),
+                    'category'               => is_string( $category ) ? $category : '',
+                    'clarification_options'  => array(),
+                    'suggestions'            => array( 'مسیر رشد درآمد در همین شغل', 'شغل‌های هم‌خانواده با داده بیشتر' ),
+                    'used_job_stats'         => false,
+                    'job_report_count'       => null,
+                )
+            );
+        }
+
+        if ( ! class_exists( 'BKJA_Database' ) || ! method_exists( 'BKJA_Database', 'get_similar_jobs_in_group' ) ) {
+            return null;
+        }
+
+        $similar_jobs = BKJA_Database::get_similar_jobs_in_group( $context, 5 );
+
+        if ( empty( $similar_jobs ) ) {
+            return self::build_response_payload(
+                self::build_compare_fallback_message(),
+                $context,
+                $message,
+                false,
+                'compare_similar_jobs',
+                array(
+                    'model'                 => self::resolve_model( $model ),
+                    'category'              => is_string( $category ) ? $category : '',
+                    'clarification_options' => array(),
+                    'suggestions'           => array( 'مسیر رشد درآمد در همین شغل', 'شغل‌های هم‌خانواده با داده بیشتر' ),
+                )
+            );
+        }
+
+        $base_label = isset( $context['job_title'] ) && $context['job_title'] ? $context['job_title'] : 'این شغل';
+        $lines      = array();
+        $lines[]    = "شغل‌های هم‌خانواده با «{$base_label}» که داده ثبت‌شده دارند:";
+
+        foreach ( array_slice( $similar_jobs, 0, 4 ) as $job ) {
+            if ( empty( $job['label'] ) ) {
+                continue;
+            }
+            $note = '';
+            if ( isset( $job['jobs_count'] ) && $job['jobs_count'] > 0 ) {
+                $note = ' — ' . (int) $job['jobs_count'] . ' گزارش';
+            }
+            $lines[] = '• ' . $job['label'] . $note;
+        }
+
+        $lines[] = 'بگو کدام گزینه را مقایسه کنم تا درآمد و شرایط هر دو را کنار هم بگذارم. همچنین می‌توانم مسیر رشد درآمد همین شغل را توضیح بدهم.';
+
+        return self::build_response_payload(
+            implode( "\n", array_filter( array_map( 'trim', $lines ) ) ),
+            $context,
+            $message,
+            false,
+            'compare_similar_jobs',
+            array(
+                'model'                 => self::resolve_model( $model ),
+                'category'              => is_string( $category ) ? $category : '',
+                'clarification_options' => array(),
+                'suggestions'           => array( 'مسیر رشد درآمد در همین شغل', 'دیدن تجربه‌های مرتبط' ),
+            )
+        );
+    }
+
     protected static function build_high_income_guidance( $context ) {
         $job_title = isset( $context['job_title'] ) ? $context['job_title'] : '';
         $category  = self::detect_job_category( $job_title );
@@ -1302,7 +1403,7 @@ class BKJA_Chat {
             'درآمد', 'درامد', 'حقوق', 'حقوقش', 'درآمدش', 'چقدر', 'چقد', 'چقدره', 'چنده', 'چقدر درمیاره',
             'دستمزد', 'سرمایه', 'سرمایه میخواد', 'سرمایه می‌خواد', 'هزینه', 'هزینه شروع', 'بودجه',
             'مزایا', 'معایب', 'چالش', 'بازار', 'بازار کار', 'خارج', 'مهارت', 'مهارت‌ها', 'قدم بعدی',
-            'از کجا شروع کنم', 'شغل‌های جایگزین', 'شغلهای جایگزین', 'میانگین', 'بازه', 'شرایط'
+            'مقایسه', 'مشابه', 'از کجا شروع کنم', 'شغل‌های جایگزین', 'شغلهای جایگزین', 'میانگین', 'بازه', 'شرایط'
         );
         foreach ( $keywords as $keyword ) {
             if ( false !== mb_stripos( $text, $keyword, 0, 'UTF-8' ) ) {
@@ -1729,6 +1830,13 @@ class BKJA_Chat {
             && empty( $context['needs_clarification'] )
             && empty( $context['ambiguous'] ) ) {
             self::store_last_job_context( (int) $context['primary_job_title_id'], $args['session_id'], (int) $args['user_id'] );
+        }
+
+        if ( self::is_compare_similar_intent( $normalized_message ) ) {
+            $compare_payload = self::handle_compare_similar_jobs( $context, $message, $resolved_category, $model );
+            if ( is_array( $compare_payload ) ) {
+                return $compare_payload;
+            }
         }
 
         $api_key = self::get_api_key();
