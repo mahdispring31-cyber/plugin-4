@@ -206,13 +206,15 @@ if ( ! function_exists( 'bkja_parse_money_to_toman' ) ) {
      * Parse a money text (Persian/English) into toman units.
      *
      * @param string $raw
-     * @return array{value_toman:?int,min_toman:?int,max_toman:?int}
+     * @return array{value_toman:?int,min_toman:?int,max_toman:?int,status:string,note:?string}
      */
     function bkja_parse_money_to_toman( $raw ) {
         $result = array(
             'value_toman' => null,
             'min_toman'   => null,
             'max_toman'   => null,
+            'status'      => 'unknown',
+            'note'        => null,
         );
 
         if ( ! is_string( $raw ) ) {
@@ -251,10 +253,24 @@ if ( ! function_exists( 'bkja_parse_money_to_toman' ) ) {
             $multiplier = 1;
         } else {
             // Heuristic when unit is absent
-            if ( $base_number >= 1000000 ) {
+            $salary_keywords = array( 'حکم', 'دریافتی', 'حقوق', 'فیش', 'مزایا', 'اضافه کار', 'کسورات' );
+            $has_salary_keyword = false;
+            foreach ( $salary_keywords as $keyword ) {
+                if ( false !== mb_stripos( $text, $keyword, 0, 'UTF-8' ) ) {
+                    $has_salary_keyword = true;
+                    break;
+                }
+            }
+
+            if ( $base_number >= 1000 && $base_number <= 300000 ) {
+                // در متن‌های حقوقی معمولاً «هزار» ذکر نمی‌شود
+                $multiplier    = 1000;
+                $result['note'] = $has_salary_keyword ? 'unit_assumed_thousand_context' : 'unit_assumed_thousand_generic';
+            } elseif ( $base_number >= 1000000 ) {
                 $multiplier = 1;
             } else {
                 $multiplier = 1000000;
+                $result['note'] = $result['note'] ?: 'unit_assumed_million_default';
             }
         }
 
@@ -274,6 +290,13 @@ if ( ! function_exists( 'bkja_parse_money_to_toman' ) ) {
         $value = null;
         $value = $base_number > 0 ? (int) round( $base_number * $multiplier ) : null;
 
+        $has_billion_word = $has_billion;
+        if ( $value && $value > 2000000000 && ! $has_billion_word ) {
+            $result['note']   = 'ambiguous_unit_outlier';
+            $result['status'] = 'unknown';
+            return $result;
+        }
+
         if ( $value > 0 ) {
             $result['value_toman'] = $value;
         }
@@ -283,6 +306,8 @@ if ( ! function_exists( 'bkja_parse_money_to_toman' ) ) {
         if ( $max && $max > 0 ) {
             $result['max_toman'] = $max;
         }
+
+        $result['status'] = $result['value_toman'] ? 'ok' : 'unknown';
 
         return $result;
     }

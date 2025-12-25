@@ -288,6 +288,7 @@ function bkja_ajax_get_job_records(){
                 'next_offset'  => isset( $records['next_offset'] ) ? $records['next_offset'] : null,
                 'limit'        => isset( $records['limit'] ) ? $records['limit'] : $limit,
                 'offset'       => isset( $records['offset'] ) ? $records['offset'] : $offset,
+                'total_count'  => isset( $records['total_count'] ) ? (int) $records['total_count'] : null,
                 'group_key'    => isset( $records['group_key'] ) ? $records['group_key'] : $group_key,
                 'job_title_ids'=> isset( $records['job_title_ids'] ) ? $records['job_title_ids'] : array(),
             ) );
