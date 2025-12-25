@@ -1090,18 +1090,49 @@ class BKJA_Database {
             return array();
         }
 
-        $mapped = array();
+        $aggregated = array();
         foreach ( (array) $rows as $row ) {
-            $mapped[] = array(
-                'job_title_id' => isset( $row->id ) ? (int) $row->id : 0,
-                'label'        => isset( $row->label ) ? $row->label : '',
-                'slug'         => isset( $row->slug ) ? $row->slug : '',
-                'jobs_count'   => isset( $row->jobs_count ) ? (int) $row->jobs_count : 0,
-                'is_primary'   => isset( $row->is_primary ) ? (int) $row->is_primary : 0,
-            );
+            $label      = isset( $row->label ) ? $row->label : '';
+            $jobs_count = isset( $row->jobs_count ) ? (int) $row->jobs_count : 0;
+
+            if ( isset( $aggregated[ $label ] ) ) {
+                $aggregated[ $label ]['jobs_count'] += $jobs_count;
+
+                if ( $jobs_count > $aggregated[ $label ]['jobs_count_selected'] ) {
+                    $aggregated[ $label ]['job_title_id']          = isset( $row->id ) ? (int) $row->id : 0;
+                    $aggregated[ $label ]['slug']                  = isset( $row->slug ) ? $row->slug : '';
+                    $aggregated[ $label ]['jobs_count_selected']   = $jobs_count;
+                    $aggregated[ $label ]['is_primary']            = isset( $row->is_primary ) ? (int) $row->is_primary : 0;
+                }
+            } else {
+                $aggregated[ $label ] = array(
+                    'job_title_id'        => isset( $row->id ) ? (int) $row->id : 0,
+                    'label'               => $label,
+                    'slug'                => isset( $row->slug ) ? $row->slug : '',
+                    'jobs_count'          => $jobs_count,
+                    'jobs_count_selected' => $jobs_count,
+                    'is_primary'          => isset( $row->is_primary ) ? (int) $row->is_primary : 0,
+                );
+            }
         }
 
-        return $mapped;
+        $mapped = array_map( function( $item ) {
+            unset( $item['jobs_count_selected'] );
+            return $item;
+        }, array_values( $aggregated ) );
+
+        usort(
+            $mapped,
+            function( $a, $b ) {
+                if ( $a['jobs_count'] === $b['jobs_count'] ) {
+                    return 0;
+                }
+
+                return ( $a['jobs_count'] > $b['jobs_count'] ) ? -1 : 1;
+            }
+        );
+
+        return array_slice( $mapped, 0, (int) $limit );
     }
 
     /**
@@ -2574,8 +2605,8 @@ class BKJA_Database {
      */
     public static function get_job_records($job_title, $limit = 5, $offset = 0, $filters = array()) {
         global $wpdb;
-        $table        = $wpdb->prefix . 'bkja_jobs';
-        $table_titles = $wpdb->prefix . 'bkja_job_titles';
+        $jobs_table       = $wpdb->prefix . 'bkja_jobs';
+        $table_titles     = $wpdb->prefix . 'bkja_job_titles';
 
         self::ensure_job_title_schema();
 
@@ -2604,14 +2635,14 @@ class BKJA_Database {
         $limit_cap = $limit + 1;
 
         $count_sql = $prepare_with_params(
-            "SELECT COUNT(*) FROM {$table} j WHERE {$where_clause}"
+            "SELECT COUNT(*) FROM {$jobs_table} j WHERE {$where_clause}"
         );
 
         $total_count = (int) $wpdb->get_var( $count_sql );
 
         $records_sql = $prepare_with_params(
             "SELECT j.id, j.title, j.variant_title, j.income, j.investment, j.income_num, j.investment_num, j.income_toman, j.income_min_toman, j.income_max_toman, j.investment_toman, j.experience_years, j.employment_type, j.hours_per_day, j.days_per_week, j.source, j.city, j.gender, j.advantages, j.disadvantages, j.details, j.created_at, jt.label AS job_title_label, jt.slug AS job_title_slug
-                 FROM {$table} j
+                 FROM {$jobs_table} j
                  LEFT JOIN {$table_titles} jt ON jt.id = j.job_title_id
                  WHERE {$where_clause}
                  ORDER BY j.created_at DESC
