@@ -623,6 +623,11 @@
             $messages.scrollTop($messages.prop('scrollHeight'));
         }
 
+        function addSystemMessage(text){
+            var safeText = typeof text === 'string' ? text : String(text || '');
+            pushBotHtml('<div class="bkja-system-message">' + formatMessage(safeText) + '</div>');
+        }
+
         function handleGuestLimit(loginUrl, limit, message){
             var $input = $('#bkja-user-message');
             var $send  = $('#bkja-send');
@@ -820,11 +825,14 @@
             var categoryValue = data.category ? String(data.category) : '';
             var jobTitleValue = data.job_title ? String(data.job_title) : '';
             var jobSlugValue = data.job_slug ? String(data.job_slug) : '';
-            if(jobTitleValue){
-                lastKnownJobTitle = jobTitleValue;
+            if(data && typeof data.job_title === 'string' && data.job_title.trim()){
+                lastKnownJobTitle = data.job_title.trim();
             }
-            if(data.job_title_id){
-                lastKnownJobTitleId = parseInt(data.job_title_id, 10) || null;
+            if(data && data.job_title_id !== undefined && data.job_title_id !== null){
+                var parsedJobId = parseInt(data.job_title_id, 10);
+                if(!isNaN(parsedJobId)){
+                    lastKnownJobTitleId = parsedJobId;
+                }
             }
             if(data.group_key){
                 lastKnownGroupKey = String(data.group_key);
@@ -908,7 +916,7 @@
         function renderFollowupButtons(items, meta){
             removeFollowups();
             meta = meta || {};
-            var hasJobContext = !!(meta.job_title && meta.job_title_id);
+            var hasJobContext = !!(((meta && meta.job_title && String(meta.job_title).trim()) || (lastKnownJobTitle && lastKnownJobTitle.trim())));
             if(!hasJobContext){
                 return [];
             }
@@ -946,8 +954,8 @@
             }
 
             var $wrap = $('<div class="bkja-followups" role="group"></div>');
-            var followupJobTitle = meta.job_title || '';
-            var followupJobTitleId = meta.job_title_id ? String(meta.job_title_id) : '';
+            var followupJobTitle = (meta.job_title && String(meta.job_title).trim()) ? String(meta.job_title).trim() : (lastKnownJobTitle && lastKnownJobTitle.trim() ? String(lastKnownJobTitle).trim() : '');
+            var followupJobTitleId = meta.job_title_id ? String(meta.job_title_id) : (lastKnownJobTitleId ? String(lastKnownJobTitleId) : '');
 
             if(hasAmbiguity){
                 clarificationOptions.forEach(function(opt){
@@ -1053,8 +1061,8 @@
                 var groupKeyAttr = target.getAttribute('data-group-key') || '';
                 var followupActionAttr = target.getAttribute('data-followup-action') || '';
                 if(catAttr){ opts.category = catAttr; }
-                var resolvedJobTitle = jobTitleAttr || '';
-                if(resolvedJobTitle){ opts.jobTitle = resolvedJobTitle; }
+                var resolvedJobTitle = jobTitleAttr || lastKnownJobTitle || '';
+                if(resolvedJobTitle){ opts.jobTitle = cleanJobHint(resolvedJobTitle); }
                 if(jobSlugAttr){ opts.jobSlug = jobSlugAttr; }
                 if(jobTitleIdAttr){
                     var parsedId = parseInt(jobTitleIdAttr, 10);
@@ -1062,8 +1070,17 @@
                         opts.jobTitleId = parsedId;
                     }
                 }
+                if(!opts.jobTitleId && lastKnownJobTitleId){
+                    opts.jobTitleId = lastKnownJobTitleId;
+                }
                 if(groupKeyAttr){ opts.groupKey = groupKeyAttr; }
                 if(followupActionAttr){ opts.followupAction = followupActionAttr; }
+            }
+
+            var resolvedJobTitleFinal = resolvedJobTitle || '';
+            if(!resolvedJobTitleFinal || !String(resolvedJobTitleFinal).trim()){
+                addSystemMessage('برای استفاده از این گزینه، اول یک کارت شغلی را باز کنید.');
+                return;
             }
 
             if(typeof window.dispatchUserMessage === 'function'){
@@ -1710,8 +1727,8 @@
                         var meta = res.data.meta || {};
                         var cards = Array.isArray(res.data.cards) ? res.data.cards : [];
                         var primaryMeta = (cards[0] && cards[0].meta) ? cards[0].meta : meta;
-                        if(primaryMeta.job_title){
-                            lastKnownJobTitle = primaryMeta.job_title;
+                        if(primaryMeta && typeof primaryMeta.job_title === 'string' && primaryMeta.job_title.trim()){
+                            lastKnownJobTitle = primaryMeta.job_title.trim();
                         }
                         lastReplyMeta = primaryMeta;
                         window.lastReplyMeta = lastReplyMeta;
