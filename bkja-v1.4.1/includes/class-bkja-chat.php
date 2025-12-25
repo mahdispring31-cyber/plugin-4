@@ -1101,7 +1101,7 @@ class BKJA_Chat {
         $has_base_job = ! empty( $context['primary_job_title_id'] ) || ! empty( $context['group_key'] ) || ! empty( $context['job_title'] );
 
         if ( ! $has_base_job ) {
-            return self::build_response_payload(
+            return self::ensure_context_meta( self::build_response_payload(
                 self::build_compare_fallback_message(),
                 array(),
                 $message,
@@ -1115,7 +1115,7 @@ class BKJA_Chat {
                     'used_job_stats'         => false,
                     'job_report_count'       => null,
                 )
-            );
+            ), $context );
         }
 
         if ( ! class_exists( 'BKJA_Database' ) || ! method_exists( 'BKJA_Database', 'get_similar_jobs_in_group' ) ) {
@@ -1125,7 +1125,7 @@ class BKJA_Chat {
         $similar_jobs = BKJA_Database::get_similar_jobs_in_group( $context, 5 );
 
         if ( empty( $similar_jobs ) ) {
-            return self::build_response_payload(
+            return self::ensure_context_meta( self::build_response_payload(
                 self::build_compare_fallback_message(),
                 $context,
                 $message,
@@ -1137,7 +1137,7 @@ class BKJA_Chat {
                     'clarification_options' => array(),
                     'suggestions'           => array( 'مسیر رشد درآمد در همین شغل', 'شغل‌های هم‌خانواده با داده بیشتر' ),
                 )
-            );
+            ), $context );
         }
 
         $base_label = isset( $context['job_title'] ) && $context['job_title'] ? $context['job_title'] : 'این شغل';
@@ -1157,7 +1157,7 @@ class BKJA_Chat {
 
         $lines[] = 'بگو کدام گزینه را مقایسه کنم تا درآمد و شرایط هر دو را کنار هم بگذارم. همچنین می‌توانم مسیر رشد درآمد همین شغل را توضیح بدهم.';
 
-        return self::build_response_payload(
+        return self::ensure_context_meta( self::build_response_payload(
             implode( "\n", array_filter( array_map( 'trim', $lines ) ) ),
             $context,
             $message,
@@ -1169,7 +1169,7 @@ class BKJA_Chat {
                 'clarification_options' => array(),
                 'suggestions'           => array( 'مسیر رشد درآمد در همین شغل', 'دیدن تجربه‌های مرتبط' ),
             )
-        );
+        ), $context );
     }
 
     protected static function build_high_income_guidance( $context ) {
@@ -1575,7 +1575,7 @@ class BKJA_Chat {
         if ( 'income_growth' === $action_key ) {
             $reply = self::build_high_income_guidance( $context );
 
-            return self::build_response_payload(
+            return self::ensure_context_meta( self::build_response_payload(
                 $reply,
                 $context,
                 $message,
@@ -1586,7 +1586,7 @@ class BKJA_Chat {
                     'category'           => $category,
                     'normalized_message' => $normalized_message,
                 )
-            );
+            ), $context );
         }
 
         $reply = self::format_job_context_reply( $context );
@@ -1594,7 +1594,7 @@ class BKJA_Chat {
             $reply = self::build_compare_fallback_message();
         }
 
-        return self::build_response_payload(
+        return self::ensure_context_meta( self::build_response_payload(
             $reply,
             $context,
             $message,
@@ -1605,7 +1605,7 @@ class BKJA_Chat {
                 'category'           => $category,
                 'normalized_message' => $normalized_message,
             )
-        );
+        ), $context );
     }
 
     protected static function is_followup_message( $message ) {
@@ -1709,7 +1709,7 @@ class BKJA_Chat {
             return null;
         }
 
-        return self::build_response_payload(
+        return self::ensure_context_meta( self::build_response_payload(
             $reply,
             $context,
             $original_message,
@@ -1724,7 +1724,7 @@ class BKJA_Chat {
                 'group_key'          => isset( $context['group_key'] ) ? $context['group_key'] : '',
                 'normalized_message' => $normalized_message,
             )
-        );
+        ), $context );
     }
 
     protected static function refresh_job_stats_payload( array $payload, $context = array() ) {
@@ -2053,11 +2053,9 @@ class BKJA_Chat {
             }
         }
 
-        if ( $is_followup_action && '' === $job_title_hint ) {
-            $safe_jobs = self::get_safe_job_suggestions();
-
-            return self::build_response_payload(
-                'برای ادامه، اول نام شغل را مشخص کنید.',
+        if ( $is_followup_action && $job_title_id <= 0 && '' === $job_title_hint ) {
+            $payload = self::build_response_payload(
+                'برای انجام این کار، اول کارت یک شغل مشخص را باز کن.',
                 array(),
                 $message,
                 false,
@@ -2065,21 +2063,22 @@ class BKJA_Chat {
                 array(
                     'model'                 => $model,
                     'category'              => $resolved_category,
-                    'job_title'             => '',
-                    'job_slug'              => '',
-                    'job_title_id'          => null,
-                    'group_key'             => '',
-                    'clarification_options' => $safe_jobs,
+                    'clarification_options' => array(),
                     'suggestions'           => array(),
                 )
             );
+
+            $payload['meta'] = array();
+            $payload['suggestions'] = array();
+
+            return $payload;
         }
 
         $context_query = ( $is_followup_action && '' !== $job_title_hint ) ? $job_title_hint : $normalized_message;
         $context = self::get_job_context( $context_query, $job_title_hint, $job_slug, $job_title_id, $job_group_key );
 
         if ( $is_followup_action && empty( $context['job_title'] ) ) {
-            return self::build_response_payload(
+            return self::ensure_context_meta( self::build_response_payload(
                 'این عنوان را دقیق پیدا نکردم. لطفاً یک نام نزدیک‌تر یا کوتاه‌تر بنویس.',
                 array(),
                 $message,
@@ -2095,7 +2094,7 @@ class BKJA_Chat {
                     'clarification_options' => array(),
                     'suggestions'           => array(),
                 )
-            );
+            ), $context );
         }
 
         if ( ! $is_followup_action && empty( $context['job_title'] ) && ! empty( $context['candidates'] ) && ! $is_followup_only ) {
@@ -2103,7 +2102,7 @@ class BKJA_Chat {
             $context['candidates'] = $filtered_candidates;
 
             if ( empty( $filtered_candidates ) ) {
-                return self::build_response_payload(
+                return self::ensure_context_meta( self::build_response_payload(
                     'این عنوان را دقیق پیدا نکردم. لطفاً یک نام نزدیک‌تر یا کوتاه‌تر بنویس.',
                     array(),
                     $message,
@@ -2119,11 +2118,11 @@ class BKJA_Chat {
                         'clarification_options' => array(),
                         'suggestions'           => array(),
                     )
-                );
+                ), $context );
             }
 
             $context['needs_clarification'] = true;
-            return self::build_response_payload(
+            return self::ensure_context_meta( self::build_response_payload(
                 'چند مورد نزدیک پیدا کردم. لطفاً یکی را انتخاب کن یا نام دقیق‌تر بنویس.',
                 $context,
                 $message,
@@ -2135,7 +2134,7 @@ class BKJA_Chat {
                     'clarification_options' => $filtered_candidates,
                     'suggestions'           => array(),
                 )
-            );
+            ), $context );
         }
 
         if ( $is_followup_action ) {
@@ -2144,7 +2143,7 @@ class BKJA_Chat {
             $context['resolved_confidence']   = isset( $context['resolved_confidence'] ) ? $context['resolved_confidence'] : null;
             $context['clarification_options'] = array();
 
-            return self::handle_followup_action( $normalized_action, $context, $message, $resolved_category, $model, $normalized_message );
+            return self::ensure_context_meta( self::handle_followup_action( $normalized_action, $context, $message, $resolved_category, $model, $normalized_message ), $context );
         }
         if ( ! empty( $context['primary_job_title_id'] )
             && empty( $context['needs_clarification'] )
@@ -2165,7 +2164,7 @@ class BKJA_Chat {
         if ( self::is_high_income_query( $normalized_message ) ) {
             $guided_answer = self::build_high_income_guidance( $context );
 
-            return self::build_response_payload(
+            return self::ensure_context_meta( self::build_response_payload(
                 $guided_answer,
                 $context,
                 $message,
@@ -2175,7 +2174,7 @@ class BKJA_Chat {
                     'model'    => $model,
                     'category' => $resolved_category,
                 )
-            );
+            ), $context );
         }
 
         $cache_enabled   = self::is_cache_enabled();
@@ -2254,7 +2253,7 @@ class BKJA_Chat {
                     return $cached;
                 }
 
-                return self::build_response_payload(
+                return self::ensure_context_meta( self::build_response_payload(
                     $cached,
                     $context,
                     $message,
@@ -2269,7 +2268,7 @@ class BKJA_Chat {
                         'group_key'          => isset( $context['group_key'] ) ? $context['group_key'] : $job_group_key,
                         'normalized_message' => $normalized_message,
                     )
-                );
+                ), $context );
             }
         }
 
@@ -2288,7 +2287,7 @@ class BKJA_Chat {
             }
 
             if ( ! empty( $context ) ) {
-                $fallback = self::build_response_payload(
+                $fallback = self::ensure_context_meta( self::build_response_payload(
                     self::format_job_context_reply( $context ),
                     $context,
                     $message,
@@ -2303,7 +2302,7 @@ class BKJA_Chat {
                         'group_key'          => isset( $context['group_key'] ) ? $context['group_key'] : $job_group_key,
                         'normalized_message' => $normalized_message,
                     )
-                );
+                ), $context );
                 if ( $cache_enabled ) {
                     set_transient( $cache_key, $fallback, self::get_cache_ttl( $model ) );
                 }
@@ -2376,7 +2375,7 @@ class BKJA_Chat {
         $response = wp_remote_post( 'https://api.openai.com/v1/chat/completions', $request_args );
         if ( is_wp_error( $response ) ) {
             if ( ! empty( $context ) ) {
-                $fallback = self::build_response_payload(
+                $fallback = self::ensure_context_meta( self::build_response_payload(
                     self::format_job_context_reply( $context ),
                     $context,
                     $message,
@@ -2391,7 +2390,7 @@ class BKJA_Chat {
                         'group_key'          => isset( $context['group_key'] ) ? $context['group_key'] : $job_group_key,
                         'normalized_message' => $normalized_message,
                     )
-                );
+                ), $context );
                 if ( $cache_enabled ) {
                     set_transient( $cache_key, $fallback, self::get_cache_ttl( $model ) );
                 }
@@ -2479,7 +2478,52 @@ class BKJA_Chat {
             set_transient( $cache_key, $result, self::get_cache_ttl( $model ) );
         }
 
-        return $result;
+        return self::ensure_context_meta( $result, $context );
+    }
+
+    protected static function ensure_context_meta( $payload, $context ) {
+        if ( ! is_array( $payload ) ) {
+            return $payload;
+        }
+
+        if ( ! isset( $payload['meta'] ) || ! is_array( $payload['meta'] ) ) {
+            $payload['meta'] = array();
+        }
+
+        $context      = is_array( $context ) ? $context : array();
+        $job_title    = isset( $context['job_title'] ) ? (string) $context['job_title'] : '';
+        $job_title_id = null;
+        if ( isset( $context['primary_job_title_id'] ) ) {
+            $job_title_id = (int) $context['primary_job_title_id'];
+        } elseif ( isset( $context['job_title_id'] ) ) {
+            $job_title_id = (int) $context['job_title_id'];
+        }
+
+        $group_key = '';
+        if ( isset( $context['group_key'] ) ) {
+            $group_key = (string) $context['group_key'];
+        } elseif ( isset( $context['job_group_key'] ) ) {
+            $group_key = (string) $context['job_group_key'];
+        }
+
+        if ( '' !== $job_title && ( ! isset( $payload['meta']['job_title'] ) || '' === (string) $payload['meta']['job_title'] ) ) {
+            $payload['meta']['job_title'] = $job_title;
+        }
+
+        if ( $job_title_id && ( ! isset( $payload['meta']['job_title_id'] ) || empty( $payload['meta']['job_title_id'] ) ) ) {
+            $payload['meta']['job_title_id'] = $job_title_id;
+        }
+
+        if ( '' !== $group_key ) {
+            if ( ! isset( $payload['meta']['group_key'] ) || '' === (string) $payload['meta']['group_key'] ) {
+                $payload['meta']['group_key'] = $group_key;
+            }
+            if ( ! isset( $payload['meta']['job_group_key'] ) || '' === (string) $payload['meta']['job_group_key'] ) {
+                $payload['meta']['job_group_key'] = $group_key;
+            }
+        }
+
+        return $payload;
     }
 
 }

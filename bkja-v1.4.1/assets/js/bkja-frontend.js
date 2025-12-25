@@ -908,8 +908,17 @@
         function renderFollowups(items, meta){
             removeFollowups();
             meta = meta || {};
+            var hasJobContext = !!(meta.job_title && meta.job_title_id);
+            if(!hasJobContext){
+                var $infoWrap = $('<div class="bkja-followups" role="group"></div>');
+                var $infoBtn = $('<button type="button" class="bkja-followup-btn" role="listitem" disabled></button>');
+                $infoBtn.text('برای ادامه ابتدا یک شغل مشخص را باز کن.');
+                $infoWrap.append($infoBtn);
+                $messages.append($infoWrap);
+                $messages.scrollTop($messages.prop('scrollHeight'));
+                return [];
+            }
             var clarificationOptions = Array.isArray(meta.clarification_options) ? meta.clarification_options.slice(0,3) : [];
-            var hasJobContext = !!(meta.job_title || meta.job_title_id || meta.group_key || (Array.isArray(meta.job_title_ids) && meta.job_title_ids.length));
             var signature = hasJobContext ? String(meta.job_title) + '|' + clarificationOptions.map(function(opt){ return opt && opt.label ? opt.label : String(opt||''); }).join('|') : '';
             if(signature && signature === lastFollowupSignature){
                 return [];
@@ -943,7 +952,8 @@
             }
 
             var $wrap = $('<div class="bkja-followups" role="group"></div>');
-            var followupJobTitle = meta.job_title || meta.job_slug || '';
+            var followupJobTitle = meta.job_title || '';
+            var followupJobTitleId = meta.job_title_id ? String(meta.job_title_id) : '';
 
             if(hasAmbiguity){
                 clarificationOptions.forEach(function(opt){
@@ -960,9 +970,9 @@
                     $btnOpt.text(label);
                     $btnOpt.attr('data-message', label);
                     $btnOpt.attr('data-job-title', followupJobTitle);
+                    $btnOpt.attr('data-job-title-id', followupJobTitleId);
                     if(opt && typeof opt === 'object'){
                         if(opt.group_key){ $btnOpt.attr('data-group-key', String(opt.group_key)); }
-                        if(opt.job_title_id){ $btnOpt.attr('data-job-title-id', String(opt.job_title_id)); }
                         if(opt.slug){ $btnOpt.attr('data-job-slug', String(opt.slug)); }
                     }
                     $wrap.append($btnOpt);
@@ -979,9 +989,9 @@
                     $btn.attr('data-message', clean);
                     $btn.attr('data-followup-action', clean);
                     $btn.attr('data-job-title', followupJobTitle);
+                    $btn.attr('data-job-title-id', followupJobTitleId);
                     if(hasJobContext){
                         if(meta.job_slug){ $btn.attr('data-job-slug', String(meta.job_slug)); }
-                        if(meta.job_title_id){ $btn.attr('data-job-title-id', String(meta.job_title_id)); }
                         if(meta.group_key){ $btn.attr('data-group-key', String(meta.group_key)); }
                     }
                     $wrap.append($btn);
