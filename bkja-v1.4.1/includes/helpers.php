@@ -274,6 +274,19 @@ if ( ! function_exists( 'bkja_parse_money_to_toman' ) ) {
             }
         }
 
+        $salary_keywords = array( 'حکم', 'دریافتی', 'حقوق' );
+        $has_salary_keyword = false;
+        foreach ( $salary_keywords as $keyword ) {
+            if ( false !== mb_stripos( $text, $keyword, 0, 'UTF-8' ) ) {
+                $has_salary_keyword = true;
+                break;
+            }
+        }
+
+        if ( $has_salary_keyword && $base_number >= 1000 && $base_number <= 99999 && 1000000 === $multiplier && ! $has_billion ) {
+            $multiplier = 1000;
+        }
+
         $min = null;
         $max = null;
 
