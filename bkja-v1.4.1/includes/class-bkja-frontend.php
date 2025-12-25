@@ -155,6 +155,36 @@ class BKJA_Frontend {
             }
         }
 
+        $followup_labels = array(
+            'مقایسه با شغل مشابه',
+            'مسیر رشد درآمد در همین شغل',
+            'دیدن تجربه‌های مرتبط',
+            'شغل‌های مشابه با داده بیشتر',
+        );
+        $normalized_message = BKJA_Chat::normalize_message( $message );
+        if ( in_array( $normalized_message, $followup_labels, true ) && $job_title_id <= 0 ) {
+            $controlled_meta = array(
+                'followup_buttons'      => array(),
+                'clarification_options' => array(),
+            );
+
+            $controlled_payload = array(
+                'ok'          => true,
+                'reply'       => 'برای استفاده از این گزینه، اول یک کارت شغلی را باز کنید.',
+                'suggestions' => array(),
+                'from_cache'  => false,
+                'meta'        => $controlled_meta,
+                'cards'       => array(),
+            );
+
+            $controlled_payload['server_session'] = $session;
+            if ( ! $user_id ) {
+                $controlled_payload['guest_session'] = $session;
+            }
+
+            wp_send_json_success( $controlled_payload );
+        }
+
         $_bkja_user_row_id = BKJA_Database::insert_chat(
             array(
                 'user_id'      => $user_id ?: null,
