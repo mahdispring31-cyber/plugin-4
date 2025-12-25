@@ -35,6 +35,152 @@ class BKJA_Chat {
         return trim( (string) $text );
     }
 
+    protected static function normalize_fa_text_basic( $text ) {
+        $text = self::normalize_lookup_text( $text );
+        $map  = array(
+            'ي' => 'ی',
+            'ك' => 'ک',
+            "‌" => ' ',
+        );
+
+        return strtr( $text, $map );
+    }
+
+    protected static function tokenize_meaningful_terms( $text ) {
+        $normalized = self::normalize_fa_text_basic( $text );
+        $tokens     = preg_split( '/[\s،,.!?؟;:؛\\\-]+/u', $normalized );
+        $stopwords  = array( 'کار', 'شغل', 'درآمد', 'چقدر', 'مسیر', 'رشد', 'مقایسه', 'در', 'به', 'از', 'برای', 'همین' );
+
+        $clean = array();
+        foreach ( (array) $tokens as $token ) {
+            $token = trim( (string) $token );
+            if ( '' === $token ) {
+                continue;
+            }
+
+            $lower = function_exists( 'mb_strtolower' ) ? mb_strtolower( $token, 'UTF-8' ) : strtolower( $token );
+            if ( in_array( $lower, $stopwords, true ) ) {
+                continue;
+            }
+
+            $clean[] = $lower;
+        }
+
+        return array_values( array_unique( $clean ) );
+    }
+
+    protected static function filter_closest_candidates( $query, $candidates, $threshold = 0.55, $max = 3 ) {
+        $query_tokens = self::tokenize_meaningful_terms( $query );
+        if ( empty( $query_tokens ) ) {
+            return array();
+        }
+
+        $normalized_query = self::normalize_fa_text_basic( $query );
+        $filtered         = array();
+
+        foreach ( (array) $candidates as $candidate ) {
+            $label = '';
+            if ( is_array( $candidate ) ) {
+                $label = isset( $candidate['label'] ) ? $candidate['label'] : '';
+            } elseif ( is_object( $candidate ) ) {
+                $label = isset( $candidate->label ) ? $candidate->label : '';
+            }
+
+            if ( '' === trim( (string) $label ) ) {
+                continue;
+            }
+
+            $label_tokens = self::tokenize_meaningful_terms( $label );
+            if ( empty( array_intersect( $query_tokens, $label_tokens ) ) ) {
+                continue;
+            }
+
+            $normalized_label = self::normalize_fa_text_basic( $label );
+            $percent          = 0.0;
+            similar_text( $normalized_query, $normalized_label, $percent );
+            $similarity = (float) $percent / 100;
+
+            if ( $similarity < (float) $threshold ) {
+                continue;
+            }
+
+            if ( is_array( $candidate ) ) {
+                $candidate['similarity'] = $similarity;
+            } else {
+                $candidate->similarity = $similarity;
+            }
+
+            $filtered[] = $candidate;
+        }
+
+        usort( $filtered, function( $a, $b ) {
+            $get_similarity = function( $item ) {
+                if ( is_array( $item ) ) {
+                    return isset( $item['similarity'] ) ? (float) $item['similarity'] : 0.0;
+                }
+
+                return isset( $item->similarity ) ? (float) $item->similarity : 0.0;
+            };
+
+            $sim_a = $get_similarity( $a );
+            $sim_b = $get_similarity( $b );
+
+            if ( $sim_a === $sim_b ) {
+                $cnt_a = is_array( $a ) ? ( $a['jobs_count_recent'] ?? 0 ) : ( isset( $a->jobs_count_recent ) ? $a->jobs_count_recent : 0 );
+                $cnt_b = is_array( $b ) ? ( $b['jobs_count_recent'] ?? 0 ) : ( isset( $b->jobs_count_recent ) ? $b->jobs_count_recent : 0 );
+
+                if ( $cnt_a === $cnt_b ) {
+                    return 0;
+                }
+
+                return ( $cnt_a < $cnt_b ) ? 1 : -1;
+            }
+
+            return ( $sim_a < $sim_b ) ? 1 : -1;
+        } );
+
+        return array_slice( $filtered, 0, max( 1, (int) $max ) );
+    }
+
+    protected static function get_safe_job_suggestions( $limit = 4 ) {
+        global $wpdb;
+
+        $limit         = max( 1, (int) $limit );
+        $table_titles  = $wpdb->prefix . 'bkja_job_titles';
+        $table_jobs    = $wpdb->prefix . 'bkja_jobs';
+        $sql           = $wpdb->prepare(
+            "SELECT jt.id, jt.group_key, COALESCE(jt.base_label, jt.label) AS label, COALESCE(jt.base_slug, jt.slug) AS slug, COUNT(j.id) AS cnt
+             FROM {$table_titles} jt
+             LEFT JOIN {$table_jobs} j ON j.job_title_id = jt.id
+             WHERE jt.is_visible = 1
+             GROUP BY jt.id
+             ORDER BY cnt DESC
+             LIMIT %d",
+            $limit
+        );
+
+        $rows = $wpdb->get_results( $sql );
+        if ( empty( $rows ) ) {
+            return array();
+        }
+
+        $options = array();
+        foreach ( (array) $rows as $row ) {
+            if ( empty( $row->label ) ) {
+                continue;
+            }
+
+            $options[] = array(
+                'label'        => (string) $row->label,
+                'job_title_id' => isset( $row->id ) ? (int) $row->id : null,
+                'group_key'    => isset( $row->group_key ) ? $row->group_key : '',
+                'slug'         => isset( $row->slug ) ? $row->slug : '',
+            );
+        }
+
+        return $options;
+    }
+
     protected static function build_job_lookup_phrases( $normalized_message ) {
         $text = self::normalize_lookup_text( $normalized_message );
 
@@ -1390,6 +1536,78 @@ class BKJA_Chat {
         return array_slice( $suggestions, 0, 3 );
     }
 
+    protected static function normalize_followup_action_key( $action ) {
+        $action = self::normalize_message( $action );
+        if ( '' === $action ) {
+            return '';
+        }
+
+        $haystack = function_exists( 'mb_strtolower' ) ? mb_strtolower( $action, 'UTF-8' ) : strtolower( $action );
+
+        if ( false !== strpos( $haystack, 'مقایسه' ) || false !== strpos( $haystack, 'similar' ) ) {
+            return 'compare';
+        }
+
+        if ( false !== strpos( $haystack, 'تجربه' ) || false !== strpos( $haystack, 'experience' ) ) {
+            return 'experiences';
+        }
+
+        if ( false !== strpos( $haystack, 'مسیر رشد' ) || false !== strpos( $haystack, 'رشد درآمد' ) || false !== strpos( $haystack, 'growth' ) ) {
+            return 'income_growth';
+        }
+
+        return $haystack;
+    }
+
+    protected static function handle_followup_action( $action, $context, $message, $category, $model, $normalized_message ) {
+        $action_key = self::normalize_followup_action_key( $action );
+        $context    = is_array( $context ) ? $context : array();
+        $model      = self::resolve_model( $model );
+        $category   = is_string( $category ) ? $category : '';
+
+        if ( 'compare' === $action_key ) {
+            $payload = self::handle_compare_similar_jobs( $context, $message, $category, $model );
+            if ( is_array( $payload ) ) {
+                return $payload;
+            }
+        }
+
+        if ( 'income_growth' === $action_key ) {
+            $reply = self::build_high_income_guidance( $context );
+
+            return self::build_response_payload(
+                $reply,
+                $context,
+                $message,
+                false,
+                'followup_action',
+                array(
+                    'model'              => $model,
+                    'category'           => $category,
+                    'normalized_message' => $normalized_message,
+                )
+            );
+        }
+
+        $reply = self::format_job_context_reply( $context );
+        if ( '' === trim( (string) $reply ) ) {
+            $reply = self::build_compare_fallback_message();
+        }
+
+        return self::build_response_payload(
+            $reply,
+            $context,
+            $message,
+            false,
+            'followup_action',
+            array(
+                'model'              => $model,
+                'category'           => $category,
+                'normalized_message' => $normalized_message,
+            )
+        );
+    }
+
     protected static function is_followup_message( $message ) {
         $text = is_string( $message ) ? trim( $message ) : '';
         if ( '' === $text ) {
@@ -1811,6 +2029,7 @@ class BKJA_Chat {
             'job_slug'       => '',
             'job_title_id'   => 0,
             'job_group_key'  => '',
+            'followup_action'=> '',
         );
         $args              = wp_parse_args( $args, $defaults );
         $model             = self::resolve_model( $args['model'] );
@@ -1820,20 +2039,117 @@ class BKJA_Chat {
         $job_slug          = is_string( $args['job_slug'] ) ? trim( $args['job_slug'] ) : '';
         $job_title_id      = isset( $args['job_title_id'] ) ? (int) $args['job_title_id'] : 0;
         $job_group_key     = is_string( $args['job_group_key'] ) ? trim( $args['job_group_key'] ) : '';
+        $followup_action   = is_string( $args['followup_action'] ) ? trim( $args['followup_action'] ) : '';
+        $normalized_action = self::normalize_message( $followup_action );
+        $is_followup_action = '' !== $normalized_action;
 
         $normalized_message = self::normalize_message( $message );
+        $is_followup_only   = self::is_followup_message( $normalized_message );
 
-        if ( $job_title_id <= 0 && self::is_followup_message( $normalized_message ) ) {
+        if ( $job_title_id <= 0 && ! $is_followup_action && $is_followup_only ) {
             $recent_job_id = self::get_last_job_context( $args['session_id'], (int) $args['user_id'] );
             if ( $recent_job_id > 0 ) {
                 $job_title_id = $recent_job_id;
             }
         }
 
-        $context = self::get_job_context( $normalized_message, $job_title_hint, $job_slug, $job_title_id, $job_group_key );
+        if ( $is_followup_action && '' === $job_title_hint ) {
+            $safe_jobs = self::get_safe_job_suggestions();
+
+            return self::build_response_payload(
+                'برای ادامه، اول نام شغل را مشخص کنید.',
+                array(),
+                $message,
+                false,
+                'followup_missing_job',
+                array(
+                    'model'                 => $model,
+                    'category'              => $resolved_category,
+                    'job_title'             => '',
+                    'job_slug'              => '',
+                    'job_title_id'          => null,
+                    'group_key'             => '',
+                    'clarification_options' => $safe_jobs,
+                    'suggestions'           => array(),
+                )
+            );
+        }
+
+        $context_query = ( $is_followup_action && '' !== $job_title_hint ) ? $job_title_hint : $normalized_message;
+        $context = self::get_job_context( $context_query, $job_title_hint, $job_slug, $job_title_id, $job_group_key );
+
+        if ( $is_followup_action && empty( $context['job_title'] ) ) {
+            return self::build_response_payload(
+                'این عنوان را دقیق پیدا نکردم. لطفاً یک نام نزدیک‌تر یا کوتاه‌تر بنویس.',
+                array(),
+                $message,
+                false,
+                'followup_missing_context',
+                array(
+                    'model'                 => $model,
+                    'category'              => $resolved_category,
+                    'job_title'             => '',
+                    'job_slug'              => '',
+                    'job_title_id'          => null,
+                    'group_key'             => '',
+                    'clarification_options' => array(),
+                    'suggestions'           => array(),
+                )
+            );
+        }
+
+        if ( ! $is_followup_action && empty( $context['job_title'] ) && ! empty( $context['candidates'] ) && ! $is_followup_only ) {
+            $filtered_candidates   = self::filter_closest_candidates( $normalized_message, $context['candidates'] );
+            $context['candidates'] = $filtered_candidates;
+
+            if ( empty( $filtered_candidates ) ) {
+                return self::build_response_payload(
+                    'این عنوان را دقیق پیدا نکردم. لطفاً یک نام نزدیک‌تر یا کوتاه‌تر بنویس.',
+                    array(),
+                    $message,
+                    false,
+                    'clarification_empty',
+                    array(
+                        'model'                 => $model,
+                        'category'              => $resolved_category,
+                        'job_title'             => '',
+                        'job_slug'              => '',
+                        'job_title_id'          => null,
+                        'group_key'             => '',
+                        'clarification_options' => array(),
+                        'suggestions'           => array(),
+                    )
+                );
+            }
+
+            $context['needs_clarification'] = true;
+            return self::build_response_payload(
+                'چند مورد نزدیک پیدا کردم. لطفاً یکی را انتخاب کن یا نام دقیق‌تر بنویس.',
+                $context,
+                $message,
+                false,
+                'clarification',
+                array(
+                    'model'                 => $model,
+                    'category'              => $resolved_category,
+                    'clarification_options' => $filtered_candidates,
+                    'suggestions'           => array(),
+                )
+            );
+        }
+
+        if ( $is_followup_action ) {
+            $context['candidates']            = array();
+            $context['needs_clarification']   = false;
+            $context['resolved_confidence']   = isset( $context['resolved_confidence'] ) ? $context['resolved_confidence'] : null;
+            $context['clarification_options'] = array();
+
+            return self::handle_followup_action( $normalized_action, $context, $message, $resolved_category, $model, $normalized_message );
+        }
         if ( ! empty( $context['primary_job_title_id'] )
             && empty( $context['needs_clarification'] )
-            && empty( $context['ambiguous'] ) ) {
+            && empty( $context['ambiguous'] )
+            && ! $is_followup_action ) {
             self::store_last_job_context( (int) $context['primary_job_title_id'], $args['session_id'], (int) $args['user_id'] );
         }
 
@@ -1863,6 +2179,9 @@ class BKJA_Chat {
         }
 
         $cache_enabled   = self::is_cache_enabled();
+        if ( $is_followup_action ) {
+            $cache_enabled = false;
+        }
         $cache_job_title = '';
         if ( ! empty( $context['job_title'] ) ) {
             $cache_job_title = $context['job_title'];
@@ -1872,7 +2191,7 @@ class BKJA_Chat {
             $cache_job_title = $job_title_hint;
         }
 
-        $followup_only = self::is_followup_message( $normalized_message );
+        $followup_only = $is_followup_only;
         if ( '' === $cache_job_title && $followup_only ) {
             $cache_enabled   = false;
             $cache_job_title = '__missing__';

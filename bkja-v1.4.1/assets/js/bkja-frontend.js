@@ -943,7 +943,7 @@
             }
 
             var $wrap = $('<div class="bkja-followups" role="group"></div>');
-            var followupJobTitle = meta.job_title || lastKnownJobTitle || '';
+            var followupJobTitle = meta.job_title || meta.job_slug || '';
 
             if(hasAmbiguity){
                 clarificationOptions.forEach(function(opt){
@@ -977,6 +977,7 @@
                     var $btn = $('<button type="button" class="bkja-followup-btn" role="listitem"></button>');
                     $btn.text(clean);
                     $btn.attr('data-message', clean);
+                    $btn.attr('data-followup-action', clean);
                     $btn.attr('data-job-title', followupJobTitle);
                     if(hasJobContext){
                         if(meta.job_slug){ $btn.attr('data-job-slug', String(meta.job_slug)); }
@@ -1046,8 +1047,9 @@
                 var jobSlugAttr = target.getAttribute('data-job-slug') || '';
                 var jobTitleIdAttr = target.getAttribute('data-job-title-id') || '';
                 var groupKeyAttr = target.getAttribute('data-group-key') || '';
+                var followupActionAttr = target.getAttribute('data-followup-action') || '';
                 if(catAttr){ opts.category = catAttr; }
-                var resolvedJobTitle = jobTitleAttr || lastKnownJobTitle || '';
+                var resolvedJobTitle = jobTitleAttr || '';
                 if(resolvedJobTitle){ opts.jobTitle = resolvedJobTitle; }
                 if(jobSlugAttr){ opts.jobSlug = jobSlugAttr; }
                 if(jobTitleIdAttr){
@@ -1057,6 +1059,7 @@
                     }
                 }
                 if(groupKeyAttr){ opts.groupKey = groupKeyAttr; }
+                if(followupActionAttr){ opts.followupAction = followupActionAttr; }
             }
 
             if(typeof window.dispatchUserMessage === 'function'){
@@ -1531,6 +1534,9 @@
                 if(typeof options.category === 'string' && options.category.length){
                     sendOptions.category = options.category;
                 }
+                if(typeof options.followupAction === 'string' && options.followupAction.length){
+                    sendOptions.followupAction = options.followupAction;
+                }
                 if(!sendOptions.category && lastReplyMeta && typeof lastReplyMeta.category === 'string' && lastReplyMeta.category.length){
                     sendOptions.category = lastReplyMeta.category;
                 }
@@ -1620,10 +1626,12 @@
                 var jobSlugParam = cleanJobHint(opts.jobSlug);
                 var jobTitleIdParam = opts.jobTitleId ? parseInt(opts.jobTitleId, 10) : '';
                 var groupKeyParam = opts.groupKey ? String(opts.groupKey) : '';
+                var followupActionParam = opts.followupAction ? String(opts.followupAction) : '';
                 payload.append('job_title', jobTitleParam || '');
                 payload.append('job_slug', jobSlugParam || '');
                 payload.append('job_title_id', jobTitleIdParam || '');
                 payload.append('group_key', groupKeyParam || '');
+                payload.append('followup_action', followupActionParam || '');
 
                 fetch(config.ajax_url, {
                     method: 'POST',
