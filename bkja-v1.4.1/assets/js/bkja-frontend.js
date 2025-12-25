@@ -905,17 +905,11 @@
 
         var lastFollowupSignature = '';
 
-        function renderFollowups(items, meta){
+        function renderFollowupButtons(items, meta){
             removeFollowups();
             meta = meta || {};
             var hasJobContext = !!(meta.job_title && meta.job_title_id);
             if(!hasJobContext){
-                var $infoWrap = $('<div class="bkja-followups" role="group"></div>');
-                var $infoBtn = $('<button type="button" class="bkja-followup-btn" role="listitem" disabled></button>');
-                $infoBtn.text('برای ادامه ابتدا یک شغل مشخص را باز کن.');
-                $infoWrap.append($infoBtn);
-                $messages.append($infoWrap);
-                $messages.scrollTop($messages.prop('scrollHeight'));
                 return [];
             }
             var clarificationOptions = Array.isArray(meta.clarification_options) ? meta.clarification_options.slice(0,3) : [];
@@ -1714,41 +1708,57 @@
                         var suggestions = Array.isArray(res.data.suggestions) ? res.data.suggestions : [];
                         var fromCache = !!res.data.from_cache;
                         var meta = res.data.meta || {};
-                        if(meta.job_title){
-                            lastKnownJobTitle = meta.job_title;
+                        var cards = Array.isArray(res.data.cards) ? res.data.cards : [];
+                        var primaryMeta = (cards[0] && cards[0].meta) ? cards[0].meta : meta;
+                        if(primaryMeta.job_title){
+                            lastKnownJobTitle = primaryMeta.job_title;
                         }
-                        lastReplyMeta = meta;
+                        lastReplyMeta = primaryMeta;
                         window.lastReplyMeta = lastReplyMeta;
-                        pushBot(reply, {
-                            onComplete: function($bubble){
-                                applyAssistantMeta($bubble, meta);
-                                if (SHOW_TECH_META) {
-                                    if(fromCache){
-                                        appendResponseMeta('🔄 این پاسخ از حافظه کش ارائه شد تا سریع‌تر به شما نمایش داده شود.');
-                                    }
-                                    if(meta.source === 'database'){
-                                        appendResponseMeta('📚 این پاسخ مستقیماً از داده‌های داخلی شغل تهیه شد.');
-                                    } else if(meta.source === 'job_context'){
-                                        appendResponseMeta('ℹ️ به دلیل محدودیت ارتباط با API، پاسخ بر اساس داده‌های داخلی آماده شد.');
-                                    } else if(meta.context_used && meta.source === 'openai'){
-                                        appendResponseMeta('📊 برای این پاسخ از داده‌های داخلی ثبت‌شده استفاده شد.');
-                                    }
-                                }
-                                var assistantHtml = typeof reply === 'string' ? reply : '';
-                                var jobCardsCount = (assistantHtml.match(/####\s*💼/g) || []).length;
-                                var finalSuggestions = [];
-                                if(jobCardsCount > 1){
-                                    removeFollowups();
-                                } else {
-                                    finalSuggestions = renderFollowups(suggestions, meta);
-                                }
-                                var highlightFeedback = !!opts.highlightFeedback || finalSuggestions.length === 0;
-                                if(feedbackEnabled && reply && reply.length){
-                                    attachFeedbackControls($bubble, meta, contextMessage, reply, { highlight: highlightFeedback });
-                                }
-                                maybeAnnounceGuestLimitReached();
+
+                        var renderCard = function(card){
+                            var cardMeta = card && card.meta ? card.meta : meta;
+                            var cardText = card && typeof card.text === "string" ? card.text : reply;
+                            var cardFollowups = Array.isArray(card && card.followups) ? card.followups : suggestions;
+
+                            if(cardMeta && typeof cardMeta === "object"){
+                                lastReplyMeta = cardMeta;
+                                window.lastReplyMeta = lastReplyMeta;
                             }
-                        });
+
+                            pushBot(cardText, {
+                                onComplete: function($bubble){
+                                    applyAssistantMeta($bubble, cardMeta);
+                                    if (SHOW_TECH_META) {
+                                        if(fromCache){
+                                            appendResponseMeta("🔄 این پاسخ از حافظه کش ارائه شد تا سریع‌تر به شما نمایش داده شود.");
+                                        }
+                                        if(cardMeta.source === "database"){
+                                            appendResponseMeta("📚 این پاسخ مستقیماً از داده‌های داخلی شغل تهیه شد.");
+                                        } else if(cardMeta.source === "job_context"){
+                                            appendResponseMeta("ℹ️ به دلیل محدودیت ارتباط با API، پاسخ بر اساس داده‌های داخلی آماده شد.");
+                                        } else if(cardMeta.context_used && cardMeta.source === "openai"){
+                                            appendResponseMeta("📊 برای این پاسخ از داده‌های داخلی ثبت‌شده استفاده شد.");
+                                        }
+                                    }
+
+                                    var finalSuggestions = renderFollowupButtons(cardFollowups, cardMeta);
+                                    var highlightFeedback = !!opts.highlightFeedback || finalSuggestions.length === 0;
+                                    if(feedbackEnabled && cardText && cardText.length){
+                                        attachFeedbackControls($bubble, cardMeta, contextMessage, cardText, { highlight: highlightFeedback });
+                                    }
+                                    maybeAnnounceGuestLimitReached();
+                                }
+                            });
+                        };
+
+                        if(cards.length){
+                            cards.forEach(function(card){
+                                renderCard(card);
+                            });
+                        } else {
+                            renderCard({ text: reply, meta: meta, followups: suggestions });
+                        }
                     } else {
                         pushBot('خطا در پاسخ');
                     }
@@ -2285,7 +2295,7 @@
                     pushBotHtml('<div>📭 تجربه‌ای برای این شغل ثبت نشده است.</div>');
                 }
 
-                renderFollowups([], {
+                renderFollowupButtons([], {
                     job_title: summaryJobTitle,
                     job_title_label: summaryJobTitle,
                     job_report_count: typeof totalCount !== 'undefined' ? totalCount : null,

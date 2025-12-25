@@ -245,6 +245,16 @@ class BKJA_Frontend {
                     $meta_payload['job_slug'] = $job_slug;
                 }
             }
+
+            if ( ! isset( $meta_payload['job_group_key'] ) && isset( $meta_payload['group_key'] ) ) {
+                $meta_payload['job_group_key'] = $meta_payload['group_key'];
+            }
+            if ( ! isset( $meta_payload['job_group_key'] ) && ! empty( $job_group_key ) ) {
+                $meta_payload['job_group_key'] = $job_group_key;
+            }
+            if ( empty( $meta_payload['job_title_id'] ) && $job_title_id > 0 ) {
+                $meta_payload['job_title_id'] = $job_title_id;
+            }
         }
 
         $reply_meta_json = '';
@@ -254,6 +264,8 @@ class BKJA_Frontend {
                 $reply_meta_json = wp_json_encode( $meta_payload );
             }
         }
+
+        $cards_payload = self::prepare_cards_payload( is_array( $ai_response ) ? $ai_response : array(), $meta_payload, $reply, $suggestions );
 
         if ( ! empty( $_bkja_user_row_id ) ) {
             BKJA_Database::update_chat_response( (int) $_bkja_user_row_id, $reply, $reply_meta_json );
@@ -279,6 +291,7 @@ class BKJA_Frontend {
             'suggestions' => $suggestions,
             'from_cache'  => $from_cache,
             'meta'        => $meta_payload,
+            'cards'       => $cards_payload,
         );
 
         if ( ! $user_id ) {
@@ -290,6 +303,83 @@ class BKJA_Frontend {
         $response_payload['server_session'] = $session;
 
         wp_send_json_success($response_payload);
+    }
+
+    protected static function normalize_card_meta( $meta, $fallback_meta = array(), $allow_fallback = true ) {
+        $meta = is_array( $meta ) ? $meta : array();
+        $fallback_meta = is_array( $fallback_meta ) ? $fallback_meta : array();
+
+        $job_title_id = isset( $meta['job_title_id'] ) ? (int) $meta['job_title_id'] : null;
+        if ( $allow_fallback && ! $job_title_id && isset( $fallback_meta['job_title_id'] ) ) {
+            $job_title_id = (int) $fallback_meta['job_title_id'];
+        }
+
+        if ( $job_title_id ) {
+            $meta['job_title_id'] = $job_title_id;
+        }
+
+        if ( $allow_fallback && ( ! isset( $meta['job_title'] ) || '' === (string) $meta['job_title'] ) && isset( $fallback_meta['job_title'] ) ) {
+            $meta['job_title'] = $fallback_meta['job_title'];
+        }
+
+        $group_key = isset( $meta['group_key'] ) ? (string) $meta['group_key'] : '';
+        if ( ! $group_key && $allow_fallback && isset( $fallback_meta['group_key'] ) ) {
+            $group_key = (string) $fallback_meta['group_key'];
+        }
+        if ( $group_key ) {
+            $meta['group_key'] = $group_key;
+        }
+
+        if ( ! isset( $meta['job_group_key'] ) || '' === (string) $meta['job_group_key'] ) {
+            if ( $group_key ) {
+                $meta['job_group_key'] = $group_key;
+            } elseif ( $allow_fallback && isset( $fallback_meta['job_group_key'] ) ) {
+                $meta['job_group_key'] = $fallback_meta['job_group_key'];
+            }
+        }
+
+        return $meta;
+    }
+
+    protected static function prepare_cards_payload( $ai_response, $fallback_meta, $fallback_reply, $fallback_followups = array() ) {
+        $cards = array();
+        $raw_cards = array();
+
+        if ( isset( $ai_response['cards'] ) && is_array( $ai_response['cards'] ) ) {
+            $raw_cards = $ai_response['cards'];
+        }
+
+        $allow_fallback = count( $raw_cards ) <= 1;
+
+        foreach ( $raw_cards as $card ) {
+            if ( is_string( $card ) ) {
+                $card = array( 'text' => $card );
+            }
+            if ( ! is_array( $card ) ) {
+                continue;
+            }
+
+            $text       = isset( $card['text'] ) ? (string) $card['text'] : '';
+            $card_meta  = isset( $card['meta'] ) && is_array( $card['meta'] ) ? $card['meta'] : array();
+            $card_meta  = self::normalize_card_meta( $card_meta, $fallback_meta, $allow_fallback );
+            $followups  = isset( $card['followups'] ) && is_array( $card['followups'] ) ? $card['followups'] : array();
+
+            $cards[] = array(
+                'text'      => $text,
+                'meta'      => $card_meta,
+                'followups' => $followups,
+            );
+        }
+
+        if ( empty( $cards ) ) {
+            $cards[] = array(
+                'text'      => (string) $fallback_reply,
+                'meta'      => self::normalize_card_meta( $fallback_meta, $fallback_meta, true ),
+                'followups' => is_array( $fallback_followups ) ? $fallback_followups : array(),
+            );
+        }
+
+        return $cards;
     }
 
     public static function ajax_feedback(){
