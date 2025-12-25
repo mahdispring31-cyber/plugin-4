@@ -242,8 +242,17 @@ class BKJA_Parser {
             return $result;
         }
 
+        $computed_value   = (int) round( $number * $multiplier );
+        $has_billion_word = ( false !== mb_stripos( $text, 'میلیارد', 0, 'UTF-8' ) );
+
+        if ( $computed_value > 2000000000 && ! $has_billion_word ) {
+            $result['status'] = 'unknown';
+            $result['note']   = 'ambiguous_unit_outlier';
+            return $result;
+        }
+
         $result['status'] = 'ok';
-        $result['value']  = (int) round( $number * $multiplier );
+        $result['value']  = $computed_value;
         $result['note']   = $unit_note;
 
         if ( null !== $range_min && $range_min > 0 ) {

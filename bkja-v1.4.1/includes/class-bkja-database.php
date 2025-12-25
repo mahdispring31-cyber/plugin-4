@@ -2090,6 +2090,14 @@ class BKJA_Database {
         $sum_days       = 0;
         $days_count     = 0;
 
+        $is_ambiguous_outlier = function( $value, $text = '' ) {
+            if ( ! $value || $value <= 0 ) {
+                return false;
+            }
+            $has_billion_word = ( false !== mb_stripos( (string) $text, 'میلیارد', 0, 'UTF-8' ) );
+            return ( $value > 2000000000 && ! $has_billion_word );
+        };
+
         $is_income_composite = function( $text ) {
             $text = is_string( $text ) ? trim( $text ) : '';
             if ( '' === $text ) {
@@ -2134,8 +2142,12 @@ class BKJA_Database {
             }
 
             if ( $income_value ) {
-                $income_values[] = $income_value;
-                $income_valid_count++;
+                if ( $is_ambiguous_outlier( $income_value, $income_text ) ) {
+                    $income_invalid_count++;
+                } else {
+                    $income_values[] = $income_value;
+                    $income_valid_count++;
+                }
             } else {
                 if ( '' !== $income_text && class_exists( 'BKJA_Parser' ) ) {
                     if ( $is_income_composite( $income_text ) ) {
@@ -2148,9 +2160,12 @@ class BKJA_Database {
                             $income_invalid_count++;
                         } elseif ( 'ok' === $parsed['status'] && ! empty( $parsed['value'] ) ) {
                             $parsed_value = $normalize_value( $parsed['value'] );
-                            if ( $parsed_value ) {
+                            $parsed_note  = isset( $parsed['note'] ) ? (string) $parsed['note'] : '';
+                            if ( $parsed_value && false === strpos( $parsed_note, 'ambiguous_unit_outlier' ) && ! $is_ambiguous_outlier( $parsed_value, $income_text ) ) {
                                 $income_values[] = $parsed_value;
                                 $income_valid_count++;
+                            } else {
+                                $income_invalid_count++;
                             }
                             $parsed_min = isset( $parsed['min'] ) ? $normalize_value( $parsed['min'] ) : null;
                             $parsed_max = isset( $parsed['max'] ) ? $normalize_value( $parsed['max'] ) : null;
@@ -2224,26 +2239,52 @@ class BKJA_Database {
             return $d0 + $d1;
         };
 
-        $filter_outliers = function( $values ) use ( $quantile ) {
-            if ( count( $values ) < 10 ) {
-                return $values;
+        $detect_iqr_outliers = function( $values ) use ( $quantile ) {
+            $values = array_values( $values );
+            $count  = count( $values );
+            if ( $count < 4 ) {
+                return array( 'values' => $values, 'has_outliers' => false );
             }
-            $p5  = $quantile( $values, 0.05 );
-            $p95 = $quantile( $values, 0.95 );
-
+            sort( $values, SORT_NUMERIC );
+            $q1  = $quantile( $values, 0.25 );
+            $q3  = $quantile( $values, 0.75 );
+            $iqr = $q3 - $q1;
+            if ( $iqr <= 0 ) {
+                return array( 'values' => $values, 'has_outliers' => false );
+            }
+            $lower = $q1 - ( 1.5 * $iqr );
+            $upper = $q3 + ( 1.5 * $iqr );
             $filtered = array();
+            $has_outliers = false;
             foreach ( $values as $v ) {
-                if ( ( null !== $p5 && $v < $p5 ) || ( null !== $p95 && $v > $p95 ) ) {
+                if ( $v < $lower || $v > $upper ) {
+                    $has_outliers = true;
                     continue;
                 }
                 $filtered[] = $v;
             }
-
-            return ! empty( $filtered ) ? $filtered : $values;
+            return array( 'values' => ! empty( $filtered ) ? $filtered : $values, 'has_outliers' => $has_outliers );
         };
 
-        $income_filtered = $filter_outliers( $income_values );
-        $income_used     = count( $income_filtered );
+        $prepare_trimmed = function( $values, $trim_ratio = 0.1 ) {
+            $values = array_values( $values );
+            $count  = count( $values );
+            if ( $count === 0 ) {
+                return array();
+            }
+            sort( $values, SORT_NUMERIC );
+            $trim_n = (int) floor( $count * $trim_ratio );
+            if ( $trim_n <= 0 ) {
+                return $values;
+            }
+            return array_slice( $values, $trim_n, $count - ( 2 * $trim_n ) );
+        };
+
+        $income_values     = array_values( $income_values );
+        sort( $income_values, SORT_NUMERIC );
+        $iqr_result        = $detect_iqr_outliers( $income_values );
+        $income_filtered   = $iqr_result['values'];
+        $income_used       = count( $income_filtered );
 
         $calc_median = function( $values ) {
             $values = array_filter( $values, function( $v ) { return is_numeric( $v ) && $v > 0; } );
@@ -2267,29 +2308,42 @@ class BKJA_Database {
             return array_sum( $values ) / count( $values );
         };
 
-        $avg_income = $calc_avg( $income_filtered );
-        $median_income = $calc_median( $income_filtered );
-        $min_income = ! empty( $income_filtered ) ? min( $income_filtered ) : null;
-        $max_income = ! empty( $income_filtered ) ? max( $income_filtered ) : null;
+        $median_income      = $calc_median( $income_filtered );
+        $min_income         = ! empty( $income_filtered ) ? min( $income_filtered ) : null;
+        $max_income         = ! empty( $income_filtered ) ? max( $income_filtered ) : null;
+        $data_limited       = ( $income_used < 5 );
+        $avg_income_method  = 'mean';
+        $avg_income         = null;
 
-        $data_limited = ( $income_valid_count < 5 );
-        if ( $data_limited && $median_income ) {
-            $avg_income = $median_income;
+        if ( $data_limited ) {
+            $avg_income_method = 'median';
+            $avg_income        = $median_income;
+        } else {
+            $has_iqr_outliers = ! empty( $iqr_result['has_outliers'] );
+            $avg_income_method = $has_iqr_outliers ? 'trimmed_mean' : 'mean';
+            $mean_values       = $has_iqr_outliers ? $prepare_trimmed( $income_values, 0.1 ) : $income_filtered;
+            $avg_income        = $calc_avg( $mean_values );
         }
 
         $income_range_available = false;
-        if ( ! empty( $income_range_mins ) || ! empty( $income_range_maxes ) ) {
-            $income_range_available = true;
-        } elseif ( $income_used >= 2 ) {
-            $income_range_available = true;
+        $range_min = null;
+        $range_max = null;
+
+        if ( ! empty( $income_filtered ) ) {
+            if ( $income_used >= 5 ) {
+                $range_min = $quantile( $income_filtered, 0.10 );
+                $range_max = $quantile( $income_filtered, 0.90 );
+            } else {
+                $range_min = $min_income;
+                $range_max = $max_income;
+            }
         }
 
-        if ( empty( $income_range_mins ) && empty( $income_range_maxes ) ) {
-            $range_min = $min_income;
-            $range_max = $max_income;
-        } else {
-            $range_min = ! empty( $income_range_mins ) ? min( $income_range_mins ) : $min_income;
-            $range_max = ! empty( $income_range_maxes ) ? max( $income_range_maxes ) : $max_income;
+        if ( ! empty( $income_range_mins ) ) {
+            $range_min = null !== $range_min ? min( $range_min, min( $income_range_mins ) ) : min( $income_range_mins );
+        }
+        if ( ! empty( $income_range_maxes ) ) {
+            $range_max = null !== $range_max ? max( $range_max, max( $income_range_maxes ) ) : max( $income_range_maxes );
         }
 
         if ( $range_min && $range_max && $range_min > $range_max ) {
@@ -2306,7 +2360,9 @@ class BKJA_Database {
             }
         }
 
-        if ( ! $income_range_available ) {
+        if ( ( ! empty( $income_range_mins ) || ! empty( $income_range_maxes ) ) || ( $income_used >= 2 ) ) {
+            $income_range_available = true;
+        } else {
             $range_min = null;
             $range_max = null;
         }
@@ -2453,7 +2509,7 @@ class BKJA_Database {
             'job_title_ids'     => $job_ids,
             'avg_income'        => $avg_income ? round( (float) $avg_income, 1 ) : null,
             'avg_income_label'  => $format_label( $avg_income ),
-            'avg_income_method' => $data_limited ? 'median' : 'mean',
+            'avg_income_method' => $avg_income_method,
             'median_income'     => $median_income ? (float) $median_income : null,
             'median_income_label' => $format_label( $median_income ),
             'min_income'        => $range_min ? (float) $range_min : null,
@@ -2502,12 +2558,12 @@ class BKJA_Database {
     public static function get_job_records_by_job_title_id( $job_title_id, $limit = 5, $offset = 0, $filters = array() ) {
         $job_title_id = absint( $job_title_id );
         if ( $job_title_id <= 0 ) {
-            return array( 'records' => array(), 'has_more' => false, 'next_offset' => null, 'limit' => $limit, 'offset' => $offset );
+            return array( 'records' => array(), 'has_more' => false, 'next_offset' => null, 'limit' => $limit, 'offset' => $offset, 'total_count' => 0 );
         }
 
         $context = self::resolve_job_group_context( array( 'job_title_id' => $job_title_id ) );
         if ( empty( $context['job_title_ids'] ) ) {
-            return array( 'records' => array(), 'has_more' => false, 'next_offset' => null, 'limit' => $limit, 'offset' => $offset );
+            return array( 'records' => array(), 'has_more' => false, 'next_offset' => null, 'limit' => $limit, 'offset' => $offset, 'total_count' => 0 );
         }
 
         return self::get_job_records( $context, $limit, $offset, $filters );
@@ -2546,6 +2602,12 @@ class BKJA_Database {
         $limit     = max( 1, (int) $limit );
         $offset    = max( 0, (int) $offset );
         $limit_cap = $limit + 1;
+
+        $count_sql = $prepare_with_params(
+            "SELECT COUNT(*) FROM {$table} j WHERE {$where_clause}"
+        );
+
+        $total_count = (int) $wpdb->get_var( $count_sql );
 
         $records_sql = $prepare_with_params(
             "SELECT j.id, j.title, j.variant_title, j.income, j.investment, j.income_num, j.investment_num, j.income_toman, j.income_min_toman, j.income_max_toman, j.investment_toman, j.experience_years, j.employment_type, j.hours_per_day, j.days_per_week, j.source, j.city, j.gender, j.advantages, j.disadvantages, j.details, j.created_at, jt.label AS job_title_label, jt.slug AS job_title_slug
@@ -2606,8 +2668,8 @@ class BKJA_Database {
                 );
         }
 
-        $has_more    = count( $records ) > $limit;
-        if ( $has_more ) {
+        $has_more    = ( $offset + $limit ) < $total_count;
+        if ( count( $records ) > $limit ) {
             array_pop( $records );
         }
 
@@ -2621,6 +2683,7 @@ class BKJA_Database {
             'next_offset'   => $has_more ? $offset + $limit : null,
             'limit'         => $limit,
             'offset'        => $offset,
+            'total_count'   => $total_count,
             'group_key'     => isset( $context['group_key'] ) ? $context['group_key'] : null,
             'job_title_ids' => $job_ids,
         );

@@ -2332,6 +2332,7 @@
             var offset = parseInt($(this).data('offset')) || 0;
             var limit = parseInt($(this).data('limit')) || 5;
             var $btn = $(this);
+            var defaultLabel = 'نمایش بیشتر تجربه کاربران';
             $btn.prop('disabled', true).text('⏳ در حال دریافت...');
             ajaxWithNonce({
                 action: "bkja_get_job_records",
@@ -2348,11 +2349,11 @@
                     if(!limitNotice){
                         limitNotice = 'برای مشاهده تجربه کاربران لطفاً وارد شوید.';
                     }
-                    $btn.prop('disabled', false).text('مشاهده تجربه کاربران این شغل');
+                    $btn.prop('disabled', false).text(defaultLabel);
                     pushBotHtml('<div style="color:#d32f2f;">'+esc(limitNotice)+'</div>');
                     return;
                 }
-                $btn.prop('disabled', false).text('مشاهده تجربه کاربران این شغل');
+                $btn.prop('disabled', false).text(defaultLabel);
                 if (res && res.success && res.data && res.data.records && res.data.records.length) {
                     var records = res.data.records;
                     var hasMore = res.data.has_more ? true : false;
@@ -2384,10 +2385,11 @@
                         html += '</div>';
                         pushBotHtml(html);
                     });
-                    // اگر رکورد بیشتری وجود دارد دکمه نمایش بیشتر اضافه شود
+                    // اگر رکورد بیشتری وجود دارد دکمه نمایش بیشتر نگه داشته شود
                     if (hasMore) {
-                        var moreBtn = '<button class="bkja-show-records-btn" data-title="'+esc(job_title)+'" data-title-id="'+esc(job_title_id||'')+'" data-group-key="'+esc(group_key||'')+'" data-offset="'+esc(nextOffsetVal)+'" data-limit="'+esc(limit)+'">نمایش بیشتر تجربه کاربران</button>';
-                        $btn.replaceWith(moreBtn);
+                        $btn.attr('data-offset', nextOffsetVal)
+                            .prop('disabled', false)
+                            .text(defaultLabel);
                     } else {
                         $btn.remove();
                     }
@@ -2396,7 +2398,7 @@
                     $btn.remove();
                 }
             }).fail(function(){
-                $btn.prop('disabled', false).text('مشاهده تجربه کاربران این شغل');
+                $btn.prop('disabled', false).text(defaultLabel);
                 pushBotHtml('<div style="color:#d32f2f;">خطا در دریافت تجربه‌های بیشتر.</div>');
             });
         });
