@@ -1735,6 +1735,13 @@ class BKJA_Chat {
         $job_title_ids        = isset( $context['job_title_ids'] ) ? (array) $context['job_title_ids'] : array();
         $group_key            = isset( $context['group_key'] ) ? $context['group_key'] : null;
 
+        if ( ! $primary_job_title_id && ! empty( $summary['job_title_id'] ) ) {
+            $primary_job_title_id = (int) $summary['job_title_id'];
+        }
+        if ( ! $primary_job_title_id && ! empty( $job_title_ids ) ) {
+            $primary_job_title_id = (int) $job_title_ids[0];
+        }
+
         $job_report_count     = $stats_executed && isset( $summary['count_reports'] ) ? (int) $summary['count_reports'] : 0;
         $job_avg_income       = $stats_executed && isset( $summary['avg_income'] ) ? (float) $summary['avg_income'] : null;
         $job_income_range     = $stats_executed ? array( $summary['min_income'] ?? null, $summary['max_income'] ?? null ) : array( null, null );
@@ -1792,9 +1799,24 @@ class BKJA_Chat {
         $payload['meta']['job_title_id']         = $payload['job_title_id'];
         $payload['meta']['job_title_ids']        = $payload['job_title_ids'];
         $payload['meta']['group_key']            = $payload['group_key'];
+        if ( ! isset( $payload['meta']['job_group_key'] ) || '' === (string) $payload['meta']['job_group_key'] ) {
+            $payload['meta']['job_group_key'] = $payload['group_key'];
+        }
         $payload['meta']['clarification_options']= $payload['clarification_options'];
         $payload['meta']['resolution_source']    = $payload['resolution_source'];
         $payload['meta']['resolved_job_title_id']= $payload['resolved_job_title_id'];
+
+        if ( ! isset( $payload['meta']['job_title'] ) || '' === (string) $payload['meta']['job_title'] ) {
+            if ( isset( $summary['job_title_label'] ) && '' !== (string) $summary['job_title_label'] ) {
+                $payload['meta']['job_title'] = (string) $summary['job_title_label'];
+            } elseif ( isset( $summary['job_title'] ) && '' !== (string) $summary['job_title'] ) {
+                $payload['meta']['job_title'] = (string) $summary['job_title'];
+            }
+        }
+
+        if ( $payload['job_title_id'] && ( ! isset( $payload['meta']['job_title_id'] ) || empty( $payload['meta']['job_title_id'] ) ) ) {
+            $payload['meta']['job_title_id'] = $payload['job_title_id'];
+        }
 
         return $payload;
     }
