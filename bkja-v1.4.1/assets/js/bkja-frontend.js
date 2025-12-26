@@ -956,6 +956,13 @@
             var $wrap = $('<div class="bkja-followups" role="group"></div>');
             var followupJobTitle = (meta.job_title && String(meta.job_title).trim()) ? String(meta.job_title).trim() : (lastKnownJobTitle && lastKnownJobTitle.trim() ? String(lastKnownJobTitle).trim() : '');
             var followupJobTitleId = meta.job_title_id ? String(meta.job_title_id) : (lastKnownJobTitleId ? String(lastKnownJobTitleId) : '');
+            var nextOffset = (typeof meta.next_offset !== 'undefined' && meta.next_offset !== null) ? meta.next_offset : meta.records_next_offset;
+            var hasMoreRecords = false;
+            if(typeof meta.has_more !== 'undefined' && meta.has_more !== null){
+                hasMoreRecords = !!meta.has_more;
+            } else if(typeof meta.records_has_more !== 'undefined' && meta.records_has_more !== null){
+                hasMoreRecords = !!meta.records_has_more;
+            }
 
             if(hasAmbiguity){
                 clarificationOptions.forEach(function(opt){
@@ -995,6 +1002,9 @@
                     if(hasJobContext){
                         if(meta.job_slug){ $btn.attr('data-job-slug', String(meta.job_slug)); }
                         if(meta.group_key){ $btn.attr('data-group-key', String(meta.group_key)); }
+                    }
+                    if(clean.indexOf('نمایش بیشتر') !== -1 && hasMoreRecords && typeof nextOffset !== 'undefined'){
+                        $btn.attr('data-offset', nextOffset);
                     }
                     $wrap.append($btn);
                 });
@@ -1060,6 +1070,7 @@
                 var jobTitleIdAttr = target.getAttribute('data-job-title-id') || '';
                 var groupKeyAttr = target.getAttribute('data-group-key') || '';
                 var followupActionAttr = target.getAttribute('data-followup-action') || '';
+                var offsetAttr = target.getAttribute('data-offset') || '';
                 if(catAttr){ opts.category = catAttr; }
                 var resolvedJobTitle = jobTitleAttr || lastKnownJobTitle || '';
                 if(resolvedJobTitle){ opts.jobTitle = cleanJobHint(resolvedJobTitle); }
@@ -1075,6 +1086,12 @@
                 }
                 if(groupKeyAttr){ opts.groupKey = groupKeyAttr; }
                 if(followupActionAttr){ opts.followupAction = followupActionAttr; }
+                if(offsetAttr){
+                    var parsedOffset = parseInt(offsetAttr, 10);
+                    if(!isNaN(parsedOffset) && parsedOffset >= 0){
+                        opts.offset = parsedOffset;
+                    }
+                }
             }
 
             var resolvedJobTitleFinal = resolvedJobTitle || '';
@@ -1648,11 +1665,13 @@
                 var jobTitleIdParam = opts.jobTitleId ? parseInt(opts.jobTitleId, 10) : '';
                 var groupKeyParam = opts.groupKey ? String(opts.groupKey) : '';
                 var followupActionParam = opts.followupAction ? String(opts.followupAction) : '';
+                var offsetParam = (typeof opts.offset !== 'undefined' && opts.offset !== null) ? parseInt(opts.offset, 10) : '';
                 payload.append('job_title', jobTitleParam || '');
                 payload.append('job_slug', jobSlugParam || '');
                 payload.append('job_title_id', jobTitleIdParam || '');
                 payload.append('group_key', groupKeyParam || '');
                 payload.append('followup_action', followupActionParam || '');
+                payload.append('offset', offsetParam || '');
 
                 fetch(config.ajax_url, {
                     method: 'POST',

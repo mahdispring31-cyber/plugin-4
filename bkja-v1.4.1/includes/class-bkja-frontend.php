@@ -90,6 +90,7 @@ class BKJA_Frontend {
         $job_title_id    = isset($_POST['job_title_id']) ? intval($_POST['job_title_id']) : 0;
         $job_group_key   = isset($_POST['group_key']) ? sanitize_text_field( wp_unslash( $_POST['group_key'] ) ) : '';
         $followup_action = isset($_POST['followup_action']) ? sanitize_text_field( wp_unslash( $_POST['followup_action'] ) ) : '';
+        $offset          = isset($_POST['offset']) ? intval($_POST['offset']) : 0;
 
         if ( empty($message) ) {
             wp_send_json_error(array('error'=>'empty_message'),400);
@@ -208,6 +209,7 @@ class BKJA_Frontend {
             'job_title_id'   => $job_title_id,
             'job_group_key'  => $job_group_key,
             'followup_action'=> $followup_action,
+            'offset'         => $offset,
         ));
 
         $reply              = '';

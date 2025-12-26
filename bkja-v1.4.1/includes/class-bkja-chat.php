@@ -963,6 +963,9 @@ class BKJA_Chat {
             $records_data = class_exists('BKJA_Database') ? BKJA_Database::get_job_records($target_title, 5, 0) : [];
         }
         $records = is_array( $records_data ) && isset( $records_data['records'] ) ? $records_data['records'] : $records_data;
+        $records_has_more  = is_array( $records_data ) && isset( $records_data['has_more'] ) ? (bool) $records_data['has_more'] : false;
+        $records_next      = is_array( $records_data ) && array_key_exists( 'next_offset', $records_data ) ? $records_data['next_offset'] : null;
+        $records_total     = is_array( $records_data ) && isset( $records_data['total_count'] ) ? (int) $records_data['total_count'] : null;
         return [
             'job_title' => $job_title,
             'summary'   => $summary,
@@ -977,6 +980,9 @@ class BKJA_Chat {
             'stats_executed' => is_array( $summary ),
             'resolution_source' => $resolution_source,
             'needs_clarification' => $needs_clarification,
+            'records_has_more' => $records_has_more,
+            'records_next_offset' => $records_next,
+            'records_total' => $records_total,
         ];
     }
 
@@ -1023,6 +1029,50 @@ class BKJA_Chat {
         }
 
         return rtrim( substr( $text, 0, max( 0, $length - 1 ) ) ) . '…';
+    }
+
+    protected static function format_record_block( $record, $index = null ) {
+        if ( ! is_array( $record ) ) {
+            return '';
+        }
+
+        $parts = array();
+
+        if ( ! empty( $record['variant_title'] ) ) {
+            $parts[] = '🔖 ' . trim( (string) $record['variant_title'] );
+        }
+
+        if ( ! empty( $record['income_num'] ) ) {
+            $income_text = self::format_amount_label( $record['income_num'] );
+            if ( ! empty( $record['income_note'] ) ) {
+                $income_text .= ' (' . $record['income_note'] . ')';
+            }
+            $parts[] = '💵 درآمد: ' . $income_text;
+        } elseif ( ! empty( $record['income'] ) ) {
+            $parts[] = '💵 درآمد: ' . trim( (string) $record['income'] );
+        }
+
+        if ( ! empty( $record['investment_num'] ) ) {
+            $parts[] = '💰 سرمایه: ' . self::format_amount_label( $record['investment_num'] );
+        } elseif ( ! empty( $record['investment'] ) ) {
+            $parts[] = '💰 سرمایه: ' . trim( (string) $record['investment'] );
+        }
+
+        if ( ! empty( $record['city'] ) ) {
+            $parts[] = '📍 شهر: ' . trim( (string) $record['city'] );
+        }
+
+        if ( ! empty( $record['details'] ) ) {
+            $parts[] = '📝 تجربه: ' . self::trim_snippet( $record['details'], 120 );
+        }
+
+        if ( empty( $parts ) ) {
+            return '';
+        }
+
+        $prefix = ( null !== $index ) ? '• تجربه ' . (int) $index . ': ' : '• ';
+
+        return $prefix . implode( ' | ', $parts );
     }
 
     protected static function detect_job_category( $title ) {
@@ -1357,90 +1407,48 @@ class BKJA_Chat {
         $summary = ( ! empty( $context['summary'] ) && is_array( $context['summary'] ) ) ? $context['summary'] : array();
         $records = ( ! empty( $context['records'] ) && is_array( $context['records'] ) ) ? $context['records'] : array();
 
-        $sections = array();
+        $count_reports   = isset( $summary['count_reports'] ) ? (int) $summary['count_reports'] : 0;
+        $income_count    = isset( $summary['income_valid_count'] ) ? (int) $summary['income_valid_count'] : 0;
+        $window_months   = isset( $summary['window_months'] ) ? (int) $summary['window_months'] : null;
+        $window_label    = $window_months ? 'حدود ' . $window_months . ' ماه اخیر' : '۱۲ ماه اخیر';
+        $data_limited    = ( $count_reports > 0 && $count_reports < 3 ) || ! empty( $summary['data_limited'] );
 
-        $sections[] = "📌 خلاصه داده‌های واقعی درباره «{$title}»:";
-        $count_reports = isset( $summary['count_reports'] ) ? (int) $summary['count_reports'] : 0;
-        $window_months = isset( $summary['window_months'] ) ? (int) $summary['window_months'] : null;
-        $data_limited  = ! empty( $summary['data_limited'] );
-
-        $window_label = $window_months ? 'حدود ' . $window_months . ' ماه اخیر' : '';
-        $income_numeric_total = isset( $summary['income_numeric_total'] ) ? (int) $summary['income_numeric_total'] : 0;
+        $sections   = array();
+        $sections[] = "📌 داده‌های واقعی درباره «{$title}»:";
 
         if ( $count_reports > 0 ) {
-                $sections[] = '• ' . ( $window_label ? $window_label . ' - ' : '' ) . $count_reports . ' گزارش کاربری ثبت شده است.';
-
-            if ( $income_numeric_total > 0 ) {
-                $sections[] = '• از ' . $count_reports . ' گزارش، ' . $income_numeric_total . ' گزارش درآمد عددی قابل تحلیل داشت.';
-            } else {
-                $sections[] = '• دادهٔ کافی برای محاسبهٔ دقیق درآمد ندارم (مثلاً فقط ۰ گزارش عددی).';
-            }
-
-            $warning_bits = array();
-            if ( $count_reports < 3 ) {
-                $warning_bits[] = "⚠️ داده‌های موجود محدود است ({$count_reports} تجربه) و دقت پایین است.";
-            } elseif ( $data_limited ) {
-                $warning_bits[] = '⚠️ داده‌های ما برای این شغل هنوز کم است و نتایج تقریبی است.';
-            }
-            if ( $warning_bits ) {
-                $sections[] = '• ' . implode( ' ', $warning_bits );
-            }
+            $sections[] = '• ' . $window_label . ' | ' . $count_reports . ' گزارش کاربری ثبت شده.';
         } else {
-            $sections[] = '• در ۱۲ ماه اخیر گزارشی برای این شغل ثبت نشده است.';
+            $sections[] = '• هنوز گزارشی در بازه اخیر نداریم.';
         }
-        $sections[] = '• اعداد زیر بر اساس گزارش‌های کاربران این سیستم است و آمار رسمی نیست.';
+        $sections[] = '• اعداد فقط بر اساس گزارش کاربران است و رسمی نیست.';
 
         $sections[] = '';
-        $sections[] = '💵 درآمد ماهانه (میلیون تومان در ماه):';
-        $total_records = isset( $summary['total_records'] ) ? (int) $summary['total_records'] : 0;
-        $income_valid_count = isset( $summary['income_valid_count'] ) ? (int) $summary['income_valid_count'] : 0;
-        $income_unit_guessed = ! empty( $summary['income_unit_guessed'] );
-        $income_composite_count = isset( $summary['income_composite_count'] ) ? (int) $summary['income_composite_count'] : 0;
-        $income_data_low = ( $total_records <= 2 || $income_valid_count <= 2 );
-        $single_income = ( 1 === $income_valid_count );
-
-        if ( $total_records > 0 && $income_valid_count <= 0 ) {
-            $sections[] = '• درآمد: داده کافی برای عدد دقیق نداریم.';
+        $sections[] = '💵 درآمد ماهانه (میلیون تومان):';
+        if ( $income_count <= 0 ) {
+            $sections[] = '• هنوز گزارش عددی کافی برای درآمد نداریم (نامشخص).';
         } else {
-            $income_method = ( isset( $summary['avg_income_method'] ) && 'median' === $summary['avg_income_method'] ) ? 'میانه' : 'میانگین';
-            $label_prefix  = $income_data_low ? 'برآورد تقریبی' : $income_method;
-            $avg_income_value = isset( $summary['avg_income'] ) ? $summary['avg_income'] : null;
-            if ( $single_income && empty( $avg_income_value ) ) {
-                $avg_income_value = isset( $summary['min_income'] ) ? $summary['min_income'] : null;
-            }
-            $income_line = '• ' . $label_prefix . ': ' . self::format_amount_label( $avg_income_value );
-            if ( $single_income ) {
-                $income_line .= ' (تنها 1 گزارش معتبر)';
-            }
-            if ( $income_unit_guessed ) {
-                $income_line .= ' (واحد از متن حدس زده شده)';
-            }
-            $income_range = self::format_range_label(
-                $summary['min_income'] ?? null,
-                $summary['max_income'] ?? null,
-                'میلیون تومان در ماه'
-            );
-            if ( $income_range ) {
-                $income_line .= ' | بازه رایج: ' . $income_range;
+            $median_label = isset( $summary['median_income_label'] ) ? $summary['median_income_label'] : null;
+            $avg_label    = isset( $summary['avg_income_label'] ) ? $summary['avg_income_label'] : null;
+            $value_label  = $median_label ?: $avg_label;
+            $range_label  = self::format_range_label( $summary['min_income'] ?? null, $summary['max_income'] ?? null, 'میلیون تومان در ماه' );
+
+            if ( $income_count >= 5 && $median_label ) {
+                $income_line = '• میانه درآمد: ' . $median_label . ' (بر اساس ' . $income_count . ' گزارش عددی).';
             } else {
-                $income_line .= ' | بازه رایج: نامشخص';
+                $income_line = '• برآورد تقریبی درآمد: ' . ( $value_label ? $value_label : 'نامشخص' ) . ' (داده عددی محدود).';
             }
+
+            if ( $range_label ) {
+                $income_line .= ' | بازه رایج: ' . $range_label;
+            }
+
             $sections[] = $income_line;
         }
 
-        if ( $income_composite_count > 0 ) {
-            $sections[] = '';
-            $sections[] = '💡 درآمد ترکیبی (حقوق + پورسانت/کار آزاد)';
-            $sections[] = 'برخی گزارش‌ها درآمد را به صورت ترکیبی نوشته‌اند (مثلاً حقوق ثابت + پورسانت). این موارد در محاسبه میانگین لحاظ نشده‌اند.';
-            $sections[] = 'تعداد گزارش‌های درآمد ترکیبی: ' . $income_composite_count;
-        }
-
         $sections[] = '';
-        $sections[] = '💰 سرمایه لازم (میلیون تومان):';
-        $invest_line = '• میانگین: ' . self::format_amount_label( isset( $summary['avg_investment'] ) ? $summary['avg_investment'] : null );
-        if ( ! empty( $summary['investment_unit_guessed'] ) ) {
-            $invest_line .= ' (واحد از متن حدس زده شده)';
-        }
+        $invest_label = isset( $summary['avg_investment'] ) ? self::format_amount_label( $summary['avg_investment'] ) : null;
+        $invest_line  = '💰 سرمایه میانگین: ' . ( $invest_label ? $invest_label : 'نامشخص' );
         $invest_range = self::format_range_label( $summary['min_investment'] ?? null, $summary['max_investment'] ?? null );
         if ( $invest_range ) {
             $invest_line .= ' | بازه رایج: ' . $invest_range;
@@ -1451,12 +1459,10 @@ class BKJA_Chat {
         $sections[] = $invest_line;
 
         if ( ! empty( $summary['cities'] ) ) {
-            $sections[] = '';
             $sections[] = '📍 شهرهای پرتکرار: ' . implode( '، ', array_slice( (array) $summary['cities'], 0, 5 ) );
         }
 
         if ( ! empty( $summary['advantages'] ) || ! empty( $summary['disadvantages'] ) ) {
-            $sections[] = '';
             if ( ! empty( $summary['advantages'] ) ) {
                 $sections[] = '✅ مزایای پرتکرار: ' . implode( '، ', array_slice( (array) $summary['advantages'], 0, 5 ) );
             }
@@ -1468,35 +1474,15 @@ class BKJA_Chat {
         if ( ! empty( $records ) ) {
             $sections[] = '';
             $sections[] = '🧪 نمونه‌های واقعی کاربران:';
+            $index = 1;
             foreach ( array_slice( $records, 0, 2 ) as $record ) {
-                if ( ! is_array( $record ) ) {
-                    continue;
-                }
-                $parts = array();
-                if ( ! empty( $record['income_num'] ) ) {
-                    $parts[] = 'درآمد: ' . self::format_amount_label( $record['income_num'] );
-                } elseif ( ! empty( $record['income'] ) ) {
-                    $income_text = $record['income'];
-                    if ( ! empty( $record['income_note'] ) ) {
-                        $income_text .= ' (' . $record['income_note'] . ')';
-                    }
-                    $parts[] = 'درآمد: ' . $income_text;
-                }
-                if ( ! empty( $record['investment_num'] ) ) {
-                    $parts[] = 'سرمایه: ' . self::format_amount_label( $record['investment_num'] );
-                } elseif ( ! empty( $record['investment'] ) ) {
-                    $parts[] = 'سرمایه: ' . $record['investment'];
-                }
-                if ( ! empty( $record['city'] ) ) {
-                    $parts[] = 'شهر: ' . $record['city'];
-                }
-                if ( ! empty( $record['details'] ) ) {
-                    $parts[] = 'تجربه: ' . self::trim_snippet( $record['details'], 120 );
-                }
-                if ( ! empty( $parts ) ) {
-                    $sections[] = '• ' . implode( ' | ', $parts );
-                }
+                $sections[] = self::format_record_block( $record, $index );
+                $index++;
             }
+        }
+
+        if ( $data_limited ) {
+            $sections[] = '⚠️ داده محدود است؛ اعداد تقریبی تلقی شوند.';
         }
 
         return implode( "\n", array_filter( array_map( 'trim', $sections ), function ( $line ) {
@@ -1505,35 +1491,44 @@ class BKJA_Chat {
     }
 
     protected static function build_followup_suggestions( $message, $context = array(), $answer = '' ) {
+        $context  = is_array( $context ) ? $context : array();
+        $summary  = ( ! empty( $context['summary'] ) && is_array( $context['summary'] ) ) ? $context['summary'] : array();
+        $job_title = isset( $context['job_title'] ) ? trim( (string) $context['job_title'] ) : '';
+
+        if ( '' === $job_title ) {
+            return array();
+        }
+
+        $actions_map = array(
+            'show_more_records'      => 'نمایش بیشتر تجربه کاربران',
+            'compare_similar_jobs'   => 'مقایسه با شغل مشابه',
+            'income_growth_path'     => 'مسیر رشد درآمد در همین شغل',
+            'show_related_experiences' => 'دیدن تجربه‌های مرتبط',
+        );
+
+        $count_reports = isset( $summary['count_reports'] ) ? (int) $summary['count_reports'] : 0;
+        $data_limited  = ( $count_reports > 0 && $count_reports < 3 ) || ! empty( $summary['data_limited'] );
+        $has_more_records = ! empty( $context['records_has_more'] );
+
         $suggestions = array();
-        $push = function( $text ) use ( &$suggestions ) {
-            $text = trim( (string) $text );
-            if ( $text && ! in_array( $text, $suggestions, true ) ) {
-                $suggestions[] = $text;
-            }
-        };
 
-        $job_title = '';
-        if ( ! empty( $context['job_title'] ) ) {
-            $job_title = trim( (string) $context['job_title'] );
+        if ( $has_more_records && isset( $actions_map['show_more_records'] ) ) {
+            $suggestions[] = $actions_map['show_more_records'];
         }
 
-        $data_limited = false;
-        if ( ! empty( $context['summary'] ) && is_array( $context['summary'] ) ) {
-            $data_limited = ! empty( $context['summary']['data_limited'] ) || ( isset( $context['summary']['count_reports'] ) && (int) $context['summary']['count_reports'] > 0 && (int) $context['summary']['count_reports'] < 3 );
+        if ( isset( $actions_map['compare_similar_jobs'] ) ) {
+            $suggestions[] = $actions_map['compare_similar_jobs'];
         }
 
-        if ( $data_limited ) {
-            $push( 'شغل‌های مشابه با داده بیشتر' );
-            $push( 'مسیر رشد درآمد در همین شغل' );
-            $push( 'دیدن تجربه‌های مرتبط' );
-        } else {
-            $push( 'مقایسه با شغل مشابه' );
-            $push( 'مسیر رشد درآمد در همین شغل' );
-            $push( 'دیدن تجربه‌های مرتبط' );
+        if ( isset( $actions_map['income_growth_path'] ) ) {
+            $suggestions[] = $actions_map['income_growth_path'];
         }
 
-        return array_slice( $suggestions, 0, 3 );
+        if ( $data_limited && isset( $actions_map['show_related_experiences'] ) ) {
+            $suggestions[] = $actions_map['show_related_experiences'];
+        }
+
+        return array_values( array_unique( $suggestions ) );
     }
 
     protected static function normalize_followup_action_key( $action ) {
@@ -1544,35 +1539,40 @@ class BKJA_Chat {
 
         $haystack = function_exists( 'mb_strtolower' ) ? mb_strtolower( $action, 'UTF-8' ) : strtolower( $action );
 
-        if ( false !== strpos( $haystack, 'مقایسه' ) || false !== strpos( $haystack, 'similar' ) ) {
-            return 'compare';
+        if ( false !== strpos( $haystack, 'نمایش بیشتر' ) || false !== strpos( $haystack, 'show more' ) ) {
+            return 'show_more_records';
+        }
+
+        if ( false !== strpos( $haystack, 'مقایسه' ) || false !== strpos( $haystack, 'similar' ) || false !== strpos( $haystack, 'compare' ) ) {
+            return 'compare_similar_jobs';
         }
 
         if ( false !== strpos( $haystack, 'تجربه' ) || false !== strpos( $haystack, 'experience' ) ) {
-            return 'experiences';
+            return 'show_related_experiences';
         }
 
-        if ( false !== strpos( $haystack, 'مسیر رشد' ) || false !== strpos( $haystack, 'رشد درآمد' ) || false !== strpos( $haystack, 'growth' ) ) {
-            return 'income_growth';
+        if ( false !== strpos( $haystack, 'مسیر رشد' ) || false !== strpos( $haystack, 'رشد درآمد' ) || false !== strpos( $haystack, 'growth' ) || false !== strpos( $haystack, 'income_growth' ) ) {
+            return 'income_growth_path';
         }
 
         return $haystack;
     }
 
-    protected static function handle_followup_action( $action, $context, $message, $category, $model, $normalized_message ) {
-        $action_key = self::normalize_followup_action_key( $action );
-        $context    = is_array( $context ) ? $context : array();
-        $model      = self::resolve_model( $model );
-        $category   = is_string( $category ) ? $category : '';
+    protected static function handle_followup_action( $action, $context, $message, $category, $model, $normalized_message, $request_meta = array() ) {
+        $action_key   = self::normalize_followup_action_key( $action );
+        $context      = is_array( $context ) ? $context : array();
+        $model        = self::resolve_model( $model );
+        $category     = is_string( $category ) ? $category : '';
+        $request_meta = is_array( $request_meta ) ? $request_meta : array();
 
-        if ( 'compare' === $action_key ) {
+        if ( 'compare_similar_jobs' === $action_key ) {
             $payload = self::handle_compare_similar_jobs( $context, $message, $category, $model );
             if ( is_array( $payload ) ) {
                 return $payload;
             }
         }
 
-        if ( 'income_growth' === $action_key ) {
+        if ( 'income_growth_path' === $action_key ) {
             $reply = self::build_high_income_guidance( $context );
 
             return self::ensure_context_meta( self::build_response_payload(
@@ -1587,6 +1587,62 @@ class BKJA_Chat {
                     'normalized_message' => $normalized_message,
                 )
             ), $context );
+        }
+
+        if ( 'show_more_records' === $action_key ) {
+            $job_title_id = isset( $context['primary_job_title_id'] ) ? (int) $context['primary_job_title_id'] : null;
+            $summary_context = ( isset( $context['summary'] ) && is_array( $context['summary'] ) ) ? $context['summary'] : array();
+            if ( ! $job_title_id && ! empty( $summary_context['job_title_id'] ) ) {
+                $job_title_id = (int) $summary_context['job_title_id'];
+            }
+            if ( ! $job_title_id && ! empty( $context['job_title_ids'][0] ) ) {
+                $job_title_id = (int) $context['job_title_ids'][0];
+            }
+
+            $current_group_key = isset( $context['group_key'] ) ? $context['group_key'] : null;
+            $group_key = $current_group_key ? $current_group_key : ( $summary_context['group_key'] ?? null );
+            $offset    = isset( $request_meta['offset'] ) ? max( 0, (int) $request_meta['offset'] ) : 0;
+            $limit     = 5;
+
+            $records_data = class_exists( 'BKJA_Database' ) ? BKJA_Database::get_job_records( $job_title_id, $limit, $offset ) : array( 'records' => array(), 'has_more' => false, 'next_offset' => null );
+            $records      = isset( $records_data['records'] ) && is_array( $records_data['records'] ) ? $records_data['records'] : array();
+
+            $context['records']            = $records;
+            $context['records_has_more']   = ! empty( $records_data['has_more'] );
+            $context['records_next_offset'] = isset( $records_data['next_offset'] ) ? $records_data['next_offset'] : null;
+            $context['group_key']          = $current_group_key ?: $group_key;
+
+            $reply_lines = array();
+            if ( ! empty( $records ) ) {
+                $reply_lines[] = '🧪 تجربه‌های بیشتر کاربران:';
+                $index = $offset + 1;
+                foreach ( $records as $record ) {
+                    $reply_lines[] = self::format_record_block( $record, $index );
+                    $index++;
+                }
+            } else {
+                $reply_lines[] = '📭 تجربه دیگری برای نمایش وجود ندارد.';
+            }
+
+            $payload = self::ensure_context_meta( self::build_response_payload(
+                implode( "\n", array_filter( array_map( 'trim', $reply_lines ) ) ),
+                $context,
+                $message,
+                false,
+                'followup_action',
+                array(
+                    'model'              => $model,
+                    'category'           => $category,
+                    'normalized_message' => $normalized_message,
+                )
+            ), $context );
+
+            $payload['meta']['has_more']    = ! empty( $records_data['has_more'] );
+            $payload['meta']['next_offset'] = isset( $records_data['next_offset'] ) ? $records_data['next_offset'] : null;
+            $payload['meta']['group_key']   = $payload['meta']['group_key'] ?: $group_key;
+            $payload['meta']['job_title_id'] = $payload['meta']['job_title_id'] ?: $job_title_id;
+
+            return $payload;
         }
 
         $reply = self::format_job_context_reply( $context );
@@ -1805,6 +1861,15 @@ class BKJA_Chat {
         $payload['meta']['clarification_options']= $payload['clarification_options'];
         $payload['meta']['resolution_source']    = $payload['resolution_source'];
         $payload['meta']['resolved_job_title_id']= $payload['resolved_job_title_id'];
+        $payload['meta']['records_has_more']     = isset( $context['records_has_more'] ) ? (bool) $context['records_has_more'] : null;
+        $payload['meta']['records_next_offset']  = isset( $context['records_next_offset'] ) ? $context['records_next_offset'] : null;
+        $payload['meta']['records_total']        = isset( $context['records_total'] ) ? $context['records_total'] : null;
+        if ( ! isset( $payload['meta']['has_more'] ) && isset( $context['records_has_more'] ) ) {
+            $payload['meta']['has_more'] = (bool) $context['records_has_more'];
+        }
+        if ( ! isset( $payload['meta']['next_offset'] ) && isset( $context['records_next_offset'] ) ) {
+            $payload['meta']['next_offset'] = $context['records_next_offset'];
+        }
 
         if ( ! isset( $payload['meta']['job_title'] ) || '' === (string) $payload['meta']['job_title'] ) {
             if ( isset( $summary['job_title_label'] ) && '' !== (string) $summary['job_title_label'] ) {
@@ -2042,7 +2107,7 @@ class BKJA_Chat {
         }
 
         $defaults = array(
-            'system'         => 'تو یک دستیار شغلی داده‌محور هستی. اعداد درآمد و سرمایه که می‌بینی فقط از گزارش کاربران این سایت استخراج شده و آمار رسمی نیست. پاسخ را در بخش‌های بولت‌دار کوتاه مثل «خلاصه آماری»، «درآمد»، «سرمایه»، «نکات مثبت/چالش‌ها»، «قدم بعدی» ارائه کن. فقط از اعداد موجود در کانتکست استفاده کن؛ اگر داده عددی نداریم یا تعداد گزارش‌ها کم است صریحاً بگو «نامشخص» یا «دقت پایین» و عدد نساز. موضوع گفتگو را تغییر نده و در پایان یک اقدام عملی کوتاه پیشنهاد بده.',
+            'system'         => 'تو یک دستیار شغلی داده‌محور هستی. اعداد درآمد و سرمایه فقط از گزارش کاربران این سایت استخراج شده و آمار رسمی نیست. پاسخ را بولت‌دار و کوتاه بده و فقط از اعداد داخل کانتکست استفاده کن؛ اگر داده نداریم یا تعداد کم است صریحاً بگو «نامشخص» یا «دقت پایین» و عدد نساز. موضوع گفتگو را تغییر نده و در پایان یک اقدام عملی کوتاه پیشنهاد بده. در حالت «SHORT MODE» برای سوال‌های عمومی/غیرکارت‌شغلی (سرمایه‌گذاری، ترید، وام، ایده فرعی، شهر برای کار و ...) حداکثر در ۶ خط بولت پاسخ بده و حداکثر ۱ سوال شفاف‌سازی بپرس؛ از پاراگراف‌های طولانی و مزایا/معایب کلی پرهیز کن. اگر کاربر درخواست «نظرسنجی/از دنبال‌کنندگان بپرس» داشت یک متن کوتاه پیشنهاد بده که از درآمد، شهر، ساعات کار و سرمایه اولیه بپرسد و او را دعوت به ارسال گزارش خودش کند.',
             'model'          => '',
             'session_id'     => '',
             'user_id'        => 0,
@@ -2052,6 +2117,8 @@ class BKJA_Chat {
             'job_title_id'   => 0,
             'job_group_key'  => '',
             'followup_action'=> '',
+            'offset'         => 0,
+            'request_meta'   => array(),
         );
         $args              = wp_parse_args( $args, $defaults );
         $model             = self::resolve_model( $args['model'] );
@@ -2062,6 +2129,10 @@ class BKJA_Chat {
         $job_title_id      = isset( $args['job_title_id'] ) ? (int) $args['job_title_id'] : 0;
         $job_group_key     = is_string( $args['job_group_key'] ) ? trim( $args['job_group_key'] ) : '';
         $followup_action   = is_string( $args['followup_action'] ) ? trim( $args['followup_action'] ) : '';
+        $request_meta      = is_array( $args['request_meta'] ) ? $args['request_meta'] : array();
+        if ( ! array_key_exists( 'offset', $request_meta ) ) {
+            $request_meta['offset'] = isset( $args['offset'] ) ? (int) $args['offset'] : 0;
+        }
         $normalized_action = self::normalize_message( $followup_action );
         $is_followup_action = '' !== $normalized_action;
 
@@ -2165,7 +2236,7 @@ class BKJA_Chat {
             $context['resolved_confidence']   = isset( $context['resolved_confidence'] ) ? $context['resolved_confidence'] : null;
             $context['clarification_options'] = array();
 
-            return self::ensure_context_meta( self::handle_followup_action( $normalized_action, $context, $message, $resolved_category, $model, $normalized_message ), $context );
+            return self::ensure_context_meta( self::handle_followup_action( $normalized_action, $context, $message, $resolved_category, $model, $normalized_message, $request_meta ), $context );
         }
         if ( ! empty( $context['primary_job_title_id'] )
             && empty( $context['needs_clarification'] )
