@@ -1499,6 +1499,10 @@ class BKJA_Chat {
         $job_title = isset( $context['job_title'] ) ? trim( (string) $context['job_title'] ) : '';
         $job_id    = ! empty( $context['primary_job_title_id'] ) ? (int) $context['primary_job_title_id'] : 0;
 
+        if ( isset( $context['state_type'] ) && BKJA_State::TYPE_B === $context['state_type'] ) {
+            return array();
+        }
+
         if ( '' === $job_title || $job_id <= 0 ) {
             return array();
         }
@@ -1911,9 +1915,13 @@ class BKJA_Chat {
         $query_intent        = self::detect_query_intent( $normalized_message, $context );
         $state_type          = isset( $extra['state_type'] ) ? $extra['state_type'] : ( isset( $context['state_type'] ) ? $context['state_type'] : null );
 
+        $suggestions = $state_type === BKJA_State::TYPE_B
+            ? array()
+            : self::build_followup_suggestions( $message, $context, $text );
+
         $payload = array(
             'text'         => (string) $text,
-            'suggestions'  => self::build_followup_suggestions( $message, $context, $text ),
+            'suggestions'  => $suggestions,
             'context_used' => $context_used,
             'from_cache'   => (bool) $from_cache,
             'source'       => $source,
