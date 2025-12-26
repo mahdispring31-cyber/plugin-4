@@ -2162,6 +2162,13 @@ class BKJA_Database {
                 }
             }
 
+            if ( $income_base && $income_base > 2000000000 && '' !== $income_text && class_exists( 'BKJA_RuleEngine' ) ) {
+                $normalized_context_income = BKJA_RuleEngine::normalize_income_from_context_to_toman( $income_text, '' );
+                if ( $normalized_context_income && $normalized_context_income >= 1000000 && $normalized_context_income <= 2000000000 ) {
+                    $income_base = (int) $normalized_context_income;
+                }
+            }
+
             $income_min  = $normalize_value( $srow->income_min_toman );
             $income_max  = $normalize_value( $srow->income_max_toman );
 
@@ -2678,6 +2685,18 @@ class BKJA_Database {
                         if ( $normalized_reparsed >= 1000000 && $normalized_reparsed <= 2000000000 ) {
                             $income_num = $normalized_reparsed;
                         }
+                    }
+                }
+
+                if ( $income_num > 2000000000 && '' !== $income_text && class_exists( 'BKJA_RuleEngine' ) ) {
+                    $normalized_context_income = BKJA_RuleEngine::normalize_income_from_context_to_toman(
+                        (string) $row->income,
+                        isset( $row->details ) ? (string) $row->details : ''
+                    );
+
+                    if ( $normalized_context_income && $normalized_context_income >= 1000000 && $normalized_context_income <= 2000000000 ) {
+                        $income_num  = (int) $normalized_context_income;
+                        $income_note = 'تصحیح بر اساس متن توضیحات';
                     }
                 }
 
