@@ -986,6 +986,35 @@ class BKJA_Chat {
         ];
     }
 
+    protected static function resolve_job_from_message( $user_message, $args = array() ) {
+        $args = is_array( $args ) ? $args : array();
+
+        $job_title_hint = isset( $args['job_title_hint'] ) ? $args['job_title_hint'] : '';
+        $job_slug       = isset( $args['job_slug'] ) ? $args['job_slug'] : '';
+        $job_title_id   = isset( $args['job_title_id'] ) ? (int) $args['job_title_id'] : 0;
+        $job_group_key  = isset( $args['job_group_key'] ) ? $args['job_group_key'] : '';
+
+        $context = self::get_job_context( $user_message, $job_title_hint, $job_slug, $job_title_id, $job_group_key );
+
+        $job_id    = 0;
+        $job_label = '';
+
+        if ( ! empty( $context['primary_job_title_id'] ) ) {
+            $job_id = (int) $context['primary_job_title_id'];
+        } elseif ( ! empty( $context['job_title_ids'][0] ) ) {
+            $job_id = (int) $context['job_title_ids'][0];
+        }
+
+        if ( ! empty( $context['job_title'] ) ) {
+            $job_label = $context['job_title'];
+        }
+
+        return array(
+            'id'    => $job_id,
+            'label' => $job_label,
+        );
+    }
+
     protected static function format_amount_label( $value ) {
         return bkja_format_toman_as_million_label( $value );
     }
@@ -2112,13 +2141,7 @@ class BKJA_Chat {
             return new WP_Error( 'empty_message', 'Message is empty' );
         }
 
-        if ( class_exists( 'BKJA_Database' ) ) {
-            BKJA_Database::ensure_feedback_table();
-        }
-
         $defaults = array(
-            'system'         => "تو دستیار شغلی داده‌محور BKJA هستی.\n\nقواعد سخت:\n1) اگر «کارت شغلی/درآمد یک شغل» خواسته شد: فقط از داده‌های کانتکست/DB استفاده کن. عدد نساز. اگر داده کم است صریح بگو «نامشخص/داده کم».\n2) اگر کاربر سوال عمومی پرسید (سرمایه‌گذاری، ترید، وام، بیکاری، معرفی شغل در شهر، کار در خانه، ایده درآمدی): وارد کارت شغلی نشو. در حالت SHORT MODE پاسخ بده.\n3) SHORT MODE: حداکثر 6 خط بولت. حداکثر 1 سوال شفاف‌سازی. بدون متن طولانی، بدون مزایا/معایب کلی.\n4) اگر کاربر گفت «از فالوورها بپرس»: فقط یک متن خیلی کوتاه برای استوری/پست بده که این موارد را بپرسد: عنوان شغل، شهر، درآمد ماهانه، سابقه، ساعت کار، سرمایه اولیه. سپس دعوت به ارسال تجربه شخصی.\n5) مدیریت توکن: هرگز لیست طولانی تولید نکن. اگر تجربه‌ها زیاد بود فقط 5 مورد اول را خلاصه کن و بگو «برای ادامه از دکمه نمایش بیشتر استفاده کنید».\n6) پاسخ‌ها فارسی، ساده، کاربرپسند، با اقدام عملی آخر.\n\nفرمت خروجی:\n- همیشه بولت‌دار\n- اگر داده کم است: یک خط هشدار کوتاه\n- از تکرار خودداری کن",
-            'model'          => '',
             'session_id'     => '',
             'user_id'        => 0,
             'category'       => '',
@@ -2128,462 +2151,101 @@ class BKJA_Chat {
             'job_group_key'  => '',
             'followup_action'=> '',
             'offset'         => 0,
-            'request_meta'   => array(),
-        );
-        $args              = wp_parse_args( $args, $defaults );
-        $model             = self::resolve_model( $args['model'] );
-        $system            = ! empty( $args['system'] ) ? $args['system'] : $defaults['system'];
-        $resolved_category = is_string( $args['category'] ) ? $args['category'] : '';
-        $job_title_hint    = is_string( $args['job_title_hint'] ) ? trim( $args['job_title_hint'] ) : '';
-        $job_slug          = is_string( $args['job_slug'] ) ? trim( $args['job_slug'] ) : '';
-        $job_title_id      = isset( $args['job_title_id'] ) ? (int) $args['job_title_id'] : 0;
-        $job_group_key     = is_string( $args['job_group_key'] ) ? trim( $args['job_group_key'] ) : '';
-        $followup_action   = is_string( $args['followup_action'] ) ? trim( $args['followup_action'] ) : '';
-        $request_meta      = is_array( $args['request_meta'] ) ? $args['request_meta'] : array();
-        if ( ! array_key_exists( 'offset', $request_meta ) ) {
-            $request_meta['offset'] = isset( $args['offset'] ) ? (int) $args['offset'] : 0;
-        }
-        $normalized_action = self::normalize_message( $followup_action );
-        $is_followup_action = '' !== $normalized_action;
-
-        $normalized_message = self::normalize_message( $message );
-        $is_followup_only   = self::is_followup_message( $normalized_message );
-
-        if ( $job_title_id <= 0 && ! $is_followup_action && $is_followup_only ) {
-            $recent_job_id = self::get_last_job_context( $args['session_id'], (int) $args['user_id'] );
-            if ( $recent_job_id > 0 ) {
-                $job_title_id = $recent_job_id;
-            }
-        }
-
-        if ( $is_followup_action && $job_title_id <= 0 && '' === $job_title_hint ) {
-            $payload = self::build_response_payload(
-                'برای انجام این کار، اول کارت یک شغل مشخص را باز کن.',
-                array(),
-                $message,
-                false,
-                'followup_missing_job',
-                array(
-                    'model'                 => $model,
-                    'category'              => $resolved_category,
-                    'clarification_options' => array(),
-                    'suggestions'           => array(),
-                )
-            );
-
-            $payload['meta'] = array();
-            $payload['suggestions'] = array();
-
-            return $payload;
-        }
-
-        $context_query = ( $is_followup_action && '' !== $job_title_hint ) ? $job_title_hint : $normalized_message;
-        $context = self::get_job_context( $context_query, $job_title_hint, $job_slug, $job_title_id, $job_group_key );
-
-        if ( $is_followup_action && empty( $context['job_title'] ) ) {
-            return self::ensure_context_meta( self::build_response_payload(
-                'این عنوان را دقیق پیدا نکردم. لطفاً یک نام نزدیک‌تر یا کوتاه‌تر بنویس.',
-                array(),
-                $message,
-                false,
-                'followup_missing_context',
-                array(
-                    'model'                 => $model,
-                    'category'              => $resolved_category,
-                    'job_title'             => '',
-                    'job_slug'              => '',
-                    'job_title_id'          => null,
-                    'group_key'             => '',
-                    'clarification_options' => array(),
-                    'suggestions'           => array(),
-                )
-            ), $context );
-        }
-
-        if ( ! $is_followup_action && empty( $context['job_title'] ) && ! empty( $context['candidates'] ) && ! $is_followup_only ) {
-            $filtered_candidates   = self::filter_closest_candidates( $normalized_message, $context['candidates'] );
-            $context['candidates'] = $filtered_candidates;
-
-            if ( empty( $filtered_candidates ) ) {
-                return self::ensure_context_meta( self::build_response_payload(
-                    'این عنوان را دقیق پیدا نکردم. لطفاً یک نام نزدیک‌تر یا کوتاه‌تر بنویس.',
-                    array(),
-                    $message,
-                    false,
-                    'clarification_empty',
-                    array(
-                        'model'                 => $model,
-                        'category'              => $resolved_category,
-                        'job_title'             => '',
-                        'job_slug'              => '',
-                        'job_title_id'          => null,
-                        'group_key'             => '',
-                        'clarification_options' => array(),
-                        'suggestions'           => array(),
-                    )
-                ), $context );
-            }
-
-            $context['needs_clarification'] = true;
-            return self::ensure_context_meta( self::build_response_payload(
-                'چند مورد نزدیک پیدا کردم. لطفاً یکی را انتخاب کن یا نام دقیق‌تر بنویس.',
-                $context,
-                $message,
-                false,
-                'clarification',
-                array(
-                    'model'                 => $model,
-                    'category'              => $resolved_category,
-                    'clarification_options' => $filtered_candidates,
-                    'suggestions'           => array(),
-                )
-            ), $context );
-        }
-
-        if ( $is_followup_action ) {
-            $context['candidates']            = array();
-            $context['needs_clarification']   = false;
-            $context['resolved_confidence']   = isset( $context['resolved_confidence'] ) ? $context['resolved_confidence'] : null;
-            $context['clarification_options'] = array();
-
-            return self::ensure_context_meta( self::handle_followup_action( $normalized_action, $context, $message, $resolved_category, $model, $normalized_message, $request_meta ), $context );
-        }
-        if ( ! empty( $context['primary_job_title_id'] )
-            && empty( $context['needs_clarification'] )
-            && empty( $context['ambiguous'] )
-            && ! $is_followup_action ) {
-            self::store_last_job_context( (int) $context['primary_job_title_id'], $args['session_id'], (int) $args['user_id'] );
-        }
-
-        if ( self::is_compare_similar_intent( $normalized_message ) ) {
-            $compare_payload = self::handle_compare_similar_jobs( $context, $message, $resolved_category, $model );
-            if ( is_array( $compare_payload ) ) {
-                return $compare_payload;
-            }
-        }
-
-        $api_key = self::get_api_key();
-
-        if ( self::is_high_income_query( $normalized_message ) ) {
-            $guided_answer = self::build_high_income_guidance( $context );
-
-            return self::ensure_context_meta( self::build_response_payload(
-                $guided_answer,
-                $context,
-                $message,
-                false,
-                'guided_high_income',
-                array(
-                    'model'    => $model,
-                    'category' => $resolved_category,
-                )
-            ), $context );
-        }
-
-        $cache_enabled   = self::is_cache_enabled();
-        if ( $is_followup_action ) {
-            $cache_enabled = false;
-        }
-        $cache_job_title = '';
-        if ( ! empty( $context['job_title'] ) ) {
-            $cache_job_title = $context['job_title'];
-        } elseif ( ! empty( $context['resolved_job_title'] ) ) {
-            $cache_job_title = $context['resolved_job_title'];
-        } elseif ( '' !== $job_title_hint ) {
-            $cache_job_title = $job_title_hint;
-        }
-
-        $followup_only = $is_followup_only;
-        if ( '' === $cache_job_title && $followup_only ) {
-            $cache_enabled   = false;
-            $cache_job_title = '__missing__';
-        }
-
-        $query_intent = self::detect_query_intent( $normalized_message, $context );
-
-        $cache_key           = self::build_cache_key( $normalized_message, $resolved_category, $model, $cache_job_title, $query_intent );
-        $legacy_cache_key    = '';
-        if ( $cache_enabled && '' !== $cache_job_title ) {
-            $legacy_cache_key = self::build_cache_key( $normalized_message, $resolved_category, $model, '', $query_intent );
-        }
-        if ( $cache_enabled ) {
-            $cached = get_transient( $cache_key );
-            if ( false === $cached && '' !== $legacy_cache_key ) {
-                $cached = get_transient( $legacy_cache_key );
-            }
-            if ( false !== $cached && self::should_accept_cached_payload( $normalized_message, $cached ) ) {
-                if ( is_array( $cached ) ) {
-                    $cached['from_cache']        = true;
-                    $cached['model']             = isset( $cached['model'] ) ? $cached['model'] : $model;
-                    $cached['category']          = $resolved_category;
-                    $cached_job_title = '';
-                    if ( ! empty( $context['job_title'] ) ) {
-                        $cached_job_title = $context['job_title'];
-                    } elseif ( ! empty( $cached['job_title'] ) ) {
-                        $cached_job_title = $cached['job_title'];
-                    }
-                    if ( '' !== $cached_job_title ) {
-                        $cached['job_title'] = $cached_job_title;
-                    } else {
-                        $cached['job_title'] = '';
-                    }
-                    $cached['normalized_message'] = $normalized_message;
-                    if ( ! isset( $cached['meta'] ) || ! is_array( $cached['meta'] ) ) {
-                        $cached['meta'] = array();
-                    }
-                    $cached['meta']['category'] = $resolved_category;
-                    $cached['meta']['job_title'] = $cached_job_title;
-                    $job_slug_value = '';
-                    if ( ! empty( $context['job_slug'] ) ) {
-                        $job_slug_value = $context['job_slug'];
-                    } elseif ( '' !== $job_slug ) {
-                        $job_slug_value = $job_slug;
-                    }
-
-                    if ( '' !== $job_slug_value ) {
-                        $cached['job_slug']            = $job_slug_value;
-                        $cached['meta']['job_slug']    = $job_slug_value;
-                    } else {
-                        $cached['job_slug']         = '';
-                        $cached['meta']['job_slug'] = '';
-                    }
-                    if ( ! empty( $context ) ) {
-                        $cached['meta']['category']   = $context['category'] ?? ( $cached['meta']['category'] ?? null );
-                        $cached['meta']['job_title']  = $context['job_title'] ?? ( $cached['meta']['job_title'] ?? null );
-                        $cached['meta']['job_slug']   = $context['job_slug'] ?? ( $cached['meta']['job_slug'] ?? null );
-                    }
-                    $cached = self::refresh_job_stats_payload( $cached, $context );
-                    return $cached;
-                }
-
-                return self::ensure_context_meta( self::build_response_payload(
-                    $cached,
-                    $context,
-                    $message,
-                    true,
-                    'cache',
-                    array(
-                        'model'              => $model,
-                        'category'           => $resolved_category,
-                        'job_title'          => ! empty( $context['job_title'] ) ? $context['job_title'] : $cache_job_title,
-                        'job_slug'           => ! empty( $context['job_slug'] ) ? $context['job_slug'] : $job_slug,
-                        'job_title_id'       => isset( $context['primary_job_title_id'] ) ? $context['primary_job_title_id'] : $job_title_id,
-                        'group_key'          => isset( $context['group_key'] ) ? $context['group_key'] : $job_group_key,
-                        'normalized_message' => $normalized_message,
-                    )
-                ), $context );
-            }
-        }
-
-        if ( empty( $api_key ) ) {
-            $db_payload = self::try_answer_from_db( $message, $context, $model, $resolved_category, $normalized_message, $job_title_hint, $job_slug );
-            if ( $db_payload ) {
-                $db_payload['model']              = $model;
-                $db_payload['category']           = $resolved_category;
-                $db_payload['normalized_message'] = $normalized_message;
-
-                if ( $cache_enabled ) {
-                    set_transient( $cache_key, $db_payload, self::get_cache_ttl( $model ) );
-                }
-
-                return $db_payload;
-            }
-
-            if ( ! empty( $context ) ) {
-                $fallback = self::ensure_context_meta( self::build_response_payload(
-                    self::format_job_context_reply( $context ),
-                    $context,
-                    $message,
-                    false,
-                    'job_context',
-                    array(
-                        'model'              => $model,
-                        'category'           => $resolved_category,
-                        'job_title'          => ! empty( $context['job_title'] ) ? $context['job_title'] : $cache_job_title,
-                        'job_slug'           => ! empty( $context['job_slug'] ) ? $context['job_slug'] : $job_slug,
-                        'job_title_id'       => isset( $context['primary_job_title_id'] ) ? $context['primary_job_title_id'] : $job_title_id,
-                        'group_key'          => isset( $context['group_key'] ) ? $context['group_key'] : $job_group_key,
-                        'normalized_message' => $normalized_message,
-                    )
-                ), $context );
-                if ( $cache_enabled ) {
-                    set_transient( $cache_key, $fallback, self::get_cache_ttl( $model ) );
-                }
-                return $fallback;
-            }
-
-            return new WP_Error( 'no_api_key', 'API key not configured' );
-        }
-
-        $messages = array(
-            array(
-                'role'    => 'system',
-                'content' => $system,
-            ),
         );
 
-        if ( ! empty( $context ) ) {
-            $context_prompt = self::build_context_prompt( $context );
-            if ( $context_prompt ) {
-                $messages[] = array(
-                    'role'    => 'system',
-                    'content' => $context_prompt,
+        $args            = wp_parse_args( $args, $defaults );
+        $user_message    = self::normalize_message( $message );
+        $action          = self::normalize_message( $args['followup_action'] );
+        $state           = BKJA_State::load();
+        $intent          = BKJA_RuleEngine::classify( $user_message );
+
+        if ( 'TYPE_C' === $intent ) {
+            $state = BKJA_State::default();
+        }
+
+        if ( 'TYPE_A' === $intent ) {
+            $job = self::resolve_job_from_message( $user_message, $args );
+            $state['job_id'] = $job['id'];
+            $state['offset'] = 0;
+            $state['closed'] = false;
+        }
+
+        if ( 'show_more' === $action ) {
+            $state['offset'] += 5;
+        }
+
+        $experiences = array();
+        $total       = 0;
+        $has_more    = false;
+        $shown       = 0;
+
+        if ( $state['job_id'] ) {
+            $records_data = BKJA_Database::get_job_records_by_job_title_id( $state['job_id'], 5, $state['offset'] );
+            $experiences  = isset( $records_data['records'] ) ? (array) $records_data['records'] : array();
+            $total        = isset( $records_data['total_count'] ) ? (int) $records_data['total_count'] : 0;
+            if ( ! $total && isset( $records_data['count_reports'] ) ) {
+                $total = (int) $records_data['count_reports'];
+            }
+            $shown    = min( $state['offset'] + 5, $total );
+            $has_more = $shown < $total;
+        }
+
+        $buttons = array();
+
+        if ( 'TYPE_A' === $intent ) {
+            if ( $has_more ) {
+                $buttons[] = array(
+                    'id'    => 'show_more',
+                    'label' => "نمایش 5 تجربه دیگر ({$shown} از {$total})",
                 );
             }
+            $buttons[] = array( 'id' => 'compare', 'label' => 'مقایسه با شغل مشابه' );
+            $buttons[] = array( 'id' => 'growth', 'label' => 'مسیر رشد درآمد' );
         }
 
-        $feedback_hint = self::get_feedback_hint( $normalized_message, $args['session_id'], (int) $args['user_id'] );
-        if ( $feedback_hint ) {
-            $messages[] = array(
-                'role'    => 'system',
-                'content' => $feedback_hint,
-            );
+        if ( 'TYPE_B' === $intent ) {
+            $buttons[] = array( 'id' => 'add_experience', 'label' => 'ثبت تجربه جدید' );
         }
 
-        if ( class_exists( 'BKJA_Database' ) ) {
-            $history = BKJA_Database::get_recent_conversation( $args['session_id'], (int) $args['user_id'], 6 );
-            $history = self::clamp_history( $history, 4 );
-            foreach ( $history as $item ) {
-                if ( empty( $item['content'] ) ) {
-                    continue;
-                }
-                $messages[] = array(
-                    'role'    => $item['role'] === 'assistant' ? 'assistant' : 'user',
-                    'content' => $item['content'],
-                );
+        $state['closed'] = true;
+        BKJA_State::save( $state );
+
+        $reply_lines = array();
+
+        if ( 'TYPE_B' === $intent ) {
+            $income_val = BKJA_RuleEngine::normalize_income( $message );
+            if ( null !== $income_val ) {
+                $reply_lines[] = 'برآورد شما: ' . $income_val . ' میلیون تومان';
             }
         }
 
-        $messages[] = array(
-            'role'    => 'user',
-            'content' => $message,
+        if ( $state['job_id'] && ! empty( $experiences ) ) {
+            $reply_lines[] = '🧪 تجربه‌های کاربران:';
+            foreach ( $experiences as $index => $record ) {
+                $reply_lines[] = self::format_record_block( $record, $state['offset'] + $index + 1 );
+            }
+        }
+
+        if ( empty( array_filter( array_map( "trim", $reply_lines ) ) ) ) {
+            $reply_lines[] = $message;
+        }
+
+        $meta = array(
+            'job_title_id' => $state['job_id'],
+            'has_more'     => $has_more,
+            'shown'        => $shown,
+            'total'        => $total,
         );
 
-        $payload = array(
-            'model'       => $model,
-            'messages'    => $messages,
-            'temperature' => 0.2,
-            'max_tokens'  => 500,
+        return array(
+            "text"        => implode( "\n", array_filter( array_map( "trim", $reply_lines ) ) ),
+            'suggestions' => array(),
+            'from_cache'  => false,
+            'meta'        => $meta,
+            'buttons'     => $buttons,
+            'cards'       => array(),
         );
-
-        $request_args = array(
-            'headers' => array(
-                'Authorization' => 'Bearer ' . $api_key,
-                'Content-Type'  => 'application/json',
-            ),
-            'body'    => wp_json_encode( $payload ),
-            'timeout' => 60,
-        );
-
-        $response = wp_remote_post( 'https://api.openai.com/v1/chat/completions', $request_args );
-        if ( is_wp_error( $response ) ) {
-            if ( ! empty( $context ) ) {
-                $fallback = self::ensure_context_meta( self::build_response_payload(
-                    self::format_job_context_reply( $context ),
-                    $context,
-                    $message,
-                    false,
-                    'job_context',
-                    array(
-                        'model'              => $model,
-                        'category'           => $resolved_category,
-                        'job_title'          => ! empty( $context['job_title'] ) ? $context['job_title'] : $cache_job_title,
-                        'job_slug'           => ! empty( $context['job_slug'] ) ? $context['job_slug'] : $job_slug,
-                        'job_title_id'       => isset( $context['primary_job_title_id'] ) ? $context['primary_job_title_id'] : $job_title_id,
-                        'group_key'          => isset( $context['group_key'] ) ? $context['group_key'] : $job_group_key,
-                        'normalized_message' => $normalized_message,
-                    )
-                ), $context );
-                if ( $cache_enabled ) {
-                    set_transient( $cache_key, $fallback, self::get_cache_ttl( $model ) );
-                }
-                return $fallback;
-            }
-
-            return $response;
-        }
-
-        $code = wp_remote_retrieve_response_code( $response );
-        $body = wp_remote_retrieve_body( $response );
-        $data = json_decode( $body, true );
-
-        if ( $code < 200 || $code >= 300 || empty( $data['choices'][0]['message']['content'] ) ) {
-            if ( ! empty( $context ) ) {
-                $fallback = self::build_response_payload(
-                    self::format_job_context_reply( $context ),
-                    $context,
-                    $message,
-                    false,
-                    'job_context',
-                    array(
-                        'model'              => $model,
-                        'category'           => $resolved_category,
-                        'job_title'          => ! empty( $context['job_title'] ) ? $context['job_title'] : $cache_job_title,
-                        'job_slug'           => ! empty( $context['job_slug'] ) ? $context['job_slug'] : $job_slug,
-                        'job_title_id'       => isset( $context['primary_job_title_id'] ) ? $context['primary_job_title_id'] : $job_title_id,
-                        'group_key'          => isset( $context['group_key'] ) ? $context['group_key'] : $job_group_key,
-                        'normalized_message' => $normalized_message,
-                    )
-                );
-                if ( $cache_enabled ) {
-                    set_transient( $cache_key, $fallback, self::get_cache_ttl( $model ) );
-                }
-                return $fallback;
-            }
-
-            return new WP_Error( 'api_error', 'OpenAI error: ' . substr( $body, 0, 250 ) );
-        }
-
-        $answer = trim( $data['choices'][0]['message']['content'] );
-        $source = 'openai';
-
-        if ( '' === $answer && ! empty( $context ) ) {
-            $answer = self::format_job_context_reply( $context );
-            $source = 'job_context';
-        } elseif ( '' === $answer ) {
-            return new WP_Error( 'empty_response', 'Empty response from model' );
-        }
-
-        $result = self::build_response_payload(
-            $answer,
-            $context,
-            $message,
-            false,
-            $source,
-            array(
-                'model'              => $model,
-                'category'           => $resolved_category,
-                'job_title'          => ! empty( $context['job_title'] ) ? $context['job_title'] : $cache_job_title,
-                'job_slug'           => ! empty( $context['job_slug'] ) ? $context['job_slug'] : $job_slug,
-                'job_title_id'       => isset( $context['primary_job_title_id'] ) ? $context['primary_job_title_id'] : $job_title_id,
-                'group_key'          => isset( $context['group_key'] ) ? $context['group_key'] : $job_group_key,
-                'normalized_message' => $normalized_message,
-            )
-        );
-
-        if ( $cache_enabled ) {
-            $result_job_title = '';
-            if ( isset( $result['meta'] ) && is_array( $result['meta'] ) && ! empty( $result['meta']['job_title'] ) ) {
-                $result_job_title = $result['meta']['job_title'];
-            } elseif ( ! empty( $result['job_title'] ) ) {
-                $result_job_title = $result['job_title'];
-            }
-
-            if ( '' !== $result_job_title && $result_job_title !== $cache_job_title ) {
-                $legacy_key_to_clear = self::build_cache_key( $normalized_message, $resolved_category, $model, $cache_job_title, $query_intent );
-                $cache_key           = self::build_cache_key( $normalized_message, $resolved_category, $model, $result_job_title, $query_intent );
-
-                if ( $legacy_key_to_clear !== $cache_key ) {
-                    delete_transient( $legacy_key_to_clear );
-                }
-            }
-
-            set_transient( $cache_key, $result, self::get_cache_ttl( $model ) );
-        }
-
-        return self::ensure_context_meta( $result, $context );
     }
-
     protected static function ensure_context_meta( $payload, $context ) {
         if ( ! is_array( $payload ) ) {
             return $payload;
