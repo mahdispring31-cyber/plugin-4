@@ -214,6 +214,7 @@ class BKJA_Frontend {
 
         $reply              = '';
         $suggestions        = array();
+        $buttons            = array();
         $from_cache         = false;
         $normalized_message = BKJA_Chat::normalize_message($message);
         $meta_payload       = array(
@@ -242,6 +243,7 @@ class BKJA_Frontend {
         } else {
             $reply        = isset( $ai_response['text'] ) ? (string) $ai_response['text'] : '';
             $suggestions  = ! empty( $ai_response['suggestions'] ) && is_array( $ai_response['suggestions'] ) ? $ai_response['suggestions'] : array();
+            $buttons      = ! empty( $ai_response['buttons'] ) && is_array( $ai_response['buttons'] ) ? $ai_response['buttons'] : array();
             $from_cache   = ! empty( $ai_response['from_cache'] );
             $meta_payload = array_merge( $meta_payload, array(
                 'suggestions'        => $suggestions,
@@ -321,6 +323,7 @@ class BKJA_Frontend {
             'ok'          => true,
             'reply'       => $reply,
             'suggestions' => $suggestions,
+            'buttons'     => $buttons,
             'from_cache'  => $from_cache,
             'meta'        => $meta_payload,
             'cards'       => $cards_payload,
