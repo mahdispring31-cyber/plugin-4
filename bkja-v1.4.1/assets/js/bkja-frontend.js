@@ -944,15 +944,21 @@
             }
             var lowData = expCount !== null && expCount >= 0 && expCount < 3;
             var hasAmbiguity = clarificationOptions.length > 0 || (meta.resolved_confidence && meta.resolved_confidence < 0.55);
+            var hasMoreRecords = false;
+            if(typeof meta.has_more !== 'undefined' && meta.has_more !== null){
+                hasMoreRecords = !!meta.has_more;
+            } else if(typeof meta.records_has_more !== 'undefined' && meta.records_has_more !== null){
+                hasMoreRecords = !!meta.records_has_more;
+            }
             var queryIntent = meta.query_intent || '';
             var generalIntents = ['general_exploratory', 'general_high_income', 'compare', 'invest_idea', 'open_question'];
             var isGeneral = !hasJobContext || generalIntents.indexOf(String(queryIntent)) !== -1;
             var isIncomeWithEnoughData = queryIntent === 'job_income' && !hasAmbiguity && !lowData;
-            if(isIncomeWithEnoughData){
+            if(isIncomeWithEnoughData && !hasMoreRecords){
                 return [];
             }
 
-            var shouldShow = hasAmbiguity || lowData || isGeneral;
+            var shouldShow = hasAmbiguity || lowData || isGeneral || hasMoreRecords;
             if(!shouldShow){
                 return [];
             }
@@ -966,12 +972,6 @@
             var followupJobTitle = (meta.job_title && String(meta.job_title).trim()) ? String(meta.job_title).trim() : (lastKnownJobTitle && lastKnownJobTitle.trim() ? String(lastKnownJobTitle).trim() : '');
             var followupJobTitleId = meta.job_title_id ? String(meta.job_title_id) : (lastKnownJobTitleId ? String(lastKnownJobTitleId) : '');
             var nextOffset = (typeof meta.next_offset !== 'undefined' && meta.next_offset !== null) ? meta.next_offset : meta.records_next_offset;
-            var hasMoreRecords = false;
-            if(typeof meta.has_more !== 'undefined' && meta.has_more !== null){
-                hasMoreRecords = !!meta.has_more;
-            } else if(typeof meta.records_has_more !== 'undefined' && meta.records_has_more !== null){
-                hasMoreRecords = !!meta.records_has_more;
-            }
 
             if(hasAmbiguity){
                 clarificationOptions.forEach(function(opt){
