@@ -959,7 +959,7 @@
 
             var suggestions = sanitizeSuggestions(items, meta);
             if(!suggestions.length){
-                suggestions = sanitizeSuggestions(['مقایسه با شغل مشابه', 'مسیر رشد درآمد در همین شغل', 'دیدن تجربه‌های مرتبط'], meta);
+                return [];
             }
 
             var $wrap = $('<div class="bkja-followups" role="group"></div>');
@@ -1762,7 +1762,7 @@
                             }
                         }
                         var reply = res.data.reply || '';
-                        var suggestions = Array.isArray(res.data.suggestions) ? res.data.suggestions : [];
+                        var buttons = Array.isArray(res.data.buttons) ? res.data.buttons : [];
                         var fromCache = !!res.data.from_cache;
                         var meta = res.data.meta || {};
                         var cards = Array.isArray(res.data.cards) ? res.data.cards : [];
@@ -1776,7 +1776,7 @@
                         var renderCard = function(card){
                             var cardMeta = card && card.meta ? card.meta : meta;
                             var cardText = card && typeof card.text === "string" ? card.text : reply;
-                            var cardFollowups = Array.isArray(card && card.followups) ? card.followups : suggestions;
+                            var cardFollowups = Array.isArray(card && card.buttons) ? card.buttons : buttons;
 
                             if(cardMeta && typeof cardMeta === "object"){
                                 lastReplyMeta = cardMeta;
@@ -1814,7 +1814,7 @@
                                 renderCard(card);
                             });
                         } else {
-                            renderCard({ text: reply, meta: meta, followups: suggestions });
+                            renderCard({ text: reply, meta: meta, buttons: buttons });
                         }
                     } else {
                         pushBot('خطا در پاسخ');

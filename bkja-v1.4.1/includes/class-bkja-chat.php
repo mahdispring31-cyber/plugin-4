@@ -1,5 +1,8 @@
-<?php 
+<?php
 if ( ! defined( 'ABSPATH' ) ) exit;
+
+require_once __DIR__ . '/BKJA_State.php';
+require_once __DIR__ . '/BKJA_RuleEngine.php';
 
 class BKJA_Chat {
 
@@ -1893,6 +1896,11 @@ class BKJA_Chat {
             $payload['meta']['job_title_id'] = $payload['job_title_id'];
         }
 
+        if ( isset( $context['state_type'] ) && $context['state_type'] ) {
+            $payload['state_type'] = $context['state_type'];
+            $payload['meta']['state_type'] = $context['state_type'];
+        }
+
         return $payload;
     }
 
@@ -1901,6 +1909,7 @@ class BKJA_Chat {
 
         $normalized_message = isset( $extra['normalized_message'] ) ? (string) $extra['normalized_message'] : self::normalize_message( $message );
         $query_intent        = self::detect_query_intent( $normalized_message, $context );
+        $state_type          = isset( $extra['state_type'] ) ? $extra['state_type'] : ( isset( $context['state_type'] ) ? $context['state_type'] : null );
 
         $payload = array(
             'text'         => (string) $text,
@@ -1908,6 +1917,7 @@ class BKJA_Chat {
             'context_used' => $context_used,
             'from_cache'   => (bool) $from_cache,
             'source'       => $source,
+            'state_type'   => $state_type,
             'job_title'    => ! empty( $context['job_title'] ) ? $context['job_title'] : '',
             'job_slug'     => isset( $context['job_slug'] ) ? $context['job_slug'] : '',
             'job_title_id' => isset( $context['primary_job_title_id'] ) ? (int) $context['primary_job_title_id'] : null,
@@ -1947,6 +1957,7 @@ class BKJA_Chat {
             'context_used' => $context_used,
             'from_cache'   => (bool) $from_cache,
             'source'       => $source,
+            'state_type'   => $state_type,
             'category'     => $resolved_category,
             'job_title'    => $resolved_job_title,
             'job_slug'     => $resolved_job_slug,
@@ -2179,6 +2190,22 @@ class BKJA_Chat {
 
         $context_query = ( $is_followup_action && '' !== $job_title_hint ) ? $job_title_hint : $normalized_message;
         $context = self::get_job_context( $context_query, $job_title_hint, $job_slug, $job_title_id, $job_group_key );
+
+        $state = BKJA_RuleEngine::classify(
+            $normalized_message,
+            $context,
+            array(
+                'category'        => $resolved_category,
+                'is_followup'     => $is_followup_action || $is_followup_only,
+                'followup_action' => $normalized_action,
+            )
+        );
+        $context['state_type'] = $state->get_type();
+        $context['state_meta'] = $state->get_meta();
+
+        if ( BKJA_State::TYPE_A === $state->get_type() && '' === $resolved_category ) {
+            $resolved_category = 'job';
+        }
 
         if ( $is_followup_action && empty( $context['job_title'] ) ) {
             return self::ensure_context_meta( self::build_response_payload(
