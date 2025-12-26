@@ -2425,13 +2425,11 @@
                         html += '</div>';
                         pushBotHtml(html);
                     });
-                    // اگر رکورد بیشتری وجود دارد دکمه نمایش بیشتر نگه داشته شود
+                    // اگر رکورد بیشتری وجود دارد دکمه نمایش بیشتر را بعد از کارت‌های جدید اضافه کن
+                    $btn.remove();
                     if (hasMore) {
-                        $btn.attr('data-offset', nextOffsetVal)
-                            .prop('disabled', false)
-                            .text(defaultLabel);
-                    } else {
-                        $btn.remove();
+                        var moreBtn = '<button class="bkja-show-records-btn" data-title="'+esc(job_title)+'" data-title-id="'+esc(job_title_id)+'" data-group-key="'+esc(group_key)+'" data-offset="'+esc(nextOffsetVal)+'" data-limit="'+esc(limit)+'">'+esc(defaultLabel)+'</button>';
+                        pushBotHtml(moreBtn);
                     }
                 } else {
                     pushBotHtml('<div>📭 تجربه بیشتری برای این شغل ثبت نشده است.</div>');
