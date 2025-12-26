@@ -890,25 +890,34 @@
                 job = String(meta.job_title).toLowerCase().replace(/\s+/g,'');
             }
             var hasJobContext = !!(meta && (meta.job_title_id || meta.group_key || (Array.isArray(meta.job_title_ids) && meta.job_title_ids.length) || meta.job_title));
-            return arr.filter(function(entry){
+            return arr.map(function(entry){
                 if(entry === null || entry === undefined){
-                    return false;
+                    return null;
                 }
-                var text = String(entry);
-                if(!text.trim()){
-                    return false;
+                var label = '';
+                if(typeof entry === 'object'){
+                    label = entry.label || entry.action || '';
+                } else {
+                    label = String(entry);
                 }
-                var lower = text.toLowerCase();
+                label = $.trim(String(label || ''));
+                if(!label){
+                    return null;
+                }
+                var lower = label.toLowerCase();
                 if((lower.indexOf('مقایسه') !== -1 && lower.indexOf('مشابه') !== -1) && !hasJobContext){
-                    return false;
+                    return null;
                 }
                 if(/آرایش|زیبایی|سالن/.test(lower)){
                     if(!job || lower.indexOf(job) === -1){
-                        return false;
+                        return null;
                     }
                 }
-                return true;
-            });
+                if(typeof entry === 'object'){
+                    return Object.assign({}, entry, { label: label });
+                }
+                return { label: label };
+            }).filter(function(entry){ return !!entry; });
         }
 
         var lastFollowupSignature = '';
@@ -989,22 +998,34 @@
             }
 
             if(!hasAmbiguity){
-                suggestions.forEach(function(text){
-                    if(text === null || text === undefined){ return; }
-                    var clean = $.trim(String(text));
+                suggestions.forEach(function(entry){
+                    if(entry === null || entry === undefined){ return; }
+                    var label = '';
+                    var action = '';
+                    var offsetVal = null;
+                    if(typeof entry === 'object'){
+                        label = entry.label || entry.action || '';
+                        action = entry.action || entry.label || '';
+                        if(entry.offset !== undefined){ offsetVal = entry.offset; }
+                    } else {
+                        label = String(entry);
+                        action = label;
+                    }
+                    var clean = $.trim(String(label || ''));
                     if(!clean){ return; }
                     var $btn = $('<button type="button" class="bkja-followup-btn" role="listitem"></button>');
                     $btn.text(clean);
                     $btn.attr('data-message', clean);
-                    $btn.attr('data-followup-action', clean);
+                    $btn.attr('data-followup-action', action || clean);
                     $btn.attr('data-job-title', followupJobTitle);
                     $btn.attr('data-job-title-id', followupJobTitleId);
                     if(hasJobContext){
                         if(meta.job_slug){ $btn.attr('data-job-slug', String(meta.job_slug)); }
                         if(meta.group_key){ $btn.attr('data-group-key', String(meta.group_key)); }
                     }
-                    if(clean.indexOf('نمایش بیشتر') !== -1 && hasMoreRecords && typeof nextOffset !== 'undefined'){
-                        $btn.attr('data-offset', nextOffset);
+                    var offsetToUse = (offsetVal !== null && offsetVal !== undefined) ? offsetVal : nextOffset;
+                    if(clean.indexOf('نمایش بیشتر') !== -1 && hasMoreRecords && typeof offsetToUse !== 'undefined'){
+                        $btn.attr('data-offset', offsetToUse);
                     }
                     $wrap.append($btn);
                 });

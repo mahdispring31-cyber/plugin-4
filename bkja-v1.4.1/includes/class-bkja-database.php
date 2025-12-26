@@ -2150,6 +2150,18 @@ class BKJA_Database {
                 $income_base = $normalize_legacy_or_maybe_million( $srow->income_num, $income_unit_guessed );
             }
 
+            $income_text = isset( $srow->income ) ? trim( (string) $srow->income ) : '';
+
+            if ( $income_base && $income_base > 2000000000 && '' !== $income_text && class_exists( 'BKJA_Parser' ) ) {
+                $reparsed_income = BKJA_Parser::parse_income_to_toman( $income_text );
+                if ( 'ok' === $reparsed_income['status'] && ! empty( $reparsed_income['value'] ) ) {
+                    $normalized_reparsed = $normalize_value( $reparsed_income['value'] );
+                    if ( $normalized_reparsed && $normalized_reparsed >= 1000000 && $normalized_reparsed <= 2000000000 ) {
+                        $income_base = $normalized_reparsed;
+                    }
+                }
+            }
+
             $income_min  = $normalize_value( $srow->income_min_toman );
             $income_max  = $normalize_value( $srow->income_max_toman );
 
@@ -2160,7 +2172,6 @@ class BKJA_Database {
                 $income_range_maxes[] = $income_max;
             }
 
-            $income_text = isset( $srow->income ) ? trim( (string) $srow->income ) : '';
             if ( '' !== $income_text && $is_income_composite( $income_text ) ) {
                 $income_composite_count++;
             }
@@ -2655,11 +2666,22 @@ class BKJA_Database {
         $records = array();
         foreach ( $results as $row ) {
                 $income_note = null;
+                $income_text = isset( $row->income ) ? trim( (string) $row->income ) : '';
                 $income_num  = isset( $row->income_toman ) && $row->income_toman > 0
                     ? (int) $row->income_toman
                     : ( ( isset( $row->income_num ) && $row->income_num > 0 ) ? (int) $row->income_num : 0 );
 
-                if ( 0 === $income_num && ! empty( $row->income ) && class_exists( 'BKJA_Parser' ) ) {
+                if ( $income_num > 2000000000 && '' !== $income_text && class_exists( 'BKJA_Parser' ) ) {
+                    $reparsed_income = BKJA_Parser::parse_income_to_toman( (string) $row->income );
+                    if ( 'ok' === $reparsed_income['status'] && ! empty( $reparsed_income['value'] ) ) {
+                        $normalized_reparsed = (int) $reparsed_income['value'];
+                        if ( $normalized_reparsed >= 1000000 && $normalized_reparsed <= 2000000000 ) {
+                            $income_num = $normalized_reparsed;
+                        }
+                    }
+                }
+
+                if ( 0 === $income_num && ! empty( $income_text ) && class_exists( 'BKJA_Parser' ) ) {
                     $parsed_income = BKJA_Parser::parse_income_to_toman( (string) $row->income );
                     if ( 'ambiguous_unit' === $parsed_income['status'] ) {
                         $income_note = 'واحد نامشخص';

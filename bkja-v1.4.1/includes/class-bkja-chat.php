@@ -1494,26 +1494,31 @@ class BKJA_Chat {
         $context  = is_array( $context ) ? $context : array();
         $summary  = ( ! empty( $context['summary'] ) && is_array( $context['summary'] ) ) ? $context['summary'] : array();
         $job_title = isset( $context['job_title'] ) ? trim( (string) $context['job_title'] ) : '';
+        $job_id    = ! empty( $context['primary_job_title_id'] ) ? (int) $context['primary_job_title_id'] : 0;
 
-        if ( '' === $job_title ) {
+        if ( '' === $job_title || $job_id <= 0 ) {
             return array();
         }
 
         $actions_map = array(
-            'show_more_records'      => 'نمایش بیشتر تجربه کاربران',
-            'compare_similar_jobs'   => 'مقایسه با شغل مشابه',
-            'income_growth_path'     => 'مسیر رشد درآمد در همین شغل',
+            'show_more_records'        => 'نمایش بیشتر تجربه کاربران',
+            'compare_similar_jobs'     => 'مقایسه با شغل مشابه',
+            'income_growth_path'       => 'مسیر رشد درآمد در همین شغل',
             'show_related_experiences' => 'دیدن تجربه‌های مرتبط',
         );
 
-        $count_reports = isset( $summary['count_reports'] ) ? (int) $summary['count_reports'] : 0;
-        $data_limited  = ( $count_reports > 0 && $count_reports < 3 ) || ! empty( $summary['data_limited'] );
+        $count_reports   = isset( $summary['count_reports'] ) ? (int) $summary['count_reports'] : 0;
+        $data_limited    = ( $count_reports > 0 && $count_reports < 3 ) || ! empty( $summary['data_limited'] );
         $has_more_records = ! empty( $context['records_has_more'] );
 
         $suggestions = array();
 
         if ( $has_more_records && isset( $actions_map['show_more_records'] ) ) {
-            $suggestions[] = $actions_map['show_more_records'];
+            $suggestions[] = array(
+                'action' => 'show_more_records',
+                'label'  => $actions_map['show_more_records'],
+                'offset' => isset( $context['records_next_offset'] ) ? (int) $context['records_next_offset'] : 0,
+            );
         }
 
         if ( isset( $actions_map['compare_similar_jobs'] ) ) {
@@ -1528,7 +1533,7 @@ class BKJA_Chat {
             $suggestions[] = $actions_map['show_related_experiences'];
         }
 
-        return array_values( array_unique( $suggestions ) );
+        return array_values( array_unique( $suggestions, SORT_REGULAR ) );
     }
 
     protected static function normalize_followup_action_key( $action ) {
@@ -1804,7 +1809,8 @@ class BKJA_Chat {
         $job_avg_investment   = $stats_executed && isset( $summary['avg_investment'] ) ? (float) $summary['avg_investment'] : null;
         $job_investment_range = $stats_executed ? array( $summary['min_investment'] ?? null, $summary['max_investment'] ?? null ) : array( null, null );
 
-        $used_job_stats = $stats_executed && $job_report_count > 0;
+        $used_job_stats       = $stats_executed && $job_report_count > 0;
+        $needs_clarification  = ! empty( $context['needs_clarification'] );
 
         $clarification_options = array();
         if ( isset( $context['candidates'] ) && is_array( $context['candidates'] ) ) {
@@ -1827,6 +1833,10 @@ class BKJA_Chat {
                     'confidence'    => is_array( $candidate ) ? ( $candidate['score'] ?? null ) : ( isset( $candidate->score ) ? $candidate->score : null ),
                 );
             }
+        }
+
+        if ( $used_job_stats && ! $needs_clarification ) {
+            $clarification_options = array();
         }
 
         $payload['job_report_count']     = $stats_executed ? $job_report_count : null;
@@ -2107,7 +2117,7 @@ class BKJA_Chat {
         }
 
         $defaults = array(
-            'system'         => 'تو یک دستیار شغلی داده‌محور هستی. اعداد درآمد و سرمایه فقط از گزارش کاربران این سایت استخراج شده و آمار رسمی نیست. پاسخ را بولت‌دار و کوتاه بده و فقط از اعداد داخل کانتکست استفاده کن؛ اگر داده نداریم یا تعداد کم است صریحاً بگو «نامشخص» یا «دقت پایین» و عدد نساز. موضوع گفتگو را تغییر نده و در پایان یک اقدام عملی کوتاه پیشنهاد بده. در حالت «SHORT MODE» برای سوال‌های عمومی/غیرکارت‌شغلی (سرمایه‌گذاری، ترید، وام، ایده فرعی، شهر برای کار و ...) حداکثر در ۶ خط بولت پاسخ بده و حداکثر ۱ سوال شفاف‌سازی بپرس؛ از پاراگراف‌های طولانی و مزایا/معایب کلی پرهیز کن. اگر کاربر درخواست «نظرسنجی/از دنبال‌کنندگان بپرس» داشت یک متن کوتاه پیشنهاد بده که از درآمد، شهر، ساعات کار و سرمایه اولیه بپرسد و او را دعوت به ارسال گزارش خودش کند.',
+            'system'         => "تو دستیار شغلی داده‌محور BKJA هستی.\n\nقواعد سخت:\n1) اگر «کارت شغلی/درآمد یک شغل» خواسته شد: فقط از داده‌های کانتکست/DB استفاده کن. عدد نساز. اگر داده کم است صریح بگو «نامشخص/داده کم».\n2) اگر کاربر سوال عمومی پرسید (سرمایه‌گذاری، ترید، وام، بیکاری، معرفی شغل در شهر، کار در خانه، ایده درآمدی): وارد کارت شغلی نشو. در حالت SHORT MODE پاسخ بده.\n3) SHORT MODE: حداکثر 6 خط بولت. حداکثر 1 سوال شفاف‌سازی. بدون متن طولانی، بدون مزایا/معایب کلی.\n4) اگر کاربر گفت «از فالوورها بپرس»: فقط یک متن خیلی کوتاه برای استوری/پست بده که این موارد را بپرسد: عنوان شغل، شهر، درآمد ماهانه، سابقه، ساعت کار، سرمایه اولیه. سپس دعوت به ارسال تجربه شخصی.\n5) مدیریت توکن: هرگز لیست طولانی تولید نکن. اگر تجربه‌ها زیاد بود فقط 5 مورد اول را خلاصه کن و بگو «برای ادامه از دکمه نمایش بیشتر استفاده کنید».\n6) پاسخ‌ها فارسی، ساده، کاربرپسند، با اقدام عملی آخر.\n\nفرمت خروجی:\n- همیشه بولت‌دار\n- اگر داده کم است: یک خط هشدار کوتاه\n- از تکرار خودداری کن",
             'model'          => '',
             'session_id'     => '',
             'user_id'        => 0,
