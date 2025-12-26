@@ -14,8 +14,6 @@ if ( ! defined( 'ABSPATH' ) ) {
 // BKJA enhanced includes
 require_once plugin_dir_path(__FILE__) . 'includes/logging.php';
 require_once plugin_dir_path(__FILE__) . 'includes/helpers.php';
-require_once plugin_dir_path(__FILE__) . 'includes/BKJA_RuleEngine.php';
-require_once plugin_dir_path(__FILE__) . 'includes/BKJA_State.php';
 require_once plugin_dir_path(__FILE__) . 'includes/class-bkja-parser.php';
 require_once plugin_dir_path(__FILE__) . 'admin/settings.php';
 require_once plugin_dir_path(__FILE__) . 'admin/github-issue-reporter.php';

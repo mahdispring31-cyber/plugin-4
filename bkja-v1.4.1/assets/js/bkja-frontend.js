@@ -925,29 +925,111 @@
         function renderFollowupButtons(items, meta){
             removeFollowups();
             meta = meta || {};
-            var buttons = Array.isArray(items) ? items : [];
-            if(!buttons.length){
+            var hasJobContext = !!(((meta && meta.job_title && String(meta.job_title).trim()) || (lastKnownJobTitle && lastKnownJobTitle.trim())));
+            if(!hasJobContext){
                 return [];
             }
-
-            var signature = buttons.map(function(btn){ return btn && btn.id ? String(btn.id) : ''; }).join('|');
+            var clarificationOptions = Array.isArray(meta.clarification_options) ? meta.clarification_options.slice(0,3) : [];
+            var signature = hasJobContext ? String(meta.job_title) + '|' + clarificationOptions.map(function(opt){ return opt && opt.label ? opt.label : String(opt||''); }).join('|') : '';
             if(signature && signature === lastFollowupSignature){
                 return [];
             }
 
-            var $wrap = $('<div class="bkja-followups" role="group"></div>');
-            buttons.forEach(function(btn){
-                if(!btn){ return; }
-                var label = $.trim(String(btn.label || ''));
-                if(!label){ return; }
-                var btnId = btn.id ? String(btn.id) : '';
-                var $btn = $('<button type="button" class="bkja-followup-btn" role="listitem"></button>');
-                $btn.text(label);
-                if(btnId){
-                    $btn.attr('data-followup-action', btnId);
+            var expCount = null;
+            if(typeof meta.job_report_count !== 'undefined' && meta.job_report_count !== null){
+                var parsedCount = parseInt(meta.job_report_count, 10);
+                if(!isNaN(parsedCount)){
+                    expCount = parsedCount;
                 }
-                $wrap.append($btn);
-            });
+            }
+            var lowData = expCount !== null && expCount >= 0 && expCount < 3;
+            var hasAmbiguity = clarificationOptions.length > 0 || (meta.resolved_confidence && meta.resolved_confidence < 0.55);
+            var queryIntent = meta.query_intent || '';
+            var generalIntents = ['general_exploratory', 'general_high_income', 'compare', 'invest_idea', 'open_question'];
+            var isGeneral = !hasJobContext || generalIntents.indexOf(String(queryIntent)) !== -1;
+            var isIncomeWithEnoughData = queryIntent === 'job_income' && !hasAmbiguity && !lowData;
+            if(isIncomeWithEnoughData){
+                return [];
+            }
+
+            var shouldShow = hasAmbiguity || lowData || isGeneral;
+            if(!shouldShow){
+                return [];
+            }
+
+            var suggestions = sanitizeSuggestions(items, meta);
+            if(!suggestions.length){
+                suggestions = sanitizeSuggestions(['مقایسه با شغل مشابه', 'مسیر رشد درآمد در همین شغل', 'دیدن تجربه‌های مرتبط'], meta);
+            }
+
+            var $wrap = $('<div class="bkja-followups" role="group"></div>');
+            var followupJobTitle = (meta.job_title && String(meta.job_title).trim()) ? String(meta.job_title).trim() : (lastKnownJobTitle && lastKnownJobTitle.trim() ? String(lastKnownJobTitle).trim() : '');
+            var followupJobTitleId = meta.job_title_id ? String(meta.job_title_id) : (lastKnownJobTitleId ? String(lastKnownJobTitleId) : '');
+            var nextOffset = (typeof meta.next_offset !== 'undefined' && meta.next_offset !== null) ? meta.next_offset : meta.records_next_offset;
+            var hasMoreRecords = false;
+            if(typeof meta.has_more !== 'undefined' && meta.has_more !== null){
+                hasMoreRecords = !!meta.has_more;
+            } else if(typeof meta.records_has_more !== 'undefined' && meta.records_has_more !== null){
+                hasMoreRecords = !!meta.records_has_more;
+            }
+
+            if(hasAmbiguity){
+                clarificationOptions.forEach(function(opt){
+                    if(opt === null || opt === undefined){ return; }
+                    var label = '';
+                    if(typeof opt === 'object'){
+                        label = opt.label || opt.job_title || '';
+                    } else {
+                        label = String(opt);
+                    }
+                    label = $.trim(String(label || ''));
+                    if(!label){ return; }
+                    var $btnOpt = $('<button type="button" class="bkja-followup-btn" role="listitem"></button>');
+                    $btnOpt.text(label);
+                    $btnOpt.attr('data-message', label);
+                    $btnOpt.attr('data-job-title', followupJobTitle);
+                    $btnOpt.attr('data-job-title-id', followupJobTitleId);
+                    if(opt && typeof opt === 'object'){
+                        if(opt.group_key){ $btnOpt.attr('data-group-key', String(opt.group_key)); }
+                        if(opt.slug){ $btnOpt.attr('data-job-slug', String(opt.slug)); }
+                    }
+                    $wrap.append($btnOpt);
+                });
+            }
+
+            if(!hasAmbiguity){
+                suggestions.forEach(function(entry){
+                    if(entry === null || entry === undefined){ return; }
+                    var label = '';
+                    var action = '';
+                    var offsetVal = null;
+                    if(typeof entry === 'object'){
+                        label = entry.label || entry.action || '';
+                        action = entry.action || entry.label || '';
+                        if(entry.offset !== undefined){ offsetVal = entry.offset; }
+                    } else {
+                        label = String(entry);
+                        action = label;
+                    }
+                    var clean = $.trim(String(label || ''));
+                    if(!clean){ return; }
+                    var $btn = $('<button type="button" class="bkja-followup-btn" role="listitem"></button>');
+                    $btn.text(clean);
+                    $btn.attr('data-message', clean);
+                    $btn.attr('data-followup-action', action || clean);
+                    $btn.attr('data-job-title', followupJobTitle);
+                    $btn.attr('data-job-title-id', followupJobTitleId);
+                    if(hasJobContext){
+                        if(meta.job_slug){ $btn.attr('data-job-slug', String(meta.job_slug)); }
+                        if(meta.group_key){ $btn.attr('data-group-key', String(meta.group_key)); }
+                    }
+                    var offsetToUse = (offsetVal !== null && offsetVal !== undefined) ? offsetVal : nextOffset;
+                    if(clean.indexOf('نمایش بیشتر') !== -1 && hasMoreRecords && typeof offsetToUse !== 'undefined'){
+                        $btn.attr('data-offset', offsetToUse);
+                    }
+                    $wrap.append($btn);
+                });
+            }
 
             if(!$wrap.children().length){
                 return [];
@@ -955,9 +1037,10 @@
 
             $messages.append($wrap);
             $messages.scrollTop($messages.prop('scrollHeight'));
-            lastFollowupSignature = signature;
-            return buttons;
+            lastFollowupSignature = signature || (hasJobContext ? String(meta.job_title) : '');
+            return [];
         }
+
         // Delegated click handler for dynamically-rendered followup buttons
         document.addEventListener('click', function(e){
             var target = e.target || e.srcElement;
@@ -1030,6 +1113,12 @@
                         opts.offset = parsedOffset;
                     }
                 }
+            }
+
+            var resolvedJobTitleFinal = resolvedJobTitle || '';
+            if(!resolvedJobTitleFinal || !String(resolvedJobTitleFinal).trim()){
+                addSystemMessage('برای استفاده از این گزینه، اول یک کارت شغلی را باز کنید.');
+                return;
             }
 
             if(typeof window.dispatchUserMessage === 'function'){
@@ -1674,7 +1763,6 @@
                         }
                         var reply = res.data.reply || '';
                         var suggestions = Array.isArray(res.data.suggestions) ? res.data.suggestions : [];
-                        var buttons = Array.isArray(res.data.buttons) ? res.data.buttons : [];
                         var fromCache = !!res.data.from_cache;
                         var meta = res.data.meta || {};
                         var cards = Array.isArray(res.data.cards) ? res.data.cards : [];
@@ -1688,7 +1776,7 @@
                         var renderCard = function(card){
                             var cardMeta = card && card.meta ? card.meta : meta;
                             var cardText = card && typeof card.text === "string" ? card.text : reply;
-                            var cardButtons = Array.isArray(card && card.buttons) ? card.buttons : buttons;
+                            var cardFollowups = Array.isArray(card && card.followups) ? card.followups : suggestions;
 
                             if(cardMeta && typeof cardMeta === "object"){
                                 lastReplyMeta = cardMeta;
@@ -1711,7 +1799,7 @@
                                         }
                                     }
 
-                                    var finalSuggestions = renderFollowupButtons(cardButtons, cardMeta);
+                                    var finalSuggestions = renderFollowupButtons(cardFollowups, cardMeta);
                                     var highlightFeedback = !!opts.highlightFeedback || finalSuggestions.length === 0;
                                     if(feedbackEnabled && cardText && cardText.length){
                                         attachFeedbackControls($bubble, cardMeta, contextMessage, cardText, { highlight: highlightFeedback });
@@ -1726,7 +1814,7 @@
                                 renderCard(card);
                             });
                         } else {
-                            renderCard({ text: reply, meta: meta, buttons: buttons });
+                            renderCard({ text: reply, meta: meta, followups: suggestions });
                         }
                     } else {
                         pushBot('خطا در پاسخ');
