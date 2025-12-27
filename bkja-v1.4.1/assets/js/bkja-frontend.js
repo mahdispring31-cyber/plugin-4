@@ -2225,6 +2225,15 @@
                     }
                     html += '<div class="bkja-job-summary-note">' + noteParts.join('<br>') + '</div>';
 
+                    var qualityScore = (typeof s.quality_score !== 'undefined' && s.quality_score !== null) ? parseInt(s.quality_score, 10) : null;
+                    var qualityLabel = s.quality_label ? String(s.quality_label) : '';
+                    if (qualityScore !== null && !isNaN(qualityScore)) {
+                        html += '<div class="bkja-job-quality-badge">🧪 کیفیت داده: ' + esc(qualityLabel || 'نامشخص') + ' (' + esc(qualityScore) + '/100)</div>';
+                    }
+                    if (s.count_reports && parseInt(s.count_reports, 10) === 1) {
+                        html += '<div class="bkja-job-quality-warning">⚠️ داده محدود است (1 تجربه)؛ اعداد تقریبی‌اند.</div>';
+                    }
+
                     var singleIncome = incomeValidCount === 1;
                     var incomeUnitGuessed = !!s.income_unit_guessed;
                     var incomeCompositeCount = s.income_composite_count ? parseInt(s.income_composite_count, 10) : 0;
@@ -2258,6 +2267,21 @@
                         if(incomeText){
                             html += '<p>💵 درآمد ماهانه کاربران: ' + incomeText + '</p>';
                         }
+                    }
+
+                    if (s.income_has_outliers) {
+                        html += '<div class="bkja-job-summary-note bkja-income-outlier-warning">⚠️ برخی گزارش‌ها خارج از محدوده معمول هستند و در میانگین اثر داده نشده‌اند.</div>';
+                    }
+
+                    if (s.income_variance_reasons && s.income_variance_reasons.length) {
+                        html += '<details class="bkja-income-variance-details">';
+                        html += '<summary>🔎 چرا اختلاف درآمد دیده می‌شود؟</summary>';
+                        html += '<ul>';
+                        s.income_variance_reasons.forEach(function(reason){
+                            html += '<li>' + esc(reason) + '</li>';
+                        });
+                        html += '</ul>';
+                        html += '</details>';
                     }
 
                     if(incomeCompositeCount > 0){
