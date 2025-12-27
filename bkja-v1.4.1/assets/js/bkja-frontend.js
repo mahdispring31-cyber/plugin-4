@@ -2225,9 +2225,27 @@
                     }
                     html += '<div class="bkja-job-summary-note">' + noteParts.join('<br>') + '</div>';
 
+                    var qualityScore = (typeof s.quality_score !== 'undefined' && s.quality_score !== null) ? parseInt(s.quality_score, 10) : null;
+                    var qualityLabel = s.quality_label ? String(s.quality_label) : '';
+                    var isLimitedSample = s.count_reports && parseInt(s.count_reports, 10) < 3;
+                    if (qualityScore !== null && !isNaN(qualityScore)) {
+                        var qualitySuffix = isLimitedSample ? ' – داده بسیار محدود' : '';
+                        html += '<div class="bkja-job-quality-badge">🧪 کیفیت داده: ' + esc(qualityLabel || 'نامشخص') + ' (' + esc(qualityScore) + '/100' + esc(qualitySuffix) + ')</div>';
+                    }
+                    if (s.count_reports && parseInt(s.count_reports, 10) === 1) {
+                        html += '<div class="bkja-job-quality-warning">⚠️ داده محدود است (1 تجربه)؛ اعداد تقریبی‌اند.</div>';
+                    }
+
                     var singleIncome = incomeValidCount === 1;
                     var incomeUnitGuessed = !!s.income_unit_guessed;
                     var incomeCompositeCount = s.income_composite_count ? parseInt(s.income_composite_count, 10) : 0;
+                    var singleSampleHighIncome = !!s.income_single_sample_high;
+
+                    if (singleSampleHighIncome) {
+                        html += '<div class="bkja-job-summary-note bkja-income-outlier-warning">⚠️ این عدد از یک تجربه منفرد گزارش شده و قابل تعمیم نیست.</div>';
+                    } else if (s.income_has_outliers) {
+                        html += '<div class="bkja-job-summary-note bkja-income-outlier-warning">⚠️ برخی گزارش‌ها خارج از محدوده معمول هستند و در میانگین اثر داده نشده‌اند.</div>';
+                    }
 
                     if(totalRecords > 0 && incomeValidCount <= 0){
                         html += '<p>💵 درآمد ماهانه: داده کافی برای عدد دقیق نداریم.</p>';
@@ -2242,6 +2260,9 @@
                         }
                         if(singleIncome && avgIncomeLabel){
                             incomeText += ' (تنها 1 گزارش معتبر)';
+                        }
+                        if(singleSampleHighIncome && avgIncomeLabel){
+                            incomeText += ' (غیرقابل تعمیم)';
                         }
                         if(incomeUnitGuessed && avgIncomeLabel){
                             incomeText += ' (واحد از متن حدس زده شده)';
@@ -2258,6 +2279,17 @@
                         if(incomeText){
                             html += '<p>💵 درآمد ماهانه کاربران: ' + incomeText + '</p>';
                         }
+                    }
+
+                    if (s.income_variance_reasons && s.income_variance_reasons.length) {
+                        html += '<details class="bkja-income-variance-details">';
+                        html += '<summary>🔎 چرا اختلاف درآمد دیده می‌شود؟</summary>';
+                        html += '<ul>';
+                        s.income_variance_reasons.forEach(function(reason){
+                            html += '<li>' + esc(reason) + '</li>';
+                        });
+                        html += '</ul>';
+                        html += '</details>';
                     }
 
                     if(incomeCompositeCount > 0){

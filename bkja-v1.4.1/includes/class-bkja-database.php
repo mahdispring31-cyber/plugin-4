@@ -2058,6 +2058,21 @@ class BKJA_Database {
             return call_user_func_array( array( $wpdb, 'prepare' ), $params );
         };
 
+        $cache_enabled = (bool) get_option( 'bkja_enable_cache', false );
+        $cache_key     = '';
+        if ( $cache_enabled ) {
+            $cache_payload = array(
+                'context'       => $context,
+                'filters'       => $filters,
+                'window_months' => $window_months,
+            );
+            $cache_key = 'bkja_summary_' . md5( wp_json_encode( $cache_payload ) );
+            $cached    = get_transient( $cache_key );
+            if ( is_array( $cached ) ) {
+                return $cached;
+            }
+        }
+
         $latest_at = $wpdb->get_var( $prepare_with_params( "SELECT MAX(j.created_at) FROM {$table} j WHERE {$where_clause}" ) );
         $total_reports = (int) $wpdb->get_var( $prepare_with_params( "SELECT COUNT(*) FROM {$table} j WHERE {$where_clause}" ) );
 
@@ -2120,6 +2135,13 @@ class BKJA_Database {
         $hours_count    = 0;
         $sum_days       = 0;
         $days_count     = 0;
+        $experience_buckets = array(
+            '0-1'     => 0,
+            '1-3'     => 0,
+            '3-7'     => 0,
+            '7+'      => 0,
+            'unknown' => 0,
+        );
 
         $is_ambiguous_outlier = function( $value, $text = '' ) {
             if ( ! $value || $value <= 0 ) {
@@ -2226,6 +2248,23 @@ class BKJA_Database {
                             }
                         }
                     }
+                } elseif ( '' !== $income_text && class_exists( 'BKJA_Analytics' ) ) {
+                    $normalized_income = BKJA_Analytics::normalize_income_value( $income_text );
+                    if ( 'ok' === $normalized_income['status'] && ! empty( $normalized_income['value_toman'] ) ) {
+                        $normalized_value = $normalize_value( $normalized_income['value_toman'] );
+                        if ( $normalized_value && ! $is_ambiguous_outlier( $normalized_value, $income_text ) ) {
+                            $income_values[] = $normalized_value;
+                            $income_valid_count++;
+                        } else {
+                            $income_invalid_count++;
+                        }
+                        if ( ! empty( $normalized_income['min_toman'] ) ) {
+                            $income_range_mins[] = $normalize_value( $normalized_income['min_toman'] );
+                        }
+                        if ( ! empty( $normalized_income['max_toman'] ) ) {
+                            $income_range_maxes[] = $normalize_value( $normalized_income['max_toman'] );
+                        }
+                    }
                 }
             }
 
@@ -2257,6 +2296,18 @@ class BKJA_Database {
             if ( isset( $srow->experience_years ) && (int) $srow->experience_years > 0 ) {
                 $sum_experience += (int) $srow->experience_years;
                 $exp_count++;
+                $exp_years = (int) $srow->experience_years;
+                if ( $exp_years <= 1 ) {
+                    $experience_buckets['0-1']++;
+                } elseif ( $exp_years <= 3 ) {
+                    $experience_buckets['1-3']++;
+                } elseif ( $exp_years <= 7 ) {
+                    $experience_buckets['3-7']++;
+                } else {
+                    $experience_buckets['7+']++;
+                }
+            } else {
+                $experience_buckets['unknown']++;
             }
             if ( isset( $srow->hours_per_day ) && (int) $srow->hours_per_day > 0 ) {
                 $sum_hours += (int) $srow->hours_per_day;
@@ -2334,6 +2385,9 @@ class BKJA_Database {
         $iqr_result        = $detect_iqr_outliers( $income_values );
         $income_filtered   = $iqr_result['values'];
         $income_used       = count( $income_filtered );
+        $outlier_info      = class_exists( 'BKJA_Analytics' ) ? BKJA_Analytics::detect_outliers( $income_values ) : array( 'outliers' => array(), 'has_outliers' => false, 'method' => 'none' );
+        $income_outliers   = isset( $outlier_info['outliers'] ) ? array_values( $outlier_info['outliers'] ) : array();
+        $income_has_outliers = ! empty( $income_outliers );
 
         $calc_median = function( $values ) {
             $values = array_filter( $values, function( $v ) { return is_numeric( $v ) && $v > 0; } );
@@ -2444,6 +2498,33 @@ class BKJA_Database {
             )
         );
 
+        $city_breakdown_rows = $wpdb->get_results(
+            $prepare_with_params(
+                "SELECT city, COUNT(*) AS c FROM {$table} j WHERE {$where_clause} AND city <> '' GROUP BY city ORDER BY c DESC, city ASC LIMIT 10"
+            )
+        );
+        $city_breakdown = array();
+        foreach ( $city_breakdown_rows as $row ) {
+            $city_breakdown[] = array(
+                'city'  => (string) $row->city,
+                'count' => (int) $row->c,
+            );
+        }
+
+        $employment_breakdown_rows = $wpdb->get_results(
+            $prepare_with_params(
+                "SELECT employment_type, COUNT(*) AS c FROM {$table} j WHERE {$where_clause} AND employment_type IS NOT NULL AND employment_type <> '' GROUP BY employment_type ORDER BY c DESC, employment_type ASC"
+            )
+        );
+        $employment_breakdown = array();
+        foreach ( $employment_breakdown_rows as $row ) {
+            $type = isset( $row->employment_type ) ? (string) $row->employment_type : '';
+            $employment_breakdown[] = array(
+                'type'  => $type ? ( function_exists( 'bkja_get_employment_label' ) ? bkja_get_employment_label( $type ) : $type ) : 'نامشخص',
+                'count' => (int) $row->c,
+            );
+        }
+
         $adv_rows = $wpdb->get_col(
             $prepare_with_params(
                 "SELECT advantages FROM {$table} j WHERE {$where_clause} AND advantages IS NOT NULL AND advantages <> '' ORDER BY created_at DESC LIMIT 50"
@@ -2536,6 +2617,190 @@ class BKJA_Database {
             }
         }
 
+        $experience_total = $total_records > 0 ? $total_records : 0;
+        $experience_known = $exp_count;
+        $city_known = (int) $wpdb->get_var(
+            $prepare_with_params(
+                "SELECT COUNT(*) FROM {$table} j WHERE {$where_clause} AND city <> ''"
+            )
+        );
+        $employment_known = (int) $wpdb->get_var(
+            $prepare_with_params(
+                "SELECT COUNT(*) FROM {$table} j WHERE {$where_clause} AND employment_type IS NOT NULL AND employment_type <> ''"
+            )
+        );
+
+        $quality_notes = array();
+        $quality_score = 100;
+
+        if ( $total_reports < 3 ) {
+            $quality_score -= 40;
+            $quality_notes[] = 'نمونه کم';
+        } elseif ( $total_reports < 10 ) {
+            $quality_score -= 20;
+            $quality_notes[] = 'نمونه کم';
+        } elseif ( $total_reports < 20 ) {
+            $quality_score -= 10;
+        }
+
+        if ( $latest_at ) {
+            $latest_ts = strtotime( $latest_at );
+            if ( $latest_ts ) {
+                $age_days = ( time() - $latest_ts ) / DAY_IN_SECONDS;
+                if ( $age_days > 365 ) {
+                    $quality_score -= 20;
+                    $quality_notes[] = 'داده قدیمی';
+                } elseif ( $age_days > 180 ) {
+                    $quality_score -= 10;
+                    $quality_notes[] = 'داده قدیمی';
+                }
+            }
+        }
+
+        if ( $experience_total > 0 ) {
+            $city_ratio = $city_known / $experience_total;
+            if ( $city_ratio < 0.3 ) {
+                $quality_score -= 15;
+                $quality_notes[] = 'شهر نامشخص';
+            } elseif ( $city_ratio < 0.6 ) {
+                $quality_score -= 8;
+                $quality_notes[] = 'شهر نامشخص';
+            }
+
+            $exp_ratio = $experience_known / $experience_total;
+            if ( $exp_ratio < 0.3 ) {
+                $quality_score -= 15;
+                $quality_notes[] = 'سابقه نامشخص';
+            } elseif ( $exp_ratio < 0.6 ) {
+                $quality_score -= 8;
+                $quality_notes[] = 'سابقه نامشخص';
+            }
+
+            $employment_ratio = $employment_known / $experience_total;
+            if ( $employment_ratio < 0.3 ) {
+                $quality_score -= 15;
+                $quality_notes[] = 'نوع اشتغال نامشخص';
+            } elseif ( $employment_ratio < 0.6 ) {
+                $quality_score -= 8;
+                $quality_notes[] = 'نوع اشتغال نامشخص';
+            }
+        }
+
+        if ( $income_has_outliers ) {
+            $quality_score -= 10;
+            $quality_notes[] = 'وجود پرت';
+        }
+
+        $quality_score = max( 0, min( 100, (int) round( $quality_score ) ) );
+        $quality_notes = array_values( array_unique( $quality_notes ) );
+        if ( $quality_score >= 80 ) {
+            $quality_label = 'عالی';
+        } elseif ( $quality_score >= 60 ) {
+            $quality_label = 'خوب';
+        } elseif ( $quality_score >= 40 ) {
+            $quality_label = 'متوسط';
+        } else {
+            $quality_label = 'ضعیف';
+        }
+
+        $single_sample_high_income = false;
+        if ( 1 === $total_reports && $avg_income && $avg_income >= 120000000 ) {
+            $single_sample_high_income = true;
+            $quality_notes[] = 'گزارش تک‌نمونه‌ای با احتمال اغراق یا شرایط خاص';
+        }
+
+        if ( $total_reports < 3 ) {
+            $quality_label = 'ضعیف';
+            $quality_notes[] = 'این امتیاز بر اساس داده بسیار محدود محاسبه شده است';
+        }
+
+        $quality_notes = array_values( array_unique( $quality_notes ) );
+
+        $income_variance_reasons = array();
+        $variance_detected = false;
+        if ( $income_used >= 4 ) {
+            $p25 = $quantile( $income_filtered, 0.25 );
+            $p75 = $quantile( $income_filtered, 0.75 );
+            $median_for_variance = $median_income ? $median_income : $calc_median( $income_filtered );
+            $iqr = ( $p75 && $p25 ) ? ( $p75 - $p25 ) : null;
+            $mean_for_variance = $calc_avg( $income_filtered );
+            $stddev = null;
+            if ( $mean_for_variance ) {
+                $variance_sum = 0.0;
+                foreach ( $income_filtered as $val ) {
+                    $variance_sum += pow( ( $val - $mean_for_variance ), 2 );
+                }
+                $stddev = sqrt( $variance_sum / count( $income_filtered ) );
+            }
+            $cv = ( $stddev && $mean_for_variance ) ? ( $stddev / $mean_for_variance ) : null;
+            if ( $iqr && $median_for_variance && ( $iqr / $median_for_variance ) > 0.5 ) {
+                $variance_detected = true;
+            } elseif ( $cv && $cv > 0.35 ) {
+                $variance_detected = true;
+            }
+        }
+
+        if ( $variance_detected ) {
+            if ( count( $employment_breakdown ) > 1 ) {
+                $income_variance_reasons[] = 'نوع استخدام متفاوت است.';
+            }
+            if ( count( $city_breakdown ) > 1 ) {
+                $income_variance_reasons[] = 'شهر و هزینه‌های زندگی متفاوت است.';
+            }
+            $bucket_keys = array_filter( $experience_buckets, function( $count ) { return $count > 0; } );
+            if ( count( $bucket_keys ) > 1 ) {
+                $income_variance_reasons[] = 'سابقه و سطح مهارت متفاوت است.';
+            }
+            if ( $hours_count > 0 || $days_count > 0 ) {
+                $hour_values = array();
+                $day_values  = array();
+                foreach ( $stat_rows as $srow ) {
+                    if ( isset( $srow->hours_per_day ) && (int) $srow->hours_per_day > 0 ) {
+                        $hour_values[] = (int) $srow->hours_per_day;
+                    }
+                    if ( isset( $srow->days_per_week ) && (int) $srow->days_per_week > 0 ) {
+                        $day_values[] = (int) $srow->days_per_week;
+                    }
+                }
+                if ( ! empty( $hour_values ) && ( max( $hour_values ) - min( $hour_values ) ) >= 4 ) {
+                    $income_variance_reasons[] = 'شیفت و اضافه‌کاری متفاوت است.';
+                } elseif ( ! empty( $day_values ) && ( max( $day_values ) - min( $day_values ) ) >= 3 ) {
+                    $income_variance_reasons[] = 'شیفت و اضافه‌کاری متفاوت است.';
+                }
+            }
+            if ( $income_composite_count > 0 ) {
+                $income_variance_reasons[] = 'برخی گزارش‌ها شامل فعالیت جانبی/کار آزاد است.';
+            }
+            $project_keywords = array( 'آزاد', 'پروژه', 'خوداشتغال' );
+            $has_project_employment = false;
+            foreach ( $employment_breakdown as $employment_row ) {
+                $label = isset( $employment_row['type'] ) ? (string) $employment_row['type'] : '';
+                foreach ( $project_keywords as $keyword ) {
+                    if ( $label && false !== mb_stripos( $label, $keyword, 0, 'UTF-8' ) ) {
+                        $has_project_employment = true;
+                        break 2;
+                    }
+                }
+            }
+            if ( ! $has_project_employment && $dominant_employment_type ) {
+                $project_types = array( 'self_employed', 'freelance', 'contract' );
+                if ( in_array( $dominant_employment_type, $project_types, true ) ) {
+                    $has_project_employment = true;
+                }
+            }
+            if ( $has_project_employment ) {
+                $project_reason = 'درآمد این شغل به‌شدت وابسته به پروژه، زمان‌بندی و شرایط بازار است.';
+                if ( $total_reports < 3 ) {
+                    array_unshift( $income_variance_reasons, $project_reason );
+                } else {
+                    $income_variance_reasons[] = $project_reason;
+                }
+            }
+            if ( empty( $income_variance_reasons ) ) {
+                $income_variance_reasons[] = 'سابقه و سطح مهارت متفاوت است.';
+            }
+        }
+
         if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
             error_log(
                 'BKJA summary stats (toman) => avg_income: ' . print_r( $avg_income, true ) .
@@ -2549,7 +2814,7 @@ class BKJA_Database {
             return $value ? bkja_format_toman_as_million_label( $value ) : null;
         };
 
-        return array(
+        $summary = array(
             'job_title'         => $job_title,
             'job_title_id'      => $job_title_id,
             'job_title_label'   => $job_label ?: $job_title,
@@ -2598,7 +2863,24 @@ class BKJA_Database {
             'dominant_employment_label' => $dominant_employment_type ? bkja_get_employment_label( $dominant_employment_type ) : null,
             'gender_summary'    => $gender_summary,
             'window_months'     => $window_months,
+            'city_breakdown'    => $city_breakdown,
+            'employment_breakdown' => $employment_breakdown,
+            'experience_buckets' => $experience_buckets,
+            'income_has_outliers' => (bool) $income_has_outliers,
+            'income_outlier_count' => (int) count( $income_outliers ),
+            'income_outlier_examples' => array_slice( $income_outliers, 0, 3 ),
+            'income_single_sample_high' => (bool) $single_sample_high_income,
+            'quality_score'     => $quality_score,
+            'quality_label'     => $quality_label,
+            'quality_notes'     => $quality_notes,
+            'income_variance_reasons' => $income_variance_reasons,
         );
+
+        if ( $cache_enabled && $cache_key ) {
+            set_transient( $cache_key, $summary, 15 * MINUTE_IN_SECONDS );
+        }
+
+        return $summary;
     }
 
     /**
