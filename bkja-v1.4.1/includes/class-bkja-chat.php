@@ -2155,6 +2155,16 @@ class BKJA_Chat {
         return false;
     }
 
+    protected static function is_followup_reference( $message ) {
+        $text = is_string( $message ) ? trim( $message ) : '';
+        if ( '' === $text ) {
+            return false;
+        }
+
+        $lower = function_exists( 'mb_strtolower' ) ? mb_strtolower( $text, 'UTF-8' ) : strtolower( $text );
+        return (bool) preg_match( '/(?:این|همین|اون|آن|همون|شغل(?:ش)?|کار(?:ش)?|درآمدش|حقوقش|سرمایه(?:‌|)ش|بازارش|شرایطش|معایبش|مزایاش|چالش(?:‌|)هاش)/u', $lower );
+    }
+
     protected static function get_last_job_context( $session_id, $user_id ) {
         $session_id = is_string( $session_id ) ? trim( $session_id ) : '';
         $user_id    = (int) $user_id;
@@ -2615,9 +2625,14 @@ class BKJA_Chat {
         $normalized_action = self::normalize_message( $followup_action );
         $is_followup_action = '' !== $normalized_action;
 
-        $normalized_message = self::normalize_message( $message );
-        $is_followup_only   = self::is_followup_message( $normalized_message );
-        $pre_intent         = self::detect_query_intent( $normalized_message, array() );
+        $normalized_message  = self::normalize_message( $message );
+        $is_followup_only    = self::is_followup_message( $normalized_message );
+        $pre_intent          = self::detect_query_intent( $normalized_message, array() );
+        $followup_reference  = self::is_followup_reference( $normalized_message );
+        $broad_intent_types  = array( 'job_suggestion', 'home_business', 'capital_query', 'income_query', 'personality_advice', 'learning_path' );
+        if ( $is_followup_only && ! $followup_reference && in_array( $pre_intent, $broad_intent_types, true ) ) {
+            $is_followup_only = false;
+        }
 
         if ( $job_title_id <= 0 && ! $is_followup_action && $is_followup_only ) {
             $recent_job_id = self::get_last_job_context( $args['session_id'], (int) $args['user_id'] );
