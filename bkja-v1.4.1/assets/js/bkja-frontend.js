@@ -2228,15 +2228,27 @@
                     var qualityScore = (typeof s.quality_score !== 'undefined' && s.quality_score !== null) ? parseInt(s.quality_score, 10) : null;
                     var qualityLabel = s.quality_label ? String(s.quality_label) : '';
                     if (qualityScore !== null && !isNaN(qualityScore)) {
-                        html += '<div class="bkja-job-quality-badge">🧪 کیفیت داده: ' + esc(qualityLabel || 'نامشخص') + ' (' + esc(qualityScore) + '/100)</div>';
-                    }
-                    if (s.count_reports && parseInt(s.count_reports, 10) === 1) {
-                        html += '<div class="bkja-job-quality-warning">⚠️ داده محدود است (1 تجربه)؛ اعداد تقریبی‌اند.</div>';
+                        var qualitySuffix = lowExperienceData ? ' – داده بسیار محدود' : '';
+                        html += '<div class="bkja-job-quality-badge">🧪 کیفیت داده: ' + esc(qualityLabel || 'نامشخص') + ' (' + esc(qualityScore) + '/100' + qualitySuffix + ')</div>';
                     }
 
                     var singleIncome = incomeValidCount === 1;
                     var incomeUnitGuessed = !!s.income_unit_guessed;
                     var incomeCompositeCount = s.income_composite_count ? parseInt(s.income_composite_count, 10) : 0;
+                    var highIncomeThreshold = 150000000;
+                    var avgIncomeValue = s.avg_income ? parseFloat(s.avg_income) : null;
+                    var singleSampleHighIncome = (experienceCount === 1 && incomeValidCount === 1 && avgIncomeValue && avgIncomeValue >= highIncomeThreshold);
+
+                    var preIncomeWarnings = [];
+                    if (singleSampleHighIncome) {
+                        preIncomeWarnings.push('⚠️ این عدد از یک تجربه منفرد گزارش شده و قابل تعمیم نیست');
+                    }
+                    if (s.income_has_outliers) {
+                        preIncomeWarnings.push('⚠️ برخی گزارش‌ها خارج از محدوده معمول هستند و در میانگین اثر داده نشده‌اند.');
+                    }
+                    if (preIncomeWarnings.length) {
+                        html += '<div class="bkja-job-summary-note bkja-income-outlier-warning">' + preIncomeWarnings.map(esc).join('<br>') + '</div>';
+                    }
 
                     if(totalRecords > 0 && incomeValidCount <= 0){
                         html += '<p>💵 درآمد ماهانه: داده کافی برای عدد دقیق نداریم.</p>';
@@ -2251,6 +2263,9 @@
                         }
                         if(singleIncome && avgIncomeLabel){
                             incomeText += ' (تنها 1 گزارش معتبر)';
+                        }
+                        if(singleSampleHighIncome && avgIncomeLabel){
+                            incomeText += ' (غیرقابل تعمیم)';
                         }
                         if(incomeUnitGuessed && avgIncomeLabel){
                             incomeText += ' (واحد از متن حدس زده شده)';
@@ -2267,10 +2282,6 @@
                         if(incomeText){
                             html += '<p>💵 درآمد ماهانه کاربران: ' + incomeText + '</p>';
                         }
-                    }
-
-                    if (s.income_has_outliers) {
-                        html += '<div class="bkja-job-summary-note bkja-income-outlier-warning">⚠️ برخی گزارش‌ها خارج از محدوده معمول هستند و در میانگین اثر داده نشده‌اند.</div>';
                     }
 
                     if (s.income_variance_reasons && s.income_variance_reasons.length) {
