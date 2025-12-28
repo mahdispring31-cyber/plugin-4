@@ -2630,12 +2630,19 @@ class BKJA_Database {
             )
         );
 
+        $single_sample_high_income = false;
+        $high_income_threshold = 150000000;
+        if ( 1 === (int) $total_reports && 1 === (int) $income_valid_count && $avg_income && $avg_income >= $high_income_threshold ) {
+            $single_sample_high_income = true;
+        }
+
         $quality_notes = array();
         $quality_score = 100;
 
         if ( $total_reports < 3 ) {
             $quality_score -= 40;
             $quality_notes[] = 'نمونه کم';
+            $quality_notes[] = 'این امتیاز بر اساس داده بسیار محدود محاسبه شده است';
         } elseif ( $total_reports < 10 ) {
             $quality_score -= 20;
             $quality_notes[] = 'نمونه کم';
@@ -2691,6 +2698,10 @@ class BKJA_Database {
             $quality_notes[] = 'وجود پرت';
         }
 
+        if ( $single_sample_high_income ) {
+            $quality_notes[] = 'گزارش تک‌نمونه‌ای با احتمال اغراق یا شرایط خاص';
+        }
+
         $quality_score = max( 0, min( 100, (int) round( $quality_score ) ) );
         $quality_notes = array_values( array_unique( $quality_notes ) );
         if ( $quality_score >= 80 ) {
@@ -2701,6 +2712,38 @@ class BKJA_Database {
             $quality_label = 'متوسط';
         } else {
             $quality_label = 'ضعیف';
+        }
+        if ( $total_reports < 3 ) {
+            $quality_label = 'ضعیف';
+        }
+
+        $project_based_employment = false;
+        $project_based_keywords = array( 'آزاد', 'پروژه', 'خوداشتغال', 'فریلنسر' );
+        if ( $dominant_employment_type && in_array( $dominant_employment_type, array( 'self_employed', 'freelance' ), true ) ) {
+            $project_based_employment = true;
+        }
+        if ( ! $project_based_employment && function_exists( 'bkja_get_employment_label' ) && $dominant_employment_type ) {
+            $dominant_label = bkja_get_employment_label( $dominant_employment_type );
+            foreach ( $project_based_keywords as $keyword ) {
+                if ( false !== mb_stripos( $dominant_label, $keyword, 0, 'UTF-8' ) ) {
+                    $project_based_employment = true;
+                    break;
+                }
+            }
+        }
+        if ( ! $project_based_employment ) {
+            foreach ( $employment_breakdown as $employment_item ) {
+                $type_label = isset( $employment_item['type'] ) ? (string) $employment_item['type'] : '';
+                if ( '' === $type_label ) {
+                    continue;
+                }
+                foreach ( $project_based_keywords as $keyword ) {
+                    if ( false !== mb_stripos( $type_label, $keyword, 0, 'UTF-8' ) ) {
+                        $project_based_employment = true;
+                        break 2;
+                    }
+                }
+            }
         }
 
         $income_variance_reasons = array();
@@ -2757,6 +2800,16 @@ class BKJA_Database {
             }
             if ( $income_composite_count > 0 ) {
                 $income_variance_reasons[] = 'برخی گزارش‌ها شامل فعالیت جانبی/کار آزاد است.';
+            }
+            if ( $project_based_employment ) {
+                $project_reason = 'درآمد این شغل به‌شدت وابسته به پروژه، زمان‌بندی و شرایط بازار است';
+                if ( ! in_array( $project_reason, $income_variance_reasons, true ) ) {
+                    if ( $total_reports < 3 ) {
+                        array_unshift( $income_variance_reasons, $project_reason );
+                    } else {
+                        $income_variance_reasons[] = $project_reason;
+                    }
+                }
             }
             if ( empty( $income_variance_reasons ) ) {
                 $income_variance_reasons[] = 'سابقه و سطح مهارت متفاوت است.';
