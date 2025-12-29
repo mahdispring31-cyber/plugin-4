@@ -1248,6 +1248,30 @@ class BKJA_Chat {
         return false;
     }
 
+    protected static function is_home_vs_freelance_query( $normalized_message ) {
+        $text = is_string( $normalized_message ) ? $normalized_message : '';
+        if ( '' === $text ) {
+            return false;
+        }
+
+        $lower = function_exists( 'mb_strtolower' ) ? mb_strtolower( $text, 'UTF-8' ) : strtolower( $text );
+        $has_home = preg_match( '/خانگی|در\s*خانه|کار\s*در\s*خانه/u', $lower );
+        $has_freelance = preg_match( '/آزاد|فریلنس|فریلنسر|آزادکاری|آزادکار/u', $lower );
+        $has_compare = preg_match( '/بهتره|بهتر\s*هست|مقایسه|کدوم/u', $lower );
+
+        return (bool) ( $has_home && $has_freelance ) || ( $has_compare && $has_home && $has_freelance );
+    }
+
+    protected static function is_income_growth_general_query( $normalized_message ) {
+        $text = is_string( $normalized_message ) ? $normalized_message : '';
+        if ( '' === $text ) {
+            return false;
+        }
+
+        $lower = function_exists( 'mb_strtolower' ) ? mb_strtolower( $text, 'UTF-8' ) : strtolower( $text );
+        return (bool) preg_match( '/افزایش\s*درآمد|درآمدم\s*رو|چطور\s*درآمد|رشد\s*درآمد|بیشتر\s*درآمد/u', $lower );
+    }
+
     protected static function is_compare_similar_intent( $normalized_message ) {
         $text = is_string( $normalized_message ) ? trim( $normalized_message ) : '';
         if ( '' === $text ) {
@@ -1392,6 +1416,7 @@ class BKJA_Chat {
         }
 
         $lines[] = '🏆 پردرآمدترین شغل‌ها بر اساس میانه درآمد ثبت‌شده کاربران:';
+        $has_items = false;
         foreach ( $items as $item ) {
             $title  = isset( $item['label'] ) ? (string) $item['label'] : '';
             $median = isset( $item['median_income'] ) ? (float) $item['median_income'] : 0;
@@ -1406,10 +1431,69 @@ class BKJA_Chat {
             }
 
             $lines[] = '• ' . $title . ' — میانه درآمد: ' . self::format_amount_label( $median ) . ' | ' . $count . ' گزارش' . $note;
+            $has_items = true;
+        }
+
+        if ( ! $has_items ) {
+            return self::build_high_income_response( array() );
         }
 
         $lines[] = '🧾 جمع‌بندی: این رتبه‌بندی فقط بر اساس داده‌های ثبت‌شده کاربران است.';
         $lines[] = '➡️ قدم بعدی: اگر شهر/مهارت خاصی مدنظر داری بگو تا فیلتر کنم.';
+
+        return implode( "\n", array_filter( array_map( 'trim', $lines ) ) );
+    }
+
+    protected static function build_home_vs_freelance_response( $normalized_message, $request_meta = array() ) {
+        $request_meta = is_array( $request_meta ) ? $request_meta : array();
+        $city = isset( $request_meta['city'] ) ? trim( (string) $request_meta['city'] ) : '';
+
+        $filters = array( 'home' => true );
+        if ( '' !== $city ) {
+            $filters['city'] = $city;
+        }
+
+        $items = self::get_job_list_candidates( $filters, 3 );
+        $data_based = ! empty( $items ) && '' !== $city;
+        if ( empty( $items ) ) {
+            $items = self::get_job_list_candidates( array_filter( array( 'city' => $city ) ), 3 );
+            $data_based = ! empty( $items ) && '' !== $city;
+        }
+
+        if ( empty( $items ) ) {
+            $fallbacks = self::get_safe_job_suggestions( 3 );
+            foreach ( $fallbacks as $fallback ) {
+                $items[] = array( 'label' => $fallback['label'], 'tags' => array() );
+            }
+            $data_based = false;
+        }
+
+        $lines = array();
+        $lines[] = 'انتخاب بین شغل خانگی و آزاد به هدف درآمدی، زمان آزاد و تحمل ریسک بستگی دارد.';
+        $lines[] = 'برای شروع، ۳ گزینه قابل بررسی:';
+        $lines   = array_merge( $lines, self::build_job_list_lines( $items ) );
+
+        if ( $data_based ) {
+            $lines[] = 'این نمونه‌ها بر اساس داده‌های ثبت‌شده کاربران در شهر ' . $city . ' است.';
+        } else {
+            $lines[] = 'این گزینه‌ها عمومی است و لزوماً مبتنی بر داده شهری نیست.';
+        }
+
+        $lines[] = 'کدام عامل برایت مهم‌تر است: آزادی زمان، ثبات درآمد یا حداقل سرمایه؟';
+
+        return implode( "\n", array_filter( array_map( 'trim', $lines ) ) );
+    }
+
+    protected static function build_income_growth_general_response() {
+        $lines = array(
+            'برای افزایش درآمد، این ۳ مسیر عملی را می‌توانی هم‌زمان جلو ببری:',
+            '• ارتقای مهارت تخصصی یا گرفتن یک زیرمهارت پول‌ساز در همان حوزه',
+            '• بازبینی قیمت‌گذاری و بسته‌بندی خدمات (پلن پایه/استاندارد/پریمیوم)',
+            '• تقویت جذب مشتری: نمونه‌کار، شبکه‌سازی، همکاری پروژه‌ای یا کانال فروش جدید',
+            'دو سؤال کوتاه برای دقیق‌تر شدن پیشنهاد:',
+            '• الان در چه حوزه‌ای فعالیت می‌کنی؟',
+            '• هدفت برای افزایش درآمد در ۳ ماه آینده چقدر است؟',
+        );
 
         return implode( "\n", array_filter( array_map( 'trim', $lines ) ) );
     }
@@ -1488,7 +1572,7 @@ class BKJA_Chat {
         }
 
         if ( self::is_high_income_query( $text ) ) {
-            return 'HIGH_INCOME_QUERY';
+            return $has_job_hint ? 'HIGH_INCOME_QUERY' : 'TOP_INCOME_JOBS';
         }
 
         if ( preg_match( '/چطور\s*بشم|چگونه\s*بشم|از\s*کجا\s*شروع|مسیر\s*یادگیری|یاد\s*بگیرم|راه\s*یادگیری|چطور\s*وارد/u', $lower ) ) {
@@ -1509,6 +1593,10 @@ class BKJA_Chat {
         }
 
         return $has_job_hint || $is_followup ? 'JOB_INFO' : 'CAREER_SUGGESTION';
+    }
+
+    public static function debug_detect_intent_label( $normalized_message, $context = array() ) {
+        return self::detect_intent_label( $normalized_message, $context );
     }
 
     protected static function detect_query_intent( $normalized_message, $context = array() ) {
@@ -1688,6 +1776,9 @@ class BKJA_Chat {
         $table_jobs   = $wpdb->prefix . 'bkja_jobs';
         $limit        = max( 3, (int) $limit );
 
+        $filters = is_array( $filters ) ? $filters : array();
+        $city_filter = isset( $filters['city'] ) ? trim( (string) $filters['city'] ) : '';
+
         static $has_tags_column = null;
         if ( null === $has_tags_column ) {
             $columns = $wpdb->get_col( "DESC {$table_jobs}", 0 );
@@ -1695,6 +1786,15 @@ class BKJA_Chat {
         }
 
         $tags_select = $has_tags_column ? 'GROUP_CONCAT(DISTINCT j.tags SEPARATOR \',\') AS tags' : "'' AS tags";
+
+        $where_clauses = array( 'jt.is_visible = 1' );
+        $where_params  = array();
+        if ( '' !== $city_filter ) {
+            $where_clauses[] = 'j.city LIKE %s';
+            $where_params[]  = '%' . $wpdb->esc_like( $city_filter ) . '%';
+        }
+
+        $where_sql = implode( ' AND ', $where_clauses );
 
         $sql = "SELECT jt.id, COALESCE(jt.base_label, jt.label) AS label, jt.group_key,
                        COUNT(j.id) AS cnt,
@@ -1707,20 +1807,98 @@ class BKJA_Chat {
                        {$tags_select}
                 FROM {$table_titles} jt
                 LEFT JOIN {$table_jobs} j ON j.job_title_id = jt.id
-                WHERE jt.is_visible = 1
+                WHERE {$where_sql}
                 GROUP BY jt.id
                 HAVING cnt > 0
                 ORDER BY cnt DESC
                 LIMIT %d";
 
-        $rows = $wpdb->get_results( $wpdb->prepare( $sql, $limit * 4 ) );
+        $query_params = $where_params;
+        $query_params[] = $limit * 4;
+        array_unshift( $query_params, $sql );
+        $rows = $wpdb->get_results( call_user_func_array( array( $wpdb, 'prepare' ), $query_params ) );
         if ( empty( $rows ) ) {
             return array();
         }
 
-        $filters = is_array( $filters ) ? $filters : array();
         $needs_home = ! empty( $filters['home'] );
         $max_invest = isset( $filters['investment_max'] ) ? (int) $filters['investment_max'] : 0;
+
+        $job_ids = array();
+        foreach ( $rows as $row ) {
+            if ( isset( $row->id ) ) {
+                $job_ids[] = (int) $row->id;
+            }
+        }
+        $job_ids = array_values( array_unique( array_filter( $job_ids ) ) );
+
+        $income_samples = array();
+        $income_range_mins = array();
+        $income_range_maxes = array();
+        if ( $job_ids ) {
+            $placeholders = implode( ',', array_fill( 0, count( $job_ids ), '%d' ) );
+            $income_where = "j.job_title_id IN ({$placeholders})";
+            $income_params = $job_ids;
+            if ( '' !== $city_filter ) {
+                $income_where .= ' AND j.city LIKE %s';
+                $income_params[] = '%' . $wpdb->esc_like( $city_filter ) . '%';
+            }
+
+            $income_sql = "SELECT j.job_title_id, j.income_toman, j.income_num, j.income_min_toman, j.income_max_toman, j.income
+                           FROM {$table_jobs} j
+                           WHERE {$income_where}";
+            array_unshift( $income_params, $income_sql );
+            $income_rows = $wpdb->get_results( call_user_func_array( array( $wpdb, 'prepare' ), $income_params ) );
+            foreach ( (array) $income_rows as $row ) {
+                $job_id = isset( $row->job_title_id ) ? (int) $row->job_title_id : 0;
+                if ( $job_id <= 0 ) {
+                    continue;
+                }
+
+                if ( ! isset( $income_samples[ $job_id ] ) ) {
+                    $income_samples[ $job_id ] = array();
+                    $income_range_mins[ $job_id ] = array();
+                    $income_range_maxes[ $job_id ] = array();
+                }
+
+                $raw_value = 0;
+                if ( isset( $row->income_toman ) && $row->income_toman > 0 ) {
+                    $raw_value = $row->income_toman;
+                } elseif ( isset( $row->income_num ) && $row->income_num > 0 ) {
+                    $raw_value = $row->income_num;
+                }
+
+                if ( $raw_value && class_exists( 'BKJA_Analytics' ) ) {
+                    $normalized = BKJA_Analytics::normalize_income_amount( $raw_value );
+                    if ( $normalized ) {
+                        $income_samples[ $job_id ][] = $normalized;
+                    }
+                }
+
+                if ( isset( $row->income_min_toman ) && $row->income_min_toman > 0 ) {
+                    $income_range_mins[ $job_id ][] = $row->income_min_toman;
+                }
+                if ( isset( $row->income_max_toman ) && $row->income_max_toman > 0 ) {
+                    $income_range_maxes[ $job_id ][] = $row->income_max_toman;
+                }
+
+                $income_text = isset( $row->income ) ? trim( (string) $row->income ) : '';
+                if ( '' !== $income_text && class_exists( 'BKJA_Analytics' ) ) {
+                    $parsed = BKJA_Analytics::normalize_income_value( $income_text );
+                    if ( 'ok' === $parsed['status'] ) {
+                        if ( ! empty( $parsed['value_toman'] ) ) {
+                            $income_samples[ $job_id ][] = $parsed['value_toman'];
+                        }
+                        if ( ! empty( $parsed['min_toman'] ) ) {
+                            $income_range_mins[ $job_id ][] = $parsed['min_toman'];
+                        }
+                        if ( ! empty( $parsed['max_toman'] ) ) {
+                            $income_range_maxes[ $job_id ][] = $parsed['max_toman'];
+                        }
+                    }
+                }
+            }
+        }
 
         $candidates = array();
         foreach ( $rows as $row ) {
@@ -1744,11 +1922,32 @@ class BKJA_Chat {
                 continue;
             }
 
+            $min_income = isset( $row->min_income ) ? (int) $row->min_income : null;
+            $max_income = isset( $row->max_income ) ? (int) $row->max_income : null;
+            $avg_income = isset( $row->avg_income ) ? (int) $row->avg_income : null;
+            if ( class_exists( 'BKJA_Analytics' ) ) {
+                $job_id = isset( $row->id ) ? (int) $row->id : 0;
+                $summary = BKJA_Analytics::summarize_income_samples(
+                    $income_samples[ $job_id ] ?? array(),
+                    $income_range_mins[ $job_id ] ?? array(),
+                    $income_range_maxes[ $job_id ] ?? array()
+                );
+                if ( ! empty( $summary['min'] ) ) {
+                    $min_income = (int) $summary['min'];
+                }
+                if ( ! empty( $summary['max'] ) ) {
+                    $max_income = (int) $summary['max'];
+                }
+                if ( ! empty( $summary['median'] ) ) {
+                    $avg_income = (int) round( $summary['median'] );
+                }
+            }
+
             $candidates[] = array(
                 'label'           => $label,
-                'avg_income'      => isset( $row->avg_income ) ? (int) $row->avg_income : null,
-                'min_income'      => isset( $row->min_income ) ? (int) $row->min_income : null,
-                'max_income'      => isset( $row->max_income ) ? (int) $row->max_income : null,
+                'avg_income'      => $avg_income,
+                'min_income'      => $min_income,
+                'max_income'      => $max_income,
                 'avg_investment'  => isset( $row->avg_investment ) ? (int) $row->avg_investment : null,
                 'min_investment'  => isset( $row->min_investment ) ? (int) $row->min_investment : null,
                 'max_investment'  => $max_investment,
@@ -2833,7 +3032,7 @@ class BKJA_Chat {
         $context_query = ( $is_followup_action && '' !== $job_title_hint ) ? $job_title_hint : $normalized_message;
         $skip_context = in_array(
             $intent_label,
-            array( 'CAREER_SUGGESTION', 'HIGH_INCOME_QUERY', 'LOW_CAPITAL_QUERY', 'GENERAL_BUSINESS_QUERY' ),
+            array( 'CAREER_SUGGESTION', 'TOP_INCOME_JOBS', 'HIGH_INCOME_QUERY', 'LOW_CAPITAL_QUERY', 'GENERAL_BUSINESS_QUERY' ),
             true
         )
             && ! $is_followup_action
@@ -2944,7 +3143,7 @@ class BKJA_Chat {
 
         $api_key = self::get_api_key();
 
-        if ( 'HIGH_INCOME_QUERY' === $intent_label ) {
+        if ( 'TOP_INCOME_JOBS' === $intent_label ) {
             $top_items = class_exists( 'BKJA_Database' ) ? BKJA_Database::get_top_income_jobs( 6, 2 ) : array();
             $guided_answer = self::build_high_income_response( $top_items );
 
@@ -3112,6 +3311,50 @@ class BKJA_Chat {
         $resolved_intent = $query_intent;
         if ( 'fuzzy' === $resolved_intent && ! empty( $pre_intent ) && 'unknown' !== $pre_intent ) {
             $resolved_intent = $pre_intent;
+        }
+
+        if ( empty( $context['job_title'] ) && self::is_home_vs_freelance_query( $normalized_message ) ) {
+            $reply = self::build_home_vs_freelance_response( $normalized_message, $request_meta );
+            $payload = self::ensure_context_meta( self::build_response_payload(
+                $reply,
+                $context,
+                $message,
+                false,
+                'home_vs_freelance',
+                array(
+                    'model'              => $model,
+                    'category'           => $resolved_category,
+                    'normalized_message' => $normalized_message,
+                )
+            ), $context );
+
+            if ( $cache_enabled ) {
+                set_transient( $cache_key, $payload, self::get_cache_ttl( $model ) );
+            }
+
+            return $payload;
+        }
+
+        if ( empty( $context['job_title'] ) && self::is_income_growth_general_query( $normalized_message ) ) {
+            $reply = self::build_income_growth_general_response();
+            $payload = self::ensure_context_meta( self::build_response_payload(
+                $reply,
+                $context,
+                $message,
+                false,
+                'income_growth_general',
+                array(
+                    'model'              => $model,
+                    'category'           => $resolved_category,
+                    'normalized_message' => $normalized_message,
+                )
+            ), $context );
+
+            if ( $cache_enabled ) {
+                set_transient( $cache_key, $payload, self::get_cache_ttl( $model ) );
+            }
+
+            return $payload;
         }
 
         if ( 'personality_advice' === $resolved_intent ) {
