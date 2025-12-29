@@ -3087,6 +3087,114 @@ class BKJA_Database {
     }
 
     /**
+     * Return top job titles by median income (based on registered user reports).
+     */
+    public static function get_top_income_jobs( $limit = 5, $min_reports = 2 ) {
+        global $wpdb;
+
+        self::ensure_job_title_schema();
+
+        $limit       = max( 1, (int) $limit );
+        $min_reports = max( 1, (int) $min_reports );
+
+        $table_titles = $wpdb->prefix . 'bkja_job_titles';
+        $table_jobs   = $wpdb->prefix . 'bkja_jobs';
+
+        $rows = $wpdb->get_results(
+            "SELECT j.job_title_id,
+                    COALESCE(NULLIF(j.income_toman, 0), NULLIF(j.income_num, 0)) AS income_value
+             FROM {$table_jobs} j
+             INNER JOIN {$table_titles} jt ON jt.id = j.job_title_id
+             WHERE jt.is_visible = 1
+               AND j.job_title_id IS NOT NULL
+               AND (j.income_toman IS NOT NULL OR j.income_num IS NOT NULL)"
+        );
+
+        if ( empty( $rows ) ) {
+            return array();
+        }
+
+        $grouped = array();
+        foreach ( $rows as $row ) {
+            $job_id = isset( $row->job_title_id ) ? (int) $row->job_title_id : 0;
+            $value  = isset( $row->income_value ) ? (int) $row->income_value : 0;
+            if ( $job_id <= 0 || $value <= 0 ) {
+                continue;
+            }
+
+            if ( ! isset( $grouped[ $job_id ] ) ) {
+                $grouped[ $job_id ] = array();
+            }
+
+            $grouped[ $job_id ][] = $value;
+        }
+
+        if ( empty( $grouped ) ) {
+            return array();
+        }
+
+        $job_ids = array_keys( $grouped );
+        $placeholders = implode( ',', array_fill( 0, count( $job_ids ), '%d' ) );
+        $labels_rows = $wpdb->get_results(
+            $wpdb->prepare(
+                "SELECT id, COALESCE(base_label, label) AS label
+                 FROM {$table_titles}
+                 WHERE id IN ({$placeholders})",
+                $job_ids
+            )
+        );
+
+        $labels = array();
+        foreach ( $labels_rows as $row ) {
+            $labels[ (int) $row->id ] = (string) $row->label;
+        }
+
+        $results = array();
+        foreach ( $grouped as $job_id => $values ) {
+            $count = count( $values );
+            if ( $count <= 0 ) {
+                continue;
+            }
+
+            sort( $values, SORT_NUMERIC );
+            $middle = (int) floor( ( $count - 1 ) / 2 );
+            $median = ( $count % 2 )
+                ? $values[ $middle ]
+                : ( $values[ $middle ] + $values[ $middle + 1 ] ) / 2;
+
+            $label = isset( $labels[ $job_id ] ) ? $labels[ $job_id ] : '';
+            if ( '' === trim( $label ) ) {
+                continue;
+            }
+
+            $results[] = array(
+                'job_title_id' => (int) $job_id,
+                'label'        => $label,
+                'median_income'=> (float) $median,
+                'report_count' => (int) $count,
+                'data_limited' => $count < $min_reports,
+            );
+        }
+
+        if ( empty( $results ) ) {
+            return array();
+        }
+
+        usort( $results, function( $a, $b ) {
+            $income_a = $a['median_income'] ?? 0;
+            $income_b = $b['median_income'] ?? 0;
+            if ( $income_a === $income_b ) {
+                $count_a = $a['report_count'] ?? 0;
+                $count_b = $b['report_count'] ?? 0;
+                return ( $count_a < $count_b ) ? 1 : -1;
+            }
+            return ( $income_a < $income_b ) ? 1 : -1;
+        } );
+
+        return array_slice( $results, 0, $limit );
+    }
+
+    /**
      * Build a WHERE clause and params for job queries using group context and optional filters.
      */
     protected static function build_job_where_clause( $context, $job_title, $window_months = null, $filters = array(), $table_alias = 'j' ) {
