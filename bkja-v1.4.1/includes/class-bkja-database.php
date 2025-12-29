@@ -1154,6 +1154,73 @@ class BKJA_Database {
     }
 
     /**
+     * Evaluate sorted candidates and apply confidence thresholds.
+     */
+    public static function evaluate_job_candidates( $candidates, $options = array() ) {
+        $candidates = is_array( $candidates ) ? array_values( $candidates ) : array();
+        $options = is_array( $options ) ? $options : array();
+
+        $min_score     = isset( $options['min_score'] ) ? (float) $options['min_score'] : 28;
+        $min_match_len = isset( $options['min_match_len'] ) ? (int) $options['min_match_len'] : 3;
+
+        if ( empty( $candidates ) ) {
+            return array(
+                'matched_job_title_id' => 0,
+                'group_key'            => null,
+                'label'                => '',
+                'slug'                 => '',
+                'job_title_ids'        => array(),
+                'confidence'           => 0.0,
+                'candidates'           => array(),
+                'ambiguous'            => true,
+            );
+        }
+
+        $best         = $candidates[0];
+        $best_score   = isset( $best['score'] ) ? (float) $best['score'] : 0.0;
+        $second_score = isset( $candidates[1]['score'] ) ? (float) $candidates[1]['score'] : 0.0;
+        $confidence   = $best_score > 0 ? min( 1.0, max( 0.0, ( $best_score - $second_score ) / ( $best_score + 1 ) + 0.6 ) ) : 0.0;
+        $ambiguous    = ( count( $candidates ) > 1 && $second_score >= ( $best_score * 0.85 ) );
+
+        if ( 1 === count( $candidates ) ) {
+            $ambiguous = false;
+        }
+
+        if ( isset( $best['match_type'], $best['match_len'] ) && in_array( $best['match_type'], array( 'exact', 'prefix' ), true ) ) {
+            if ( (int) $best['match_len'] >= 3 ) {
+                $confidence = max( $confidence, 0.75 );
+                $ambiguous  = false;
+            }
+        }
+
+        $match_len = isset( $best['match_len'] ) ? (int) $best['match_len'] : 0;
+        $below_threshold = ( $best_score < $min_score && $match_len < $min_match_len );
+        if ( $below_threshold ) {
+            return array(
+                'matched_job_title_id' => 0,
+                'group_key'            => null,
+                'label'                => '',
+                'slug'                 => '',
+                'job_title_ids'        => array(),
+                'confidence'           => $confidence,
+                'candidates'           => array_slice( $candidates, 0, 5 ),
+                'ambiguous'            => true,
+            );
+        }
+
+        return array(
+            'matched_job_title_id' => isset( $best['job_title_id'] ) ? (int) $best['job_title_id'] : 0,
+            'group_key'            => isset( $best['group_key'] ) ? $best['group_key'] : null,
+            'label'                => isset( $best['label'] ) ? $best['label'] : '',
+            'slug'                 => isset( $best['slug'] ) ? $best['slug'] : '',
+            'job_title_ids'        => isset( $best['job_title_ids'] ) ? $best['job_title_ids'] : array(),
+            'confidence'           => $confidence,
+            'candidates'           => array_slice( $candidates, 0, 5 ),
+            'ambiguous'            => $ambiguous,
+        );
+    }
+
+    /**
      * Resolve a job title/group using a unified free-text resolver with ranking.
      */
     public static function resolve_job_query( $query, $options = array() ) {
@@ -1419,33 +1486,7 @@ class BKJA_Database {
             return ( $a['score'] > $b['score'] ) ? -1 : 1;
         } );
 
-        $best         = $candidates[0];
-        $best_score   = isset( $best['score'] ) ? (float) $best['score'] : 0.0;
-        $second_score = isset( $candidates[1]['score'] ) ? (float) $candidates[1]['score'] : 0.0;
-        $confidence   = $best_score > 0 ? min( 1.0, max( 0.35, ( $best_score - $second_score ) / ( $best_score + 1 ) + 0.6 ) ) : 0.0;
-        $ambiguous    = ( count( $candidates ) > 1 && $second_score >= ( $best_score * 0.85 ) );
-
-        if ( 1 === count( $candidates ) ) {
-            $ambiguous = false;
-        }
-
-        if ( isset( $best['match_type'], $best['match_len'] ) && in_array( $best['match_type'], array( 'exact', 'prefix' ), true ) ) {
-            if ( (int) $best['match_len'] >= 3 ) {
-                $confidence = max( $confidence, 0.75 );
-                $ambiguous  = false;
-            }
-        }
-
-        return array(
-            'matched_job_title_id' => isset( $best['job_title_id'] ) ? (int) $best['job_title_id'] : 0,
-            'group_key'            => isset( $best['group_key'] ) ? $best['group_key'] : null,
-            'label'                => isset( $best['label'] ) ? $best['label'] : '',
-            'slug'                 => isset( $best['slug'] ) ? $best['slug'] : '',
-            'job_title_ids'        => isset( $best['job_title_ids'] ) ? $best['job_title_ids'] : array(),
-            'confidence'           => $confidence,
-            'candidates'           => array_slice( $candidates, 0, 5 ),
-            'ambiguous'            => $ambiguous,
-        );
+        return self::evaluate_job_candidates( $candidates );
     }
 
     /**
@@ -3151,19 +3192,17 @@ class BKJA_Database {
 
         $results = array();
         foreach ( $grouped as $job_id => $values ) {
-            $count = count( $values );
-            if ( $count <= 0 ) {
+            $summary = class_exists( 'BKJA_Analytics' )
+                ? BKJA_Analytics::summarize_income_samples( $values )
+                : array( 'median' => null, 'count' => count( $values ), 'min' => null, 'max' => null );
+            $count = isset( $summary['count'] ) ? (int) $summary['count'] : 0;
+            if ( $count < $min_reports ) {
                 continue;
             }
 
-            sort( $values, SORT_NUMERIC );
-            $middle = (int) floor( ( $count - 1 ) / 2 );
-            $median = ( $count % 2 )
-                ? $values[ $middle ]
-                : ( $values[ $middle ] + $values[ $middle + 1 ] ) / 2;
-
+            $median = isset( $summary['median'] ) ? $summary['median'] : null;
             $label = isset( $labels[ $job_id ] ) ? $labels[ $job_id ] : '';
-            if ( '' === trim( $label ) ) {
+            if ( '' === trim( $label ) || ! $median ) {
                 continue;
             }
 

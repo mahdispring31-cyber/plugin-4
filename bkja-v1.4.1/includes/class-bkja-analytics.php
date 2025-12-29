@@ -24,6 +24,27 @@ class BKJA_Analytics {
         return $numbers;
     }
 
+    protected static function normalize_income_numeric_value( $value ) {
+        if ( ! is_numeric( $value ) ) {
+            return null;
+        }
+
+        $value = (float) $value;
+        if ( $value <= 0 ) {
+            return null;
+        }
+
+        if ( $value >= 1000000 ) {
+            return (int) round( $value );
+        }
+
+        if ( $value >= 1000 ) {
+            return (int) round( $value * 1000 );
+        }
+
+        return (int) round( $value * 1000000 );
+    }
+
     public static function normalize_income_value( $raw ) {
         $result = array(
             'value_toman' => null,
@@ -185,5 +206,100 @@ class BKJA_Analytics {
         }
 
         return array( 'outliers' => $outliers, 'has_outliers' => ! empty( $outliers ), 'method' => 'zscore' );
+    }
+
+    public static function normalize_income_amount( $raw ) {
+        if ( is_numeric( $raw ) ) {
+            return self::normalize_income_numeric_value( $raw );
+        }
+
+        if ( is_string( $raw ) ) {
+            $parsed = self::normalize_income_value( $raw );
+            if ( 'ok' === $parsed['status'] && ! empty( $parsed['value_toman'] ) ) {
+                return (int) $parsed['value_toman'];
+            }
+        }
+
+        return null;
+    }
+
+    public static function summarize_income_samples( $samples, $range_mins = array(), $range_maxes = array() ) {
+        $samples = is_array( $samples ) ? $samples : array();
+        $range_mins = is_array( $range_mins ) ? $range_mins : array();
+        $range_maxes = is_array( $range_maxes ) ? $range_maxes : array();
+
+        $values = array();
+        foreach ( $samples as $sample ) {
+            $normalized = self::normalize_income_amount( $sample );
+            if ( $normalized ) {
+                $values[] = $normalized;
+            }
+        }
+
+        $range_mins_norm = array();
+        foreach ( $range_mins as $min ) {
+            $normalized = self::normalize_income_amount( $min );
+            if ( $normalized ) {
+                $range_mins_norm[] = $normalized;
+            }
+        }
+
+        $range_maxes_norm = array();
+        foreach ( $range_maxes as $max ) {
+            $normalized = self::normalize_income_amount( $max );
+            if ( $normalized ) {
+                $range_maxes_norm[] = $normalized;
+            }
+        }
+
+        $values = array_values( array_filter( $values, function( $v ) {
+            return is_numeric( $v ) && $v > 0;
+        } ) );
+
+        sort( $values, SORT_NUMERIC );
+        $outlier_info = self::detect_outliers( $values );
+        $outliers     = isset( $outlier_info['outliers'] ) ? (array) $outlier_info['outliers'] : array();
+        $filtered     = $values;
+        if ( ! empty( $outliers ) ) {
+            $filtered = array();
+            foreach ( $values as $value ) {
+                if ( in_array( $value, $outliers, true ) ) {
+                    continue;
+                }
+                $filtered[] = $value;
+            }
+            if ( empty( $filtered ) ) {
+                $filtered = $values;
+            }
+        }
+
+        $count = count( $filtered );
+        $median = null;
+        if ( $count > 0 ) {
+            $middle = (int) floor( ( $count - 1 ) / 2 );
+            $median = ( $count % 2 )
+                ? $filtered[ $middle ]
+                : ( $filtered[ $middle ] + $filtered[ $middle + 1 ] ) / 2;
+        }
+
+        $min = ! empty( $filtered ) ? min( $filtered ) : null;
+        $max = ! empty( $filtered ) ? max( $filtered ) : null;
+
+        if ( null === $min && ! empty( $range_mins_norm ) ) {
+            $min = min( $range_mins_norm );
+        }
+        if ( null === $max && ! empty( $range_maxes_norm ) ) {
+            $max = max( $range_maxes_norm );
+        }
+
+        return array(
+            'values'        => $filtered,
+            'count'         => $count,
+            'median'        => $median,
+            'min'           => $min,
+            'max'           => $max,
+            'has_outliers'  => ! empty( $outliers ),
+            'outlier_count' => count( $outliers ),
+        );
     }
 }
