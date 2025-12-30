@@ -306,6 +306,69 @@ class BKJA_Chat {
         return $options;
     }
 
+    protected static function get_safe_home_job_suggestions( $limit = 4 ) {
+        global $wpdb;
+
+        $limit         = max( 1, (int) $limit );
+        $table_titles  = $wpdb->prefix . 'bkja_job_titles';
+        $table_jobs    = $wpdb->prefix . 'bkja_jobs';
+
+        static $has_tags_column = null;
+        if ( null === $has_tags_column ) {
+            $columns = $wpdb->get_col( "DESC {$table_jobs}", 0 );
+            $has_tags_column = is_array( $columns ) && in_array( 'tags', $columns, true );
+        }
+
+        $tags_select = $has_tags_column ? 'GROUP_CONCAT(DISTINCT j.tags SEPARATOR \',\') AS tags' : "'' AS tags";
+
+        $sql = $wpdb->prepare(
+            "SELECT jt.id, jt.group_key, COALESCE(jt.base_label, jt.label) AS label, COALESCE(jt.base_slug, jt.slug) AS slug,
+                    COUNT(j.id) AS cnt, {$tags_select}
+             FROM {$table_titles} jt
+             LEFT JOIN {$table_jobs} j ON j.job_title_id = jt.id
+             WHERE jt.is_visible = 1
+             GROUP BY jt.id
+             HAVING COUNT(j.id) >= 1
+             ORDER BY cnt DESC
+             LIMIT %d",
+            $limit * 4
+        );
+
+        $rows = $wpdb->get_results( $sql );
+        if ( empty( $rows ) ) {
+            return array();
+        }
+
+        $options = array();
+        foreach ( (array) $rows as $row ) {
+            if ( empty( $row->label ) ) {
+                continue;
+            }
+
+            $tags = array();
+            if ( ! empty( $row->tags ) ) {
+                $tags = array_map( 'trim', explode( ',', (string) $row->tags ) );
+            }
+
+            $label = (string) $row->label;
+            $has_home = in_array( 'home', $tags, true ) || false !== mb_stripos( $label, 'خانگی', 0, 'UTF-8' );
+            if ( ! $has_home ) {
+                continue;
+            }
+
+            $options[] = array(
+                'label'        => $label,
+                'job_title_id' => isset( $row->id ) ? (int) $row->id : null,
+                'group_key'    => isset( $row->group_key ) ? $row->group_key : '',
+                'slug'         => isset( $row->slug ) ? $row->slug : '',
+                'sample_count' => isset( $row->cnt ) ? (int) $row->cnt : 0,
+                'tags'         => $tags,
+            );
+        }
+
+        return array_slice( $options, 0, $limit );
+    }
+
     protected static function build_job_lookup_phrases( $normalized_message ) {
         $text = self::normalize_lookup_text( $normalized_message );
 
@@ -1581,11 +1644,11 @@ class BKJA_Chat {
         }
 
         if ( empty( $items ) ) {
-            $fallbacks = self::get_safe_job_suggestions( 3 );
+            $fallbacks = self::get_safe_home_job_suggestions( 3 );
             foreach ( $fallbacks as $fallback ) {
                 $items[] = array(
                     'label'        => $fallback['label'],
-                    'tags'         => array(),
+                    'tags'         => $fallback['tags'] ?? array(),
                     'sample_count' => $fallback['sample_count'] ?? 0,
                 );
             }
@@ -1666,8 +1729,21 @@ class BKJA_Chat {
             $lines[] = '• ' . $point;
         }
 
+        $items = array_slice( (array) $items, 0, 5 );
+        $has_limited_samples = false;
+        foreach ( $items as $item ) {
+            $sample_count = isset( $item['sample_count'] ) ? (int) $item['sample_count'] : 0;
+            if ( $sample_count > 0 && $sample_count < 3 ) {
+                $has_limited_samples = true;
+                break;
+            }
+        }
+
         $job_lines = self::build_job_list_lines( $items );
         if ( ! empty( $job_lines ) ) {
+            if ( $has_limited_samples ) {
+                $lines[] = 'داده کم است؛ پیشنهادها تقریبی‌اند.';
+            }
             $lines[] = '💡 نمونه شغل‌های قابل بررسی (بر اساس داده‌های ثبت‌شده کاربران):';
             $lines   = array_merge( $lines, $job_lines );
             $lines[] = '🧾 جمع‌بندی: این پیشنهادها برای شروع مسیر است و نیاز به شخصی‌سازی دارد.';
@@ -1881,6 +1957,7 @@ class BKJA_Chat {
 
         $filters = is_array( $filters ) ? $filters : array();
         $city_filter = isset( $filters['city'] ) ? trim( (string) $filters['city'] ) : '';
+        $needs_home = ! empty( $filters['home'] );
 
         static $has_tags_column = null;
         if ( null === $has_tags_column ) {
@@ -1899,6 +1976,8 @@ class BKJA_Chat {
 
         $where_sql = implode( ' AND ', $where_clauses );
 
+        $having_threshold = $needs_home ? 1 : 3;
+
         $sql = "SELECT jt.id, COALESCE(jt.base_label, jt.label) AS label, jt.group_key,
                        COUNT(j.id) AS cnt,
                        AVG(NULLIF(COALESCE(j.income_toman, j.income_num), 0)) AS avg_income,
@@ -1912,11 +1991,12 @@ class BKJA_Chat {
                 LEFT JOIN {$table_jobs} j ON j.job_title_id = jt.id
                 WHERE {$where_sql}
                 GROUP BY jt.id
-                HAVING cnt >= 3
+                HAVING cnt >= %d
                 ORDER BY cnt DESC
                 LIMIT %d";
 
         $query_params = $where_params;
+        $query_params[] = $having_threshold;
         $query_params[] = $limit * 4;
         array_unshift( $query_params, $sql );
         $rows = $wpdb->get_results( call_user_func_array( array( $wpdb, 'prepare' ), $query_params ) );
@@ -1924,7 +2004,6 @@ class BKJA_Chat {
             return array();
         }
 
-        $needs_home = ! empty( $filters['home'] );
         $max_invest = isset( $filters['investment_max'] ) ? (int) $filters['investment_max'] : 0;
 
         $job_ids = array();
@@ -2047,7 +2126,7 @@ class BKJA_Chat {
             }
 
             $sample_count = isset( $row->cnt ) ? (int) $row->cnt : 0;
-            if ( $sample_count < 3 ) {
+            if ( $sample_count < 3 && ! $needs_home ) {
                 continue;
             }
 
@@ -2080,13 +2159,13 @@ class BKJA_Chat {
             }
 
             $sample_count = isset( $item['sample_count'] ) ? (int) $item['sample_count'] : 0;
-            if ( $sample_count < 3 ) {
-                continue;
-            }
 
             $segments = array();
             $segments[] = $title;
             $segments[] = 'تجربه: ' . $sample_count;
+            if ( $sample_count > 0 && $sample_count < 3 ) {
+                $segments[] = 'داده محدود';
+            }
 
             $income_range = self::format_range_label( $item['min_income'] ?? null, $item['max_income'] ?? null, 'میلیون تومان در ماه' );
             if ( '' !== $income_range ) {
@@ -3649,11 +3728,11 @@ class BKJA_Chat {
 
                 $items = self::get_job_list_candidates( $filters, 6 );
                 if ( empty( $items ) ) {
-                    $fallbacks = self::get_safe_job_suggestions( 6 );
+                    $fallbacks = self::get_safe_home_job_suggestions( 6 );
                     foreach ( $fallbacks as $fallback ) {
                         $items[] = array(
                             'label'        => $fallback['label'],
-                            'tags'         => array(),
+                            'tags'         => $fallback['tags'] ?? array(),
                             'sample_count' => $fallback['sample_count'] ?? 0,
                         );
                     }
@@ -3857,11 +3936,13 @@ class BKJA_Chat {
 
             $items = self::get_job_list_candidates( $filters, 6 );
             if ( empty( $items ) ) {
-                $fallbacks = self::get_safe_job_suggestions( 6 );
+                $fallbacks = ! empty( $filters['home'] )
+                    ? self::get_safe_home_job_suggestions( 6 )
+                    : self::get_safe_job_suggestions( 6 );
                 foreach ( $fallbacks as $fallback ) {
                     $items[] = array(
                         'label'        => $fallback['label'],
-                        'tags'         => array(),
+                        'tags'         => $fallback['tags'] ?? array(),
                         'sample_count' => $fallback['sample_count'] ?? 0,
                     );
                 }
@@ -4123,11 +4204,13 @@ class BKJA_Chat {
 
             $items = self::get_job_list_candidates( $filters, 7 );
             if ( empty( $items ) ) {
-                $fallbacks = self::get_safe_job_suggestions( 6 );
+                $fallbacks = ! empty( $filters['home'] )
+                    ? self::get_safe_home_job_suggestions( 6 )
+                    : self::get_safe_job_suggestions( 6 );
                 foreach ( $fallbacks as $fallback ) {
                     $items[] = array(
                         'label'        => $fallback['label'],
-                        'tags'         => array(),
+                        'tags'         => $fallback['tags'] ?? array(),
                         'sample_count' => $fallback['sample_count'] ?? 0,
                     );
                 }
