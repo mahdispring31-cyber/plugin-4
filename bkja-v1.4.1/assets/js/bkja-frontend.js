@@ -580,6 +580,51 @@
             if(typeof text !== 'string'){ text = String(text); }
             return esc(text).replace(/\n/g,'<br>');
         }
+        function extractLayerText(layer){
+            if(!layer){ return ''; }
+            if(typeof layer === 'string'){ return layer; }
+            if(typeof layer === 'object' && typeof layer.text === 'string'){ return layer.text; }
+            return '';
+        }
+        function extractLayerLabel(layer, fallback){
+            if(layer && typeof layer === 'object' && typeof layer.label === 'string' && layer.label.length){
+                return layer.label;
+            }
+            return fallback || '';
+        }
+        function buildLayeredResponseHtml(layers){
+            if(!layers || typeof layers !== 'object'){ return ''; }
+            var dataLayer = extractLayerText(layers.data_layer);
+            var analysisLayer = extractLayerText(layers.analysis_layer);
+            var advisoryLayer = extractLayerText(layers.advisory_layer);
+            var advisoryLabel = extractLayerLabel(layers.advisory_layer, 'مشاوره‌ای');
+
+            if(!dataLayer && !analysisLayer && !advisoryLayer){
+                return '';
+            }
+
+            var html = '<div class="bkja-layered-response">';
+            if(dataLayer){
+                html += '<div class="bkja-layer-section bkja-layer-data">' +
+                    '<div class="bkja-layer-title">DATA_LAYER</div>' +
+                    '<div class="bkja-layer-body">' + formatMessage(dataLayer) + '</div>' +
+                    '</div>';
+            }
+            if(analysisLayer){
+                html += '<div class="bkja-layer-section bkja-layer-analysis">' +
+                    '<div class="bkja-layer-title">ANALYSIS_LAYER</div>' +
+                    '<div class="bkja-layer-body">' + formatMessage(analysisLayer) + '</div>' +
+                    '</div>';
+            }
+            if(advisoryLayer){
+                html += '<div class="bkja-layer-section bkja-layer-advisory">' +
+                    '<div class="bkja-layer-title">ADVISORY_LAYER <span class="bkja-layer-label">' + esc(advisoryLabel) + '</span></div>' +
+                    '<div class="bkja-layer-body">' + formatMessage(advisoryLayer) + '</div>' +
+                    '</div>';
+            }
+            html += '</div>';
+            return html;
+        }
         function pushUser(text){
             var $m = $('<div class="bkja-bubble user"></div>').html(formatMessage(text));
             $messages.append($m);
@@ -621,6 +666,14 @@
             var $m = $('<div class="bkja-bubble bot"></div>').html(content);
             $messages.append($m);
             $messages.scrollTop($messages.prop('scrollHeight'));
+            return $m;
+        }
+        function pushBotHtmlWithOptions(html, opts){
+            opts = opts || {};
+            var $bubble = pushBotHtml(html);
+            if(typeof opts.onComplete === 'function'){
+                opts.onComplete($bubble);
+            }
         }
 
         function addSystemMessage(text){
@@ -1766,6 +1819,7 @@
                         var fromCache = !!res.data.from_cache;
                         var meta = res.data.meta || {};
                         var cards = Array.isArray(res.data.cards) ? res.data.cards : [];
+                        var responseLayers = res.data.layers || null;
                         var primaryMeta = (cards[0] && cards[0].meta) ? cards[0].meta : meta;
                         if(primaryMeta && typeof primaryMeta.job_title === 'string' && primaryMeta.job_title.trim()){
                             lastKnownJobTitle = primaryMeta.job_title.trim();
@@ -1777,13 +1831,18 @@
                             var cardMeta = card && card.meta ? card.meta : meta;
                             var cardText = card && typeof card.text === "string" ? card.text : reply;
                             var cardFollowups = Array.isArray(card && card.buttons) ? card.buttons : buttons;
+                            var cardLayers = (cardMeta && cardMeta.layers) ? cardMeta.layers : (responseLayers || (meta && meta.layers ? meta.layers : null));
+                            var layeredHtml = buildLayeredResponseHtml(cardLayers);
 
                             if(cardMeta && typeof cardMeta === "object"){
                                 lastReplyMeta = cardMeta;
                                 window.lastReplyMeta = lastReplyMeta;
                             }
 
-                            pushBot(cardText, {
+                            var pushFn = layeredHtml ? pushBotHtmlWithOptions : pushBot;
+                            var pushPayload = layeredHtml || cardText;
+
+                            pushFn(pushPayload, {
                                 onComplete: function($bubble){
                                     applyAssistantMeta($bubble, cardMeta);
                                     if (SHOW_TECH_META) {

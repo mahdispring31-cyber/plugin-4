@@ -2902,7 +2902,255 @@ class BKJA_Chat {
             'intent_label'          => $intent_label,
         );
 
-        return self::refresh_job_stats_payload( $payload, $context );
+        $payload = self::refresh_job_stats_payload( $payload, $context );
+
+        $layers = self::build_response_layers( $payload['text'], $context, $message, $intent_label );
+        if ( ! empty( $layers ) && is_array( $layers ) ) {
+            $payload['layers'] = $layers;
+            if ( ! isset( $payload['meta'] ) || ! is_array( $payload['meta'] ) ) {
+                $payload['meta'] = array();
+            }
+            $payload['meta']['layers'] = $layers;
+            if ( isset( $layers['sample_count'] ) ) {
+                $payload['meta']['sample_count'] = $layers['sample_count'];
+            }
+            $layered_text = self::format_layered_reply( $layers );
+            if ( '' !== $layered_text ) {
+                $payload['text'] = $layered_text;
+            }
+        }
+
+        return $payload;
+    }
+
+    protected static function build_response_layers( $text, $context, $message, $intent_label = '' ) {
+        $summary = ( ! empty( $context['summary'] ) && is_array( $context['summary'] ) ) ? $context['summary'] : array();
+        $sample_count = isset( $summary['count_reports'] ) ? (int) $summary['count_reports'] : 0;
+        $normalized_message = self::normalize_message( $message );
+        $advisory_requested = self::is_advisory_request( $normalized_message, $intent_label );
+        $text = trim( (string) $text );
+
+        if ( $sample_count < 5 ) {
+            $advisory_text = $text;
+            if ( '' === $advisory_text ) {
+                $advisory_text = 'برای این سوال داده کافی نداریم و پاسخ صرفاً مشاوره‌ای است.';
+            }
+
+            return array(
+                'sample_count'  => $sample_count,
+                'data_layer'    => null,
+                'analysis_layer'=> null,
+                'advisory_layer'=> array(
+                    'label' => 'مشاوره‌ای',
+                    'text'  => $advisory_text,
+                ),
+            );
+        }
+
+        $data_layer    = self::build_data_layer_from_context( $context );
+        $analysis_layer = self::build_analysis_layer_from_context( $context );
+        $advisory_layer = null;
+
+        if ( $advisory_requested && '' !== $text ) {
+            $advisory_layer = array(
+                'label' => 'مشاوره‌ای',
+                'text'  => $text,
+            );
+        }
+
+        return array(
+            'sample_count'   => $sample_count,
+            'data_layer'     => '' !== $data_layer ? $data_layer : null,
+            'analysis_layer' => '' !== $analysis_layer ? $analysis_layer : null,
+            'advisory_layer' => $advisory_layer,
+        );
+    }
+
+    protected static function build_data_layer_from_context( $context ) {
+        if ( empty( $context['job_title'] ) ) {
+            return '';
+        }
+
+        $summary = ( ! empty( $context['summary'] ) && is_array( $context['summary'] ) ) ? $context['summary'] : array();
+        if ( empty( $summary ) ) {
+            return '';
+        }
+
+        $lines = array();
+        $lines[] = 'عنوان شغل: ' . (string) $context['job_title'];
+
+        $count_reports = isset( $summary['count_reports'] ) ? (int) $summary['count_reports'] : 0;
+        $window_months = isset( $summary['window_months'] ) ? (int) $summary['window_months'] : null;
+        $window_label  = $window_months ? 'در ' . $window_months . ' ماه اخیر' : 'در ۱۲ ماه اخیر';
+        $lines[] = 'تعداد نمونه: ' . $count_reports . ' گزارش ' . $window_label . '.';
+
+        $income_count = isset( $summary['income_valid_count'] ) ? (int) $summary['income_valid_count'] : 0;
+        if ( $income_count > 0 ) {
+            $median_label = isset( $summary['median_income_label'] ) ? $summary['median_income_label'] : null;
+            $avg_label    = isset( $summary['avg_income_label'] ) ? $summary['avg_income_label'] : null;
+            $range_label  = self::format_range_label( $summary['min_income'] ?? null, $summary['max_income'] ?? null, 'میلیون تومان در ماه' );
+            if ( $median_label ) {
+                $lines[] = 'میانه درآمد ماهانه: ' . $median_label . ' (' . $income_count . ' گزارش عددی).';
+            } elseif ( $avg_label ) {
+                $lines[] = 'میانگین درآمد ماهانه: ' . $avg_label . ' (' . $income_count . ' گزارش عددی).';
+            }
+            if ( $range_label ) {
+                $lines[] = 'بازه درآمد ماهانه: ' . $range_label . '.';
+            }
+        } else {
+            $lines[] = 'درآمد ماهانه: داده عددی ثبت نشده است.';
+        }
+
+        $invest_label = isset( $summary['avg_investment_label'] ) ? $summary['avg_investment_label'] : null;
+        if ( $invest_label ) {
+            $invest_range = self::format_range_label( $summary['min_investment'] ?? null, $summary['max_investment'] ?? null );
+            $invest_line  = 'میانگین سرمایه اولیه: ' . $invest_label;
+            if ( $invest_range ) {
+                $invest_line .= ' | بازه رایج: ' . $invest_range;
+            }
+            $lines[] = $invest_line . '.';
+        }
+
+        if ( isset( $summary['avg_experience_years'] ) && $summary['avg_experience_years'] ) {
+            $lines[] = 'میانگین سابقه: ' . number_format( (float) $summary['avg_experience_years'], 1 ) . ' سال.';
+        }
+
+        if ( ! empty( $summary['cities'] ) && is_array( $summary['cities'] ) ) {
+            $lines[] = 'شهرهای پرتکرار: ' . implode( '، ', array_slice( $summary['cities'], 0, 5 ) ) . '.';
+        }
+
+        if ( ! empty( $summary['advantages'] ) ) {
+            $lines[] = 'مزایای پرتکرار: ' . implode( '، ', array_slice( (array) $summary['advantages'], 0, 5 ) ) . '.';
+        }
+
+        if ( ! empty( $summary['disadvantages'] ) ) {
+            $lines[] = 'چالش‌های پرتکرار: ' . implode( '، ', array_slice( (array) $summary['disadvantages'], 0, 5 ) ) . '.';
+        }
+
+        return implode( "\n", array_filter( array_map( 'trim', $lines ) ) );
+    }
+
+    protected static function build_analysis_layer_from_context( $context ) {
+        if ( empty( $context['job_title'] ) ) {
+            return '';
+        }
+
+        $summary = ( ! empty( $context['summary'] ) && is_array( $context['summary'] ) ) ? $context['summary'] : array();
+        if ( empty( $summary ) ) {
+            return '';
+        }
+
+        $lines = array();
+
+        $min_income = $summary['min_income'] ?? null;
+        $max_income = $summary['max_income'] ?? null;
+        if ( is_numeric( $min_income ) && is_numeric( $max_income ) && $max_income > 0 ) {
+            $spread_ratio = ( $max_income - $min_income ) / $max_income;
+            if ( $spread_ratio >= 0.6 ) {
+                $lines[] = 'پراکندگی درآمد: بالا (بازه درآمد گسترده است).';
+            } elseif ( $spread_ratio >= 0.3 ) {
+                $lines[] = 'پراکندگی درآمد: متوسط.';
+            } else {
+                $lines[] = 'پراکندگی درآمد: پایین.';
+            }
+        }
+
+        if ( ! empty( $summary['income_variance_reasons'] ) && is_array( $summary['income_variance_reasons'] ) ) {
+            $lines[] = 'دلایل پراکندگی: ' . implode( ' ', array_slice( $summary['income_variance_reasons'], 0, 3 ) );
+        }
+
+        if ( ! empty( $summary['city_breakdown'] ) && is_array( $summary['city_breakdown'] ) ) {
+            $top_city = $summary['city_breakdown'][0] ?? null;
+            $total_city_count = 0;
+            foreach ( $summary['city_breakdown'] as $row ) {
+                $total_city_count += isset( $row['count'] ) ? (int) $row['count'] : 0;
+            }
+            if ( $top_city && $total_city_count > 0 ) {
+                $top_share = isset( $top_city['count'] ) ? (int) $top_city['count'] / $total_city_count : 0;
+                $city_label = isset( $top_city['city'] ) ? (string) $top_city['city'] : '';
+                if ( '' !== $city_label ) {
+                    if ( $top_share >= 0.5 ) {
+                        $lines[] = 'تمرکز شهری: بالا (بیشترین گزارش‌ها از ' . $city_label . ').';
+                    } elseif ( $top_share >= 0.3 ) {
+                        $lines[] = 'تمرکز شهری: متوسط (بیشترین گزارش‌ها از ' . $city_label . ').';
+                    } else {
+                        $lines[] = 'تمرکز شهری: پایین (پراکندگی در چند شهر).';
+                    }
+                }
+            }
+        }
+
+        if ( ! empty( $summary['experience_buckets'] ) && is_array( $summary['experience_buckets'] ) ) {
+            $buckets = $summary['experience_buckets'];
+            $bucket_labels = array(
+                '0-1' => 'کمتر از ۱ سال',
+                '1-3' => '۱ تا ۳ سال',
+                '3-7' => '۳ تا ۷ سال',
+                '7+'  => 'بیش از ۷ سال',
+            );
+            $top_bucket = '';
+            $top_count  = 0;
+            foreach ( $bucket_labels as $key => $label ) {
+                $count = isset( $buckets[ $key ] ) ? (int) $buckets[ $key ] : 0;
+                if ( $count > $top_count ) {
+                    $top_count = $count;
+                    $top_bucket = $label;
+                }
+            }
+            if ( $top_count > 0 && '' !== $top_bucket ) {
+                $lines[] = 'توزیع سابقه: بیشترین گزارش‌ها در بازه ' . $top_bucket . '.';
+            }
+        }
+
+        return implode( "\n", array_filter( array_map( 'trim', $lines ) ) );
+    }
+
+    protected static function is_advisory_request( $normalized_message, $intent_label = '' ) {
+        $intent_label = (string) $intent_label;
+        $advisory_intents = array(
+            'job_suggestion',
+            'home_business',
+            'income_growth_path',
+        );
+        if ( '' !== $intent_label && in_array( $intent_label, $advisory_intents, true ) ) {
+            return true;
+        }
+
+        $keywords = array( 'مشاوره', 'راهنما', 'راهنمایی', 'پیشنهاد', 'بهتره', 'چه کنم', 'چطور', 'راهنماي', 'recommend', 'suggest' );
+        foreach ( $keywords as $keyword ) {
+            if ( '' !== $normalized_message && false !== mb_stripos( $normalized_message, $keyword, 0, 'UTF-8' ) ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected static function format_layered_reply( $layers ) {
+        if ( empty( $layers ) || ! is_array( $layers ) ) {
+            return '';
+        }
+
+        $sections = array();
+        if ( ! empty( $layers['data_layer'] ) ) {
+            $sections[] = "DATA_LAYER\n" . trim( (string) $layers['data_layer'] );
+        }
+        if ( ! empty( $layers['analysis_layer'] ) ) {
+            $sections[] = "ANALYSIS_LAYER\n" . trim( (string) $layers['analysis_layer'] );
+        }
+        if ( ! empty( $layers['advisory_layer'] ) ) {
+            $label = '';
+            if ( is_array( $layers['advisory_layer'] ) ) {
+                $label = isset( $layers['advisory_layer']['label'] ) ? (string) $layers['advisory_layer']['label'] : '';
+                $text  = isset( $layers['advisory_layer']['text'] ) ? (string) $layers['advisory_layer']['text'] : '';
+            } else {
+                $text = (string) $layers['advisory_layer'];
+            }
+            $label_suffix = $label ? ' (' . $label . ')' : '';
+            $sections[] = "ADVISORY_LAYER{$label_suffix}\n" . trim( $text );
+        }
+
+        return implode( "\n\n", array_filter( $sections ) );
     }
 
     public static function delete_cache_for( $message, $category = '', $model = '', $job_title = '', $query_intent = '' ) {
