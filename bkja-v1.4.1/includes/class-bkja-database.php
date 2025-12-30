@@ -2249,6 +2249,7 @@ class BKJA_Database {
         $investment_invalid_count = 0;
         $income_unit_guessed    = false;
         $investment_unit_guessed = false;
+        $analytics_available   = class_exists( 'BKJA_Analytics' );
 
         $sum_experience = 0;
         $exp_count      = 0;
@@ -2288,14 +2289,35 @@ class BKJA_Database {
 
         foreach ( $stat_rows as $srow ) {
             $total_records++;
+            $income_text = isset( $srow->income ) ? trim( (string) $srow->income ) : '';
+            $normalized_income = null;
+            $analytics_status  = null;
+            $analytics_used    = false;
+
             $income_base = $normalize_value( $srow->income_toman );
             if ( null === $income_base && isset( $srow->income_num ) ) {
                 $income_base = $normalize_legacy_or_maybe_million( $srow->income_num, $income_unit_guessed );
             }
 
-            $income_text = isset( $srow->income ) ? trim( (string) $srow->income ) : '';
+            $income_min  = $normalize_value( $srow->income_min_toman );
+            $income_max  = $normalize_value( $srow->income_max_toman );
 
-            if ( $income_base && $income_base > 2000000000 && '' !== $income_text && class_exists( 'BKJA_Parser' ) ) {
+            if ( $analytics_available && '' !== $income_text ) {
+                $normalized_income = BKJA_Analytics::normalize_income_value( $income_text );
+                $analytics_status  = isset( $normalized_income['status'] ) ? $normalized_income['status'] : null;
+                if ( 'ok' === $analytics_status && ! empty( $normalized_income['value_toman'] ) ) {
+                    $income_base = $normalize_value( $normalized_income['value_toman'] );
+                    $analytics_used = (bool) $income_base;
+                    if ( ! empty( $normalized_income['min_toman'] ) ) {
+                        $income_min = $normalize_value( $normalized_income['min_toman'] );
+                    }
+                    if ( ! empty( $normalized_income['max_toman'] ) ) {
+                        $income_max = $normalize_value( $normalized_income['max_toman'] );
+                    }
+                }
+            }
+
+            if ( ! $analytics_used && $income_base && $income_base > 2000000000 && '' !== $income_text && class_exists( 'BKJA_Parser' ) ) {
                 $reparsed_income = BKJA_Parser::parse_income_to_toman( $income_text );
                 if ( 'ok' === $reparsed_income['status'] && ! empty( $reparsed_income['value'] ) ) {
                     $normalized_reparsed = $normalize_value( $reparsed_income['value'] );
@@ -2305,15 +2327,12 @@ class BKJA_Database {
                 }
             }
 
-            if ( $income_base && $income_base > 2000000000 && '' !== $income_text && class_exists( 'BKJA_RuleEngine' ) ) {
+            if ( ! $analytics_used && $income_base && $income_base > 2000000000 && '' !== $income_text && class_exists( 'BKJA_RuleEngine' ) ) {
                 $normalized_context_income = BKJA_RuleEngine::normalize_income_from_context_to_toman( $income_text, '' );
                 if ( $normalized_context_income && $normalized_context_income >= 1000000 && $normalized_context_income <= 2000000000 ) {
                     $income_base = (int) $normalized_context_income;
                 }
             }
-
-            $income_min  = $normalize_value( $srow->income_min_toman );
-            $income_max  = $normalize_value( $srow->income_max_toman );
 
             if ( $income_min ) {
                 $income_range_mins[] = $income_min;
@@ -2341,15 +2360,19 @@ class BKJA_Database {
                     $income_valid_count++;
                 }
             } else {
-                if ( '' !== $income_text && class_exists( 'BKJA_Parser' ) ) {
+                $parsed_fallback = false;
+                if ( '' !== $income_text && ! $analytics_used && class_exists( 'BKJA_Parser' ) ) {
                     if ( $is_income_composite( $income_text ) ) {
                         $income_invalid_count++;
+                        $parsed_fallback = true;
                     } else {
                         $parsed = BKJA_Parser::parse_income_to_toman( $income_text );
                         if ( 'unknown' === $parsed['status'] ) {
                             $income_unknown_count++;
+                            $parsed_fallback = true;
                         } elseif ( in_array( $parsed['status'], array( 'invalid', 'ambiguous_unit' ), true ) ) {
                             $income_invalid_count++;
+                            $parsed_fallback = true;
                         } elseif ( 'ok' === $parsed['status'] && ! empty( $parsed['value'] ) ) {
                             $parsed_value = $normalize_value( $parsed['value'] );
                             $parsed_note  = isset( $parsed['note'] ) ? (string) $parsed['note'] : '';
@@ -2367,24 +2390,25 @@ class BKJA_Database {
                             if ( $parsed_max ) {
                                 $income_range_maxes[] = $parsed_max;
                             }
+                            $parsed_fallback = true;
                         }
                     }
-                } elseif ( '' !== $income_text && class_exists( 'BKJA_Analytics' ) ) {
-                    $normalized_income = BKJA_Analytics::normalize_income_value( $income_text );
-                    if ( 'ok' === $normalized_income['status'] && ! empty( $normalized_income['value_toman'] ) ) {
-                        $normalized_value = $normalize_value( $normalized_income['value_toman'] );
-                        if ( $normalized_value && ! $is_ambiguous_outlier( $normalized_value, $income_text ) ) {
-                            $income_values[] = $normalized_value;
-                            $income_valid_count++;
-                        } else {
-                            $income_invalid_count++;
-                        }
-                        if ( ! empty( $normalized_income['min_toman'] ) ) {
-                            $income_range_mins[] = $normalize_value( $normalized_income['min_toman'] );
-                        }
-                        if ( ! empty( $normalized_income['max_toman'] ) ) {
-                            $income_range_maxes[] = $normalize_value( $normalized_income['max_toman'] );
-                        }
+                }
+
+                if ( ! $parsed_fallback && '' !== $income_text && ! $analytics_used && class_exists( 'BKJA_RuleEngine' ) ) {
+                    $normalized_context_income = BKJA_RuleEngine::normalize_income_from_context_to_toman( $income_text, '' );
+                    if ( $normalized_context_income && ! $is_ambiguous_outlier( $normalized_context_income, $income_text ) ) {
+                        $income_values[] = (int) $normalized_context_income;
+                        $income_valid_count++;
+                        $parsed_fallback = true;
+                    }
+                }
+
+                if ( ! $parsed_fallback && '' !== $income_text && $analytics_status ) {
+                    if ( 'unknown' === $analytics_status ) {
+                        $income_unknown_count++;
+                    } elseif ( in_array( $analytics_status, array( 'invalid', 'ambiguous_unit' ), true ) ) {
+                        $income_invalid_count++;
                     }
                 }
             }
@@ -2460,33 +2484,6 @@ class BKJA_Database {
             return $d0 + $d1;
         };
 
-        $detect_iqr_outliers = function( $values ) use ( $quantile ) {
-            $values = array_values( $values );
-            $count  = count( $values );
-            if ( $count < 4 ) {
-                return array( 'values' => $values, 'has_outliers' => false );
-            }
-            sort( $values, SORT_NUMERIC );
-            $q1  = $quantile( $values, 0.25 );
-            $q3  = $quantile( $values, 0.75 );
-            $iqr = $q3 - $q1;
-            if ( $iqr <= 0 ) {
-                return array( 'values' => $values, 'has_outliers' => false );
-            }
-            $lower = $q1 - ( 1.5 * $iqr );
-            $upper = $q3 + ( 1.5 * $iqr );
-            $filtered = array();
-            $has_outliers = false;
-            foreach ( $values as $v ) {
-                if ( $v < $lower || $v > $upper ) {
-                    $has_outliers = true;
-                    continue;
-                }
-                $filtered[] = $v;
-            }
-            return array( 'values' => ! empty( $filtered ) ? $filtered : $values, 'has_outliers' => $has_outliers );
-        };
-
         $prepare_trimmed = function( $values, $trim_ratio = 0.1 ) {
             $values = array_values( $values );
             $count  = count( $values );
@@ -2503,12 +2500,23 @@ class BKJA_Database {
 
         $income_values     = array_values( $income_values );
         sort( $income_values, SORT_NUMERIC );
-        $iqr_result        = $detect_iqr_outliers( $income_values );
-        $income_filtered   = $iqr_result['values'];
-        $income_used       = count( $income_filtered );
-        $outlier_info      = class_exists( 'BKJA_Analytics' ) ? BKJA_Analytics::detect_outliers( $income_values ) : array( 'outliers' => array(), 'has_outliers' => false, 'method' => 'none' );
-        $income_outliers   = isset( $outlier_info['outliers'] ) ? array_values( $outlier_info['outliers'] ) : array();
+        $outlier_info      = $analytics_available ? BKJA_Analytics::detect_outliers( $income_values ) : array( 'outliers' => array(), 'has_outliers' => false, 'method' => 'none' );
+        $income_outliers   = isset( $outlier_info['outliers'] ) ? array_values( (array) $outlier_info['outliers'] ) : array();
         $income_has_outliers = ! empty( $income_outliers );
+        $income_filtered   = $income_values;
+        if ( $income_has_outliers ) {
+            $income_filtered = array();
+            foreach ( $income_values as $value ) {
+                if ( in_array( $value, $income_outliers, true ) ) {
+                    continue;
+                }
+                $income_filtered[] = $value;
+            }
+            if ( empty( $income_filtered ) ) {
+                $income_filtered = $income_values;
+            }
+        }
+        $income_used       = count( $income_filtered );
 
         $calc_median = function( $values ) {
             $values = array_filter( $values, function( $v ) { return is_numeric( $v ) && $v > 0; } );
@@ -2543,9 +2551,8 @@ class BKJA_Database {
             $avg_income_method = 'median';
             $avg_income        = $median_income;
         } else {
-            $has_iqr_outliers = ! empty( $iqr_result['has_outliers'] );
-            $avg_income_method = $has_iqr_outliers ? 'trimmed_mean' : 'mean';
-            $mean_values       = $has_iqr_outliers ? $prepare_trimmed( $income_values, 0.1 ) : $income_filtered;
+            $avg_income_method = $income_has_outliers ? 'trimmed_mean' : 'mean';
+            $mean_values       = $income_has_outliers ? $prepare_trimmed( $income_filtered, 0.1 ) : $income_filtered;
             $avg_income        = $calc_avg( $mean_values );
         }
 
@@ -3223,22 +3230,61 @@ class BKJA_Database {
 
         $rows = $wpdb->get_results(
             "SELECT j.job_title_id,
-                    COALESCE(NULLIF(j.income_toman, 0), NULLIF(j.income_num, 0)) AS income_value
+                    j.income,
+                    j.income_toman,
+                    j.income_num
              FROM {$table_jobs} j
              INNER JOIN {$table_titles} jt ON jt.id = j.job_title_id
              WHERE jt.is_visible = 1
                AND j.job_title_id IS NOT NULL
-               AND (j.income_toman IS NOT NULL OR j.income_num IS NOT NULL)"
+               AND (j.income IS NOT NULL OR j.income_toman IS NOT NULL OR j.income_num IS NOT NULL)"
         );
 
         if ( empty( $rows ) ) {
             return array();
         }
 
+        $normalize_legacy_or_maybe_million = function( $value ) {
+            if ( ! is_numeric( $value ) ) {
+                return null;
+            }
+
+            $value = (int) $value;
+            if ( $value <= 0 ) {
+                return null;
+            }
+
+            if ( $value < 1000000 ) {
+                $value = $value * 1000000;
+            }
+
+            return $value;
+        };
+
+        $analytics_available = class_exists( 'BKJA_Analytics' );
+
         $grouped = array();
         foreach ( $rows as $row ) {
             $job_id = isset( $row->job_title_id ) ? (int) $row->job_title_id : 0;
-            $value  = isset( $row->income_value ) ? (int) $row->income_value : 0;
+            $value  = 0;
+            $income_text = isset( $row->income ) ? trim( (string) $row->income ) : '';
+            if ( $analytics_available && '' !== $income_text ) {
+                $normalized = BKJA_Analytics::normalize_income_value( $income_text );
+                if ( 'ok' === $normalized['status'] && ! empty( $normalized['value_toman'] ) ) {
+                    $value = (int) $normalized['value_toman'];
+                }
+            }
+
+            if ( $value <= 0 && isset( $row->income_toman ) && (int) $row->income_toman > 0 ) {
+                $value = (int) $row->income_toman;
+            }
+            if ( $value <= 0 && isset( $row->income_num ) && (int) $row->income_num > 0 ) {
+                $legacy_value = $normalize_legacy_or_maybe_million( $row->income_num );
+                if ( $legacy_value ) {
+                    $value = $legacy_value;
+                }
+            }
+
             if ( $job_id <= 0 || $value <= 0 ) {
                 continue;
             }
