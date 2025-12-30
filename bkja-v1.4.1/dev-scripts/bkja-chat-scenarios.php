@@ -1,5 +1,40 @@
 <?php
 define( 'ABSPATH', __DIR__ . '/../' );
+define( 'BKJA_DEV_SCRIPT', true );
+
+if ( ! function_exists( 'wp_parse_args' ) ) {
+    function wp_parse_args( $args, $defaults = array() ) {
+        if ( is_object( $args ) ) {
+            $args = get_object_vars( $args );
+        }
+        if ( is_array( $args ) ) {
+            return array_merge( $defaults, $args );
+        }
+        $parsed = array();
+        if ( is_string( $args ) ) {
+            parse_str( $args, $parsed );
+        }
+        return array_merge( $defaults, $parsed );
+    }
+}
+
+if ( ! function_exists( 'wp_strip_all_tags' ) ) {
+    function wp_strip_all_tags( $text ) {
+        return strip_tags( $text );
+    }
+}
+
+if ( ! function_exists( 'wp_json_encode' ) ) {
+    function wp_json_encode( $data, $options = 0, $depth = 512 ) {
+        return json_encode( $data, $options, $depth );
+    }
+}
+
+if ( ! function_exists( 'get_option' ) ) {
+    function get_option( $option, $default = false ) {
+        return $default;
+    }
+}
 
 require_once __DIR__ . '/../includes/class-bkja-analytics.php';
 require_once __DIR__ . '/../includes/class-bkja-database.php';
@@ -51,6 +86,20 @@ $assert( 'TOP_INCOME_JOBS' === $intent, 'high income intent routes to TOP_INCOME
 $summary = BKJA_Analytics::summarize_income_samples( array( 50000000, 60000000, 55000000, 16500000000 ) );
 $max = isset( $summary['max'] ) ? (int) $summary['max'] : 0;
 $assert( $max > 0 && $max < 1000000000, 'outlier removed from income summary' );
+
+$direct_payload = BKJA_Chat::call_openai(
+    'پردرآمدترین مشاغل چیه',
+    array(
+        'session_id'     => 'dev-session-1',
+        'job_title_id'   => 123,
+        'job_title_hint' => 'حسابدار',
+        'job_slug'       => 'accountant',
+    )
+);
+$direct_intent = is_array( $direct_payload ) && isset( $direct_payload['intent_label'] ) ? $direct_payload['intent_label'] : '';
+$assert( 'TOP_INCOME_JOBS' === $direct_intent, 'session job context still routes to TOP_INCOME_JOBS' );
+$direct_text = is_array( $direct_payload ) && isset( $direct_payload['text'] ) ? $direct_payload['text'] : '';
+$assert( false === strpos( $direct_text, 'این عنوان را دقیق پیدا نکردم' ), 'direct intent avoids job clarification message' );
 
 if ( $failed ) {
     exit( 1 );

@@ -1426,6 +1426,37 @@
                 return String(text).replace(/[\s‌]+/g,' ').trim().toLowerCase();
             }
 
+            function isGeneralIntentMessage(message){
+                var normalized = normalizeForMatch(message);
+                if(!normalized){
+                    return false;
+                }
+                var compact = normalized.replace(/\s+/g,'');
+                var patterns = [
+                    'پردرآمدترین',
+                    'پر درآمدترین',
+                    'بیشترین درآمد',
+                    'شغل خانگی',
+                    'کار در خانه',
+                    'افزایش درآمد',
+                    'چطور درآمد',
+                    'سرمایه دارم',
+                    'با سرمایه',
+                    'خانگی بهتره یا آزاد'
+                ];
+                for(var i=0;i<patterns.length;i++){
+                    var pattern = normalizeForMatch(patterns[i]);
+                    if(!pattern){
+                        continue;
+                    }
+                    var compactPattern = pattern.replace(/\s+/g,'');
+                    if(normalized.indexOf(pattern) !== -1 || compact.indexOf(compactPattern) !== -1){
+                        return true;
+                    }
+                }
+                return false;
+            }
+
             function isLikelyFollowupMessage(message){
                 var normalized = normalizeForMatch(message);
                 if(!normalized){
@@ -1641,6 +1672,7 @@
                 }
 
                 var sendOptions = { contextMessage: text };
+                var jobContextExplicit = false;
                 var explicitJobHintInMessage = hasExplicitJobHint(text);
                 var followupMessage = isLikelyFollowupMessage(text);
                 if(typeof options.category === 'string' && options.category.length){
@@ -1659,19 +1691,23 @@
                 var explicitJobTitle = cleanJobHint(options.jobTitle);
                 if(explicitJobTitle){
                     sendOptions.jobTitle = explicitJobTitle;
+                    jobContextExplicit = true;
                 }
 
                 var explicitJobSlug = cleanJobHint(options.jobSlug);
                 if(explicitJobSlug){
                     sendOptions.jobSlug = explicitJobSlug;
+                    jobContextExplicit = true;
                 }
 
                 if(options.jobTitleId){
                     sendOptions.jobTitleId = options.jobTitleId;
+                    jobContextExplicit = true;
                 }
 
                 if(options.groupKey){
                     sendOptions.groupKey = options.groupKey;
+                    jobContextExplicit = true;
                 }
 
                 var normalizedSameJob = $.trim(String(text || '')).replace(/\s+/g,'').toLowerCase();
@@ -1706,6 +1742,7 @@
                     }
                 }
 
+                sendOptions._jobContextExplicit = jobContextExplicit;
                 sendOptions._bypassLimit = true;
                 sendMessageToServer(text, sendOptions);
             }
@@ -1728,6 +1765,8 @@
                 }
                 ensureSession();
                 var contextMessage = opts.contextMessage || message;
+                var normalizedMessage = normalizeForMatch(message);
+                var isGeneralMessage = isGeneralIntentMessage(normalizedMessage);
                 var payload = new URLSearchParams();
                 payload.append('action', 'bkja_send_message');
                 payload.append('nonce', config.nonce);
@@ -1740,6 +1779,14 @@
                 var groupKeyParam = opts.groupKey ? String(opts.groupKey) : '';
                 var followupActionParam = opts.followupAction ? String(opts.followupAction) : '';
                 var offsetParam = (typeof opts.offset !== 'undefined' && opts.offset !== null) ? parseInt(opts.offset, 10) : '';
+                var allowJobContext = !!followupActionParam || !!opts._jobContextExplicit;
+
+                if(isGeneralMessage || !allowJobContext){
+                    jobTitleParam = '';
+                    jobSlugParam = '';
+                    jobTitleIdParam = '';
+                    groupKeyParam = '';
+                }
                 payload.append('job_title', jobTitleParam || '');
                 payload.append('job_slug', jobSlugParam || '');
                 payload.append('job_title_id', jobTitleIdParam || '');
