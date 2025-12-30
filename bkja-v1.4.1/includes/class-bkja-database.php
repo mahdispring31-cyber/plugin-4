@@ -1162,6 +1162,8 @@ class BKJA_Database {
 
         $min_score     = isset( $options['min_score'] ) ? (float) $options['min_score'] : 28;
         $min_match_len = isset( $options['min_match_len'] ) ? (int) $options['min_match_len'] : 3;
+        $min_confidence = isset( $options['min_confidence'] ) ? (float) $options['min_confidence'] : 0.7;
+        $min_experiences = isset( $options['min_experiences'] ) ? (int) $options['min_experiences'] : 3;
 
         if ( empty( $candidates ) ) {
             return array(
@@ -1171,8 +1173,10 @@ class BKJA_Database {
                 'slug'                 => '',
                 'job_title_ids'        => array(),
                 'confidence'           => 0.0,
+                'job_match_confidence' => 0.0,
                 'candidates'           => array(),
                 'ambiguous'            => true,
+                'match_reason'         => 'no_candidates',
             );
         }
 
@@ -1181,6 +1185,7 @@ class BKJA_Database {
         $second_score = isset( $candidates[1]['score'] ) ? (float) $candidates[1]['score'] : 0.0;
         $confidence   = $best_score > 0 ? min( 1.0, max( 0.0, ( $best_score - $second_score ) / ( $best_score + 1 ) + 0.6 ) ) : 0.0;
         $ambiguous    = ( count( $candidates ) > 1 && $second_score >= ( $best_score * 0.85 ) );
+        $best_experiences = isset( $best['jobs_count_total'] ) ? (int) $best['jobs_count_total'] : 0;
 
         if ( 1 === count( $candidates ) ) {
             $ambiguous = false;
@@ -1203,8 +1208,55 @@ class BKJA_Database {
                 'slug'                 => '',
                 'job_title_ids'        => array(),
                 'confidence'           => $confidence,
+                'job_match_confidence' => $confidence,
                 'candidates'           => array_slice( $candidates, 0, 5 ),
                 'ambiguous'            => true,
+                'match_reason'         => 'below_threshold',
+            );
+        }
+
+        if ( count( $candidates ) > 1 ) {
+            return array(
+                'matched_job_title_id' => 0,
+                'group_key'            => null,
+                'label'                => '',
+                'slug'                 => '',
+                'job_title_ids'        => array(),
+                'confidence'           => $confidence,
+                'job_match_confidence' => $confidence,
+                'candidates'           => array_slice( $candidates, 0, 5 ),
+                'ambiguous'            => true,
+                'match_reason'         => 'multiple_candidates',
+            );
+        }
+
+        if ( $confidence < $min_confidence ) {
+            return array(
+                'matched_job_title_id' => 0,
+                'group_key'            => null,
+                'label'                => '',
+                'slug'                 => '',
+                'job_title_ids'        => array(),
+                'confidence'           => $confidence,
+                'job_match_confidence' => $confidence,
+                'candidates'           => array_slice( $candidates, 0, 5 ),
+                'ambiguous'            => true,
+                'match_reason'         => 'low_confidence',
+            );
+        }
+
+        if ( $best_experiences < $min_experiences ) {
+            return array(
+                'matched_job_title_id' => 0,
+                'group_key'            => null,
+                'label'                => '',
+                'slug'                 => '',
+                'job_title_ids'        => array(),
+                'confidence'           => $confidence,
+                'job_match_confidence' => $confidence,
+                'candidates'           => array_slice( $candidates, 0, 5 ),
+                'ambiguous'            => true,
+                'match_reason'         => 'insufficient_experience',
             );
         }
 
@@ -1215,8 +1267,10 @@ class BKJA_Database {
             'slug'                 => isset( $best['slug'] ) ? $best['slug'] : '',
             'job_title_ids'        => isset( $best['job_title_ids'] ) ? $best['job_title_ids'] : array(),
             'confidence'           => $confidence,
+            'job_match_confidence' => $confidence,
             'candidates'           => array_slice( $candidates, 0, 5 ),
             'ambiguous'            => $ambiguous,
+            'match_reason'         => 'matched',
         );
     }
 
@@ -1280,8 +1334,10 @@ class BKJA_Database {
                 'slug'                 => $initial_context['slug'],
                 'job_title_ids'        => $initial_context['job_title_ids'],
                 'confidence'           => 1.0,
+                'job_match_confidence' => 1.0,
                 'candidates'           => $candidates,
                 'ambiguous'            => false,
+                'match_reason'         => 'explicit_context',
             );
         }
 
@@ -1458,16 +1514,6 @@ class BKJA_Database {
 
             if ( ! empty( $candidate_map ) ) {
                 break;
-            }
-        }
-
-        if ( empty( $candidate_map ) ) {
-            $fallback_rows = $wpdb->get_results( "SELECT id, group_key, COALESCE(base_label, label) AS label, COALESCE(base_slug, slug) AS slug FROM {$table_titles} WHERE is_visible = 1 LIMIT 200" );
-            foreach ( (array) $fallback_rows as $row ) {
-                $similarity = 0;
-                similar_text( $normalized, $row->label, $similarity );
-                $weight = $similarity >= 70 ? 3 : 1;
-                $add_candidate( $row, $weight, (int) round( $similarity / 10 ), 'fuzzy' );
             }
         }
 
