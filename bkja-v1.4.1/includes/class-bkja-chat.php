@@ -249,11 +249,17 @@ class BKJA_Chat {
                 continue;
             }
 
+            $sample_count = isset( $row->cnt ) ? (int) $row->cnt : 0;
+            if ( $sample_count < 3 ) {
+                continue;
+            }
+
             $options[] = array(
                 'label'        => (string) $row->label,
                 'job_title_id' => isset( $row->id ) ? (int) $row->id : null,
                 'group_key'    => isset( $row->group_key ) ? $row->group_key : '',
                 'slug'         => isset( $row->slug ) ? $row->slug : '',
+                'sample_count' => $sample_count,
             );
         }
 
@@ -1546,15 +1552,23 @@ class BKJA_Chat {
         if ( empty( $items ) ) {
             $fallbacks = self::get_safe_job_suggestions( 3 );
             foreach ( $fallbacks as $fallback ) {
-                $items[] = array( 'label' => $fallback['label'], 'tags' => array() );
+                $items[] = array(
+                    'label'        => $fallback['label'],
+                    'tags'         => array(),
+                    'sample_count' => $fallback['sample_count'] ?? 0,
+                );
             }
             $data_based = false;
         }
 
         $lines = array();
         $lines[] = 'انتخاب بین شغل خانگی و آزاد به هدف درآمدی، زمان آزاد و تحمل ریسک بستگی دارد.';
-        $lines[] = 'برای شروع، ۳ گزینه قابل بررسی:';
-        $lines   = array_merge( $lines, self::build_job_list_lines( $items ) );
+        $lines[] = 'برای شروع، چند گزینه قابل بررسی:';
+        $job_lines = self::build_job_list_lines( $items );
+        if ( empty( $job_lines ) ) {
+            return self::build_path_only_response( 'HOME_JOBS_SUGGESTION', $normalized_message, array() );
+        }
+        $lines   = array_merge( $lines, $job_lines );
 
         if ( $data_based ) {
             $lines[] = 'این نمونه‌ها بر اساس داده‌های ثبت‌شده کاربران در شهر ' . $city . ' است.';
@@ -1621,16 +1635,15 @@ class BKJA_Chat {
             $lines[] = '• ' . $point;
         }
 
-        if ( ! empty( $items ) ) {
+        $job_lines = self::build_job_list_lines( $items );
+        if ( ! empty( $job_lines ) ) {
             $lines[] = '💡 نمونه شغل‌های قابل بررسی (بر اساس داده‌های ثبت‌شده کاربران):';
-            $lines   = array_merge( $lines, self::build_job_list_lines( $items ) );
+            $lines   = array_merge( $lines, $job_lines );
+            $lines[] = '🧾 جمع‌بندی: این پیشنهادها برای شروع مسیر است و نیاز به شخصی‌سازی دارد.';
+            $lines[] = '➡️ قدم بعدی: شهر، مهارت‌ها و زمان آزاد را بگو تا دقیق‌تر پیشنهاد بدهم.';
         } else {
-            $lines[] = '💡 داده مستقیم نداریم تا نمونه دقیق پیشنهاد دهیم.';
+            return self::build_path_only_response( $intent_label, $normalized_message, $alias_data );
         }
-
-        $lines[] = '🧾 جمع‌بندی: این پیشنهادها برای شروع مسیر است و نیاز به شخصی‌سازی دارد.';
-        $lines[] = '➡️ قدم بعدی: شهر، مهارت‌ها و زمان آزاد را بگو تا دقیق‌تر پیشنهاد بدهم.';
-        $lines[] = 'این تحلیل بیشتر مشاوره‌ای است و لزوماً مبتنی بر آمار مستقیم نیست.';
 
         return implode( "\n", array_filter( array_map( 'trim', $lines ) ) );
     }
@@ -1785,49 +1798,7 @@ class BKJA_Chat {
     }
 
     protected static function estimate_amount_range( $type, $title = '', $tags = array() ) {
-        $type  = is_string( $type ) ? $type : '';
-        $title = is_string( $title ) ? $title : '';
-        $tags  = array_map( 'strval', (array) $tags );
-
-        $is_home       = in_array( 'home', $tags, true ) || false !== mb_stripos( $title, 'خانگی', 0, 'UTF-8' );
-        $is_low_cap    = in_array( 'low_capital', $tags, true );
-        $is_food       = in_array( 'food', $tags, true ) || preg_match( '/غذا|کیک|شیرینی|دسر|قنادی|آشپزی/u', $title );
-        $category      = self::detect_job_category( $title );
-
-        $ranges = array(
-            'income' => array(
-                'home'     => array( 5000000, 25000000 ),
-                'food'     => array( 8000000, 35000000 ),
-                'technical'=> array( 15000000, 60000000 ),
-                'office'   => array( 12000000, 40000000 ),
-                'general'  => array( 10000000, 35000000 ),
-            ),
-            'capital' => array(
-                'home'     => array( 5000000, 60000000 ),
-                'food'     => array( 10000000, 80000000 ),
-                'technical'=> array( 20000000, 120000000 ),
-                'office'   => array( 10000000, 50000000 ),
-                'general'  => array( 10000000, 80000000 ),
-            ),
-        );
-
-        if ( $is_low_cap ) {
-            return $type === 'capital' ? array( 5000000, 40000000 ) : array( 5000000, 25000000 );
-        }
-
-        if ( $is_food ) {
-            return $ranges[ $type ]['food'];
-        }
-
-        if ( $is_home ) {
-            return $ranges[ $type ]['home'];
-        }
-
-        if ( isset( $ranges[ $type ][ $category ] ) ) {
-            return $ranges[ $type ][ $category ];
-        }
-
-        return $ranges[ $type ]['general'];
+        return array();
     }
 
     protected static function get_risk_level( $investment_max ) {
@@ -1910,7 +1881,7 @@ class BKJA_Chat {
                 LEFT JOIN {$table_jobs} j ON j.job_title_id = jt.id
                 WHERE {$where_sql}
                 GROUP BY jt.id
-                HAVING cnt > 0
+                HAVING cnt >= 3
                 ORDER BY cnt DESC
                 LIMIT %d";
 
@@ -2044,6 +2015,11 @@ class BKJA_Chat {
                 }
             }
 
+            $sample_count = isset( $row->cnt ) ? (int) $row->cnt : 0;
+            if ( $sample_count < 3 ) {
+                continue;
+            }
+
             $candidates[] = array(
                 'label'           => $label,
                 'avg_income'      => $avg_income,
@@ -2053,6 +2029,7 @@ class BKJA_Chat {
                 'min_investment'  => isset( $row->min_investment ) ? (int) $row->min_investment : null,
                 'max_investment'  => $max_investment,
                 'tags'            => $tags,
+                'sample_count'    => $sample_count,
             );
         }
 
@@ -2071,42 +2048,76 @@ class BKJA_Chat {
                 continue;
             }
 
-            $tags = isset( $item['tags'] ) ? (array) $item['tags'] : array();
+            $sample_count = isset( $item['sample_count'] ) ? (int) $item['sample_count'] : 0;
+            if ( $sample_count < 3 ) {
+                continue;
+            }
+
+            $segments = array();
+            $segments[] = $title;
+            $segments[] = 'تجربه: ' . $sample_count;
+
             $income_range = self::format_range_label( $item['min_income'] ?? null, $item['max_income'] ?? null, 'میلیون تومان در ماه' );
-            if ( '' === $income_range ) {
-                $estimate = self::estimate_amount_range( 'income', $title, $tags );
-                $income_range = self::format_range_label( $estimate[0], $estimate[1], 'میلیون تومان در ماه' );
+            if ( '' !== $income_range ) {
+                $segments[] = 'درآمد: ' . $income_range;
             }
 
             $capital_range = self::format_range_label( $item['min_investment'] ?? null, $item['max_investment'] ?? null );
-            if ( '' === $capital_range ) {
-                $estimate = self::estimate_amount_range( 'capital', $title, $tags );
-                $capital_range = self::format_range_label( $estimate[0], $estimate[1] );
+            if ( '' !== $capital_range ) {
+                $segments[] = 'سرمایه: ' . $capital_range;
             }
 
-            $risk = self::get_risk_level( $item['max_investment'] ?? 0 );
-            $fit  = self::get_personality_fit( $title, $tags );
+            if ( empty( $income_range ) && empty( $capital_range ) ) {
+                $segments[] = 'اطلاعات عددی محدود است.';
+            }
 
-            $lines[] = '• ' . $title . ' | سرمایه: ' . $capital_range . ' | درآمد: ' . $income_range . ' | ریسک: ' . $risk . ' | مناسب برای: ' . $fit;
+            $lines[] = '• ' . implode( ' | ', $segments );
         }
 
         return $lines;
     }
 
     protected static function build_job_list_response( $items, $intro = '', $disclaimer = '' ) {
-        if ( empty( $items ) ) {
-            return '';
-        }
-
         $lines = array();
         if ( '' !== $intro ) {
             $lines[] = $intro;
         }
 
-        $lines = array_merge( $lines, self::build_job_list_lines( $items ) );
+        $job_lines = self::build_job_list_lines( $items );
+        if ( empty( $job_lines ) ) {
+            return self::build_path_only_response( 'JOB_LIST', '', array() );
+        }
+
+        $lines = array_merge( $lines, $job_lines );
         if ( '' !== $disclaimer ) {
             $lines[] = $disclaimer;
         }
+
+        return implode( "\n", array_filter( array_map( 'trim', $lines ) ) );
+    }
+
+    protected static function build_path_only_response( $intent_label, $normalized_message, $alias_data = array() ) {
+        $intent_label = is_string( $intent_label ) ? $intent_label : '';
+        $normalized_message = is_string( $normalized_message ) ? $normalized_message : '';
+        $alias_data = is_array( $alias_data ) ? $alias_data : array();
+
+        $heading_map = array(
+            'CAREER_SUGGESTION'      => 'مسیر پیشنهادی برای انتخاب شغل',
+            'GENERAL_BUSINESS_QUERY' => 'مسیر پیشنهادی برای بررسی ایده کسب‌وکار',
+            'LOW_CAPITAL_QUERY'      => 'مسیر پیشنهادی برای شروع با سرمایه کم',
+            'HOME_JOBS_SUGGESTION'   => 'مسیر پیشنهادی برای شغل خانگی',
+            'JOB_LIST'               => 'مسیر پیشنهادی برای بررسی گزینه‌ها',
+        );
+
+        $heading = isset( $heading_map[ $intent_label ] ) ? $heading_map[ $intent_label ] : 'مسیر پیشنهادی';
+        $lines = array(
+            '🧭 ' . $heading,
+            '• هدف و شرایط شخصی را شفاف کن (شهر، زمان آزاد، مهارت‌ها).',
+            '• از تجربه‌های ثبت‌شده کاربران فقط برای مقایسه کیفی استفاده کن.',
+            '• چند مسیر یادگیری/شروع را سبک سنگین کن و یکی را برای آزمون انتخاب کن.',
+            '• با یک نمونه کوچک یا پروژه آزمایشی بازار را تست کن.',
+            '• اگر داده دقیق‌تر می‌خواهی، یک عنوان شغلی مشخص یا شهر را بگو.',
+        );
 
         return implode( "\n", array_filter( array_map( 'trim', $lines ) ) );
     }
@@ -2143,34 +2154,11 @@ class BKJA_Chat {
             $title = $alias_titles[0];
         }
 
-        $tags = array();
-        if ( ! empty( $alias_data['tags'] ) ) {
-            $tags = (array) $alias_data['tags'];
-        }
-
-        $summary = ( ! empty( $context['summary'] ) && is_array( $context['summary'] ) ) ? $context['summary'] : array();
-        $min_income = $summary['min_income'] ?? null;
-        $max_income = $summary['max_income'] ?? null;
-        $min_invest = $summary['min_investment'] ?? null;
-        $max_invest = $summary['max_investment'] ?? null;
-
-        $income_range = self::format_range_label( $min_income, $max_income, 'میلیون تومان در ماه' );
-        if ( '' === $income_range ) {
-            $estimate = self::estimate_amount_range( 'income', $title, $tags );
-            $income_range = self::format_range_label( $estimate[0], $estimate[1], 'میلیون تومان در ماه' );
-        }
-
-        $capital_range = self::format_range_label( $min_invest, $max_invest );
-        if ( '' === $capital_range ) {
-            $estimate = self::estimate_amount_range( 'capital', $title, $tags );
-            $capital_range = self::format_range_label( $estimate[0], $estimate[1] );
-        }
-
         $lines = array();
         $subject = $title ? 'برای «' . $title . '»' : 'در این حوزه';
         $lines[] = '⚠️ داده مستقیم نداریم؛ بنابراین این پاسخ تحلیلی است.';
-        $lines[] = '• ' . $subject . ' بازه تقریبی درآمد: ' . $income_range;
-        $lines[] = '• سرمایه اولیه تقریبی: ' . $capital_range;
+        $lines[] = '• ' . $subject . ' فعلاً داده کافی برای عدد دقیق درآمد نداریم.';
+        $lines[] = '• سرمایه اولیه هم به شهر، مهارت و مدل کاری وابسته است و بدون داده مستقیم عدد نمی‌دهیم.';
         $lines[] = '• عوامل اثرگذار: شهر/محله، کیفیت نمونه‌کار، مهارت بازاریابی، ثبات در سفارش‌ها، هزینه مواد اولیه.';
         $lines[] = '• اگر داده دقیق می‌خواهی، شغل‌های هم‌خانواده با گزارش بیشتر را بررسی کنیم.';
         $lines[] = 'این پاسخ ترکیبی از تحلیل مشاوره‌ای و داده‌های ثبت‌شده کاربران است.';
@@ -3434,7 +3422,11 @@ class BKJA_Chat {
                 if ( empty( $items ) ) {
                     $fallbacks = self::get_safe_job_suggestions( 6 );
                     foreach ( $fallbacks as $fallback ) {
-                        $items[] = array( 'label' => $fallback['label'], 'tags' => array() );
+                        $items[] = array(
+                            'label'        => $fallback['label'],
+                            'tags'         => array(),
+                            'sample_count' => $fallback['sample_count'] ?? 0,
+                        );
                     }
                 }
 
@@ -3603,7 +3595,11 @@ class BKJA_Chat {
             if ( empty( $items ) ) {
                 $fallbacks = self::get_safe_job_suggestions( 6 );
                 foreach ( $fallbacks as $fallback ) {
-                    $items[] = array( 'label' => $fallback['label'], 'tags' => array() );
+                    $items[] = array(
+                        'label'        => $fallback['label'],
+                        'tags'         => array(),
+                        'sample_count' => $fallback['sample_count'] ?? 0,
+                    );
                 }
             }
 
@@ -3867,7 +3863,11 @@ class BKJA_Chat {
             if ( empty( $items ) ) {
                 $fallbacks = self::get_safe_job_suggestions( 6 );
                 foreach ( $fallbacks as $fallback ) {
-                    $items[] = array( 'label' => $fallback['label'], 'tags' => array() );
+                    $items[] = array(
+                        'label'        => $fallback['label'],
+                        'tags'         => array(),
+                        'sample_count' => $fallback['sample_count'] ?? 0,
+                    );
                 }
             }
 
