@@ -3136,7 +3136,7 @@ class BKJA_Chat {
         $advisory_requested = self::is_advisory_request( $normalized_message, $intent_label );
         $text = trim( (string) $text );
 
-        if ( $sample_count < 5 ) {
+        if ( 0 === $sample_count ) {
             $advisory_text = $text;
             if ( '' === $advisory_text ) {
                 $advisory_text = 'برای این سوال داده کافی نداریم و پاسخ صرفاً مشاوره‌ای است.';
@@ -3149,6 +3149,21 @@ class BKJA_Chat {
                 'advisory_layer'=> array(
                     'label' => 'مشاوره‌ای',
                     'text'  => $advisory_text,
+                ),
+            );
+        }
+
+        if ( $sample_count < 5 ) {
+            $data_layer     = self::build_data_layer_from_context( $context );
+            $analysis_layer = self::build_analysis_layer_from_context( $context );
+
+            return array(
+                'sample_count'   => $sample_count,
+                'data_layer'     => '' !== $data_layer ? $data_layer : null,
+                'analysis_layer' => '' !== $analysis_layer ? $analysis_layer : null,
+                'advisory_layer' => array(
+                    'label' => 'هشدار',
+                    'text'  => '⚠️ داده محدود است (' . $sample_count . ' تجربه)؛ اعداد تقریبی‌اند.',
                 ),
             );
         }
