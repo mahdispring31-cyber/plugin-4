@@ -393,6 +393,26 @@ body.bkja-body-lock {
   gap: 6px;
 }
 
+.bkja-layer-icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  display: inline-block;
+  box-shadow: 0 0 0 1px rgba(17, 24, 39, 0.08);
+}
+
+.bkja-layer-icon-data {
+  background: #3b82f6;
+}
+
+.bkja-layer-icon-analysis {
+  background: #10b981;
+}
+
+.bkja-layer-icon-advisory {
+  background: #f59e0b;
+}
+
 .bkja-layer-label {
   background: #fef3c7;
   color: #b45309;

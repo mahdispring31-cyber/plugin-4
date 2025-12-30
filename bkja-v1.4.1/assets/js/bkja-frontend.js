@@ -606,19 +606,19 @@
             var html = '<div class="bkja-layered-response">';
             if(dataLayer){
                 html += '<div class="bkja-layer-section bkja-layer-data">' +
-                    '<div class="bkja-layer-title">DATA_LAYER</div>' +
+                    '<div class="bkja-layer-title"><span class="bkja-layer-icon bkja-layer-icon-data" role="img" aria-label="لایه داده"></span></div>' +
                     '<div class="bkja-layer-body">' + formatMessage(dataLayer) + '</div>' +
                     '</div>';
             }
             if(analysisLayer){
                 html += '<div class="bkja-layer-section bkja-layer-analysis">' +
-                    '<div class="bkja-layer-title">ANALYSIS_LAYER</div>' +
+                    '<div class="bkja-layer-title"><span class="bkja-layer-icon bkja-layer-icon-analysis" role="img" aria-label="لایه تحلیل"></span></div>' +
                     '<div class="bkja-layer-body">' + formatMessage(analysisLayer) + '</div>' +
                     '</div>';
             }
             if(advisoryLayer){
                 html += '<div class="bkja-layer-section bkja-layer-advisory">' +
-                    '<div class="bkja-layer-title">ADVISORY_LAYER <span class="bkja-layer-label">' + esc(advisoryLabel) + '</span></div>' +
+                    '<div class="bkja-layer-title"><span class="bkja-layer-icon bkja-layer-icon-advisory" role="img" aria-label="لایه مشاوره"></span><span class="bkja-layer-label">' + esc(advisoryLabel) + '</span></div>' +
                     '<div class="bkja-layer-body">' + formatMessage(advisoryLayer) + '</div>' +
                     '</div>';
             }
