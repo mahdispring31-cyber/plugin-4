@@ -23,6 +23,10 @@ if ( ! defined( 'BKJA_PLUGIN_VERSION' ) ) {
         define( 'BKJA_PLUGIN_VERSION', '1.5.11' );
 }
 
+if ( ! defined( 'BKJA_CHAT_CACHE_VERSION' ) ) {
+        define( 'BKJA_CHAT_CACHE_VERSION', '2' );
+}
+
 if ( ! function_exists( 'bkja_get_free_message_limit' ) ) {
         function bkja_get_free_message_limit() {
                 $raw = get_option( 'bkja_free_messages_per_day', null );
@@ -309,6 +313,19 @@ add_action( 'plugins_loaded', array( 'BKJA_Database', 'maybe_migrate_numeric_job
 add_action( 'plugins_loaded', array( 'BKJA_Database', 'maybe_backfill_job_titles' ) );
 add_action( 'plugins_loaded', array( 'BKJA_Database', 'maybe_run_job_title_integrity' ) );
 add_action( 'plugins_loaded', array( 'BKJA_Repair', 'register_ajax_hooks' ) );
+add_action( 'plugins_loaded', function() {
+        $stored_version = get_option( 'bkja_plugin_version', '' );
+
+        if ( $stored_version === BKJA_PLUGIN_VERSION ) {
+                return;
+        }
+
+        if ( class_exists( 'BKJA_Chat' ) ) {
+                BKJA_Chat::clear_all_caches();
+        }
+
+        update_option( 'bkja_plugin_version', BKJA_PLUGIN_VERSION );
+} );
 register_activation_hook( __FILE__, array( 'BKJA_Database', 'activate' ) );
 register_activation_hook( __FILE__, 'bkja_cleanup_legacy_free_limit_option' );
 add_action('plugins_loaded', function(){
