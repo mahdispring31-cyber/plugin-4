@@ -345,13 +345,6 @@ class BKJA_Chat {
     protected static function resolve_job_title_from_message( $normalized_message, $table, $title_column ) {
         global $wpdb;
 
-        static $cache = array();
-
-        $cache_key = md5( $normalized_message . '|' . $table . '|' . $title_column );
-        if ( isset( $cache[ $cache_key ] ) ) {
-            return $cache[ $cache_key ];
-        }
-
         $job_title = '';
         $phrases   = self::build_job_lookup_phrases( $normalized_message );
         $normalized_column = "TRIM(REPLACE(REPLACE(REPLACE({$title_column}, 'ي', 'ی'), 'ك', 'ک'), '‌', ' '))";
@@ -407,8 +400,6 @@ class BKJA_Chat {
             }
         }
 
-        $cache[ $cache_key ] = $job_title;
-
         return $job_title;
     }
 
@@ -452,7 +443,7 @@ class BKJA_Chat {
     }
 
     protected static function is_cache_enabled() {
-        return '1' === (string) get_option( 'bkja_enable_cache', '1' );
+        return false;
     }
 
     protected static function get_cache_version() {
@@ -2908,7 +2899,7 @@ class BKJA_Chat {
             }
         }
 
-        return $payload;
+        return self::apply_conversation_state( $payload, $context );
     }
 
     protected static function build_response_layers( $text, $context, $message, $intent_label = '' ) {
@@ -3016,6 +3007,95 @@ class BKJA_Chat {
         }
 
         return implode( "\n", array_filter( array_map( 'trim', $lines ) ) );
+    }
+
+    protected static function resolve_response_mode( $payload, $context ) {
+        if ( isset( $payload['layers'] ) && is_array( $payload['layers'] ) ) {
+            $layers = $payload['layers'];
+            $data_layer = $layers['data_layer'] ?? null;
+            $sample_count = $layers['sample_count'] ?? null;
+            if ( null !== $data_layer && '' !== $data_layer ) {
+                return 'data';
+            }
+            if ( null !== $sample_count && (int) $sample_count < 5 ) {
+                return 'advisory';
+            }
+            if ( ! empty( $layers['analysis_layer'] ) ) {
+                return 'data';
+            }
+            if ( ! empty( $layers['advisory_layer'] ) ) {
+                return 'advisory';
+            }
+        }
+
+        $summary = ( ! empty( $context['summary'] ) && is_array( $context['summary'] ) ) ? $context['summary'] : array();
+        $count_reports = isset( $summary['count_reports'] ) ? (int) $summary['count_reports'] : 0;
+        return $count_reports >= 5 ? 'data' : 'advisory';
+    }
+
+    protected static function resolve_context_city( $payload, $context ) {
+        $meta = isset( $payload['meta'] ) && is_array( $payload['meta'] ) ? $payload['meta'] : array();
+        $city = '';
+        if ( isset( $meta['city'] ) ) {
+            $city = trim( (string) $meta['city'] );
+        }
+        if ( '' === $city && isset( $context['city'] ) ) {
+            $city = trim( (string) $context['city'] );
+        }
+        if ( '' === $city ) {
+            $summary = ( ! empty( $context['summary'] ) && is_array( $context['summary'] ) ) ? $context['summary'] : array();
+            if ( ! empty( $summary['city_breakdown'] ) && is_array( $summary['city_breakdown'] ) ) {
+                $top_city = $summary['city_breakdown'][0] ?? null;
+                if ( is_array( $top_city ) && ! empty( $top_city['city'] ) ) {
+                    $city = trim( (string) $top_city['city'] );
+                }
+            }
+        }
+
+        return $city;
+    }
+
+    protected static function build_conversation_state( $payload, $context ) {
+        $meta = isset( $payload['meta'] ) && is_array( $payload['meta'] ) ? $payload['meta'] : array();
+        $intent = '';
+        if ( isset( $payload['intent_label'] ) && '' !== (string) $payload['intent_label'] ) {
+            $intent = (string) $payload['intent_label'];
+        } elseif ( isset( $meta['intent_label'] ) ) {
+            $intent = (string) $meta['intent_label'];
+        }
+
+        $job_id = null;
+        if ( isset( $payload['job_title_id'] ) && (int) $payload['job_title_id'] > 0 ) {
+            $job_id = (int) $payload['job_title_id'];
+        } elseif ( isset( $meta['job_title_id'] ) && (int) $meta['job_title_id'] > 0 ) {
+            $job_id = (int) $meta['job_title_id'];
+        }
+
+        $city = self::resolve_context_city( $payload, $context );
+        $mode = self::resolve_response_mode( $payload, $context );
+
+        return array(
+            'last_intent' => $intent,
+            'last_job_id' => $job_id,
+            'last_city'   => $city,
+            'last_mode'   => $mode,
+        );
+    }
+
+    protected static function apply_conversation_state( $payload, $context ) {
+        if ( ! is_array( $payload ) ) {
+            return $payload;
+        }
+
+        if ( ! isset( $payload['meta'] ) || ! is_array( $payload['meta'] ) ) {
+            $payload['meta'] = array();
+        }
+
+        $state = self::build_conversation_state( $payload, $context );
+        $payload['conversation_state'] = $state;
+        $payload['meta']['conversation_state'] = $state;
+
+        return $payload;
     }
 
     protected static function build_analysis_layer_from_context( $context ) {
@@ -3344,7 +3424,24 @@ class BKJA_Chat {
             $is_followup_only = false;
         }
 
-        if ( $job_title_id <= 0 && ! $is_followup_action && $is_followup_only ) {
+        $last_meta = array();
+        if ( class_exists( 'BKJA_Database' ) ) {
+            $last_meta = BKJA_Database::get_last_chat_meta( $args['session_id'], (int) $args['user_id'] );
+        }
+        $last_state = isset( $last_meta['conversation_state'] ) && is_array( $last_meta['conversation_state'] )
+            ? $last_meta['conversation_state']
+            : array();
+        $last_intent = isset( $last_state['last_intent'] ) ? (string) $last_state['last_intent'] : ( $last_meta['intent_label'] ?? '' );
+        $intent_changed = '' !== $last_intent && '' !== $intent_label && $last_intent !== $intent_label;
+        if ( $intent_changed ) {
+            $is_followup_only  = false;
+            $followup_reference = false;
+            $normalized_action = '';
+            $is_followup_action = false;
+            $followup_action    = '';
+        }
+
+        if ( $job_title_id <= 0 && ! $is_followup_action && $is_followup_only && ! $intent_changed ) {
             $recent_job_id = self::get_last_job_context( $args['session_id'], (int) $args['user_id'] );
             if ( $recent_job_id > 0 ) {
                 $job_title_id = $recent_job_id;
@@ -3370,7 +3467,7 @@ class BKJA_Chat {
             $payload['meta'] = array();
             $payload['suggestions'] = array();
 
-            return $payload;
+            return self::apply_conversation_state( $payload, array() );
         }
 
         $direct_intents = array( 'TOP_INCOME_JOBS', 'TECHNICAL_JOBS_COMPARISON', 'HOME_JOBS_SUGGESTION', 'INCOME_GROWTH_ADVICE' );
@@ -4174,7 +4271,7 @@ class BKJA_Chat {
             }
         }
 
-        return $payload;
+        return self::apply_conversation_state( $payload, $context );
     }
 
 }
