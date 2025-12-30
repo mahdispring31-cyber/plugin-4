@@ -527,11 +527,13 @@ class BKJA_Chat {
         $job_title  = is_string( $job_title ) ? trim( $job_title ) : '';
         $query_intent = is_string( $query_intent ) ? trim( $query_intent ) : '';
         $version    = self::get_cache_version();
+        $logic_version = defined( 'BKJA_CHAT_CACHE_VERSION' ) ? BKJA_CHAT_CACHE_VERSION : '1';
 
         $parts = array(
             'msg:' . $normalized,
             'cat:' . $category,
             'm:' . $model,
+            'logic:' . $logic_version,
         );
 
         if ( '' !== $job_title ) {
