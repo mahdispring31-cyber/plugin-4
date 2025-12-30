@@ -2046,6 +2046,40 @@ class BKJA_Database {
     }
 
     /**
+     * get_last_chat_meta
+     * آخرین متای ذخیره‌شده گفتگو را برمی‌گرداند.
+     */
+    public static function get_last_chat_meta( $session_id = '', $user_id = 0 ) {
+        global $wpdb;
+        $table = $wpdb->prefix . 'bkja_chats';
+
+        $where  = '';
+        $params = array();
+        if ( $user_id ) {
+            $where    = 'user_id = %d';
+            $params[] = (int) $user_id;
+        } elseif ( ! empty( $session_id ) ) {
+            $where    = 'session_id = %s';
+            $params[] = $session_id;
+        } else {
+            return array();
+        }
+
+        $sql = "SELECT meta FROM {$table} WHERE {$where} AND meta IS NOT NULL AND meta <> '' ORDER BY created_at DESC, id DESC LIMIT 1";
+        $row = $wpdb->get_row( $wpdb->prepare( $sql, $params ) );
+        if ( ! $row || empty( $row->meta ) ) {
+            return array();
+        }
+
+        $decoded = json_decode( $row->meta, true );
+        if ( ! is_array( $decoded ) ) {
+            return array();
+        }
+
+        return $decoded;
+    }
+
+    /**
      * helper: get_category_id_by_name
      */
     public static function get_category_id_by_name($name) {
