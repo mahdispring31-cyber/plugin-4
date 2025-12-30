@@ -83,6 +83,15 @@ $assert( ! empty( $resolved['ambiguous'] ), 'unrelated query stays ambiguous' );
 $intent = BKJA_Chat::debug_detect_intent_label( 'پردرآمدترین مشاغل', array() );
 $assert( 'TOP_INCOME_JOBS' === $intent, 'high income intent routes to TOP_INCOME_JOBS' );
 
+$intent = BKJA_Chat::debug_detect_intent_label( 'پرستار', array() );
+$assert( 'JOB_INFO' === $intent, 'short job title routes to JOB_INFO' );
+
+$intent = BKJA_Chat::debug_detect_intent_label( 'پرستار بگو', array() );
+$assert( 'JOB_INFO' === $intent, 'short job title with filler routes to JOB_INFO' );
+
+$intent = BKJA_Chat::debug_detect_intent_label( 'پردرآمدترین مشاغل چیه', array() );
+$assert( 'TOP_INCOME_JOBS' === $intent, 'high income question routes to TOP_INCOME_JOBS' );
+
 $summary = BKJA_Analytics::summarize_income_samples( array( 50000000, 60000000, 55000000, 16500000000 ) );
 $max = isset( $summary['max'] ) ? (int) $summary['max'] : 0;
 $assert( $max > 0 && $max < 1000000000, 'outlier removed from income summary' );
