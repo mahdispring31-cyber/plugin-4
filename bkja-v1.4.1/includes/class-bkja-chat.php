@@ -2138,6 +2138,68 @@ class BKJA_Chat {
         return $count_reports < 2;
     }
 
+    protected static function is_data_insufficient( $context ) {
+        if ( empty( $context['summary'] ) || ! is_array( $context['summary'] ) ) {
+            return true;
+        }
+
+        $summary         = $context['summary'];
+        $count_reports   = isset( $summary['count_reports'] ) ? (int) $summary['count_reports'] : 0;
+        $income_valid    = isset( $summary['income_valid_count'] ) ? (int) $summary['income_valid_count'] : 0;
+        $investment_valid = isset( $summary['investment_valid_count'] ) ? (int) $summary['investment_valid_count'] : 0;
+        $data_limited    = ! empty( $summary['data_limited'] );
+
+        if ( $data_limited || $count_reports < 3 ) {
+            return true;
+        }
+
+        return $income_valid <= 1 && $investment_valid <= 1;
+    }
+
+    protected static function should_apply_guardrail( $intent_label, $query_intent, $context ) {
+        $intent_label = is_string( $intent_label ) ? $intent_label : '';
+        $query_intent = is_string( $query_intent ) ? $query_intent : '';
+        $context      = is_array( $context ) ? $context : array();
+
+        $ambiguous = ! empty( $context['ambiguous'] ) || ! empty( $context['needs_clarification'] )
+            || in_array( $query_intent, array( 'clarification', 'fuzzy' ), true );
+        $job_not_precise = empty( $context['job_title'] ) && empty( $context['resolved_job_title'] );
+        $data_low = self::is_data_insufficient( $context );
+
+        $guarded_intents = array(
+            'TOP_INCOME_JOBS',
+            'HOME_JOBS_SUGGESTION',
+            'CAREER_SUGGESTION',
+            'GENERAL_BUSINESS_QUERY',
+            'LOW_CAPITAL_QUERY',
+            'JOB_INCOME',
+        );
+        $guarded_query_intents = array( 'job_suggestion', 'home_business', 'income_query', 'capital_query' );
+
+        $needs_guardrail = in_array( $intent_label, $guarded_intents, true )
+            || in_array( $query_intent, $guarded_query_intents, true );
+
+        return $needs_guardrail && ( $data_low || $ambiguous || $job_not_precise );
+    }
+
+    protected static function build_guardrail_response( $context ) {
+        $context   = is_array( $context ) ? $context : array();
+        $job_title = isset( $context['job_title'] ) ? trim( (string) $context['job_title'] ) : '';
+
+        $lines = array();
+        $lines[] = '• داده کافی ندارم تا عدد درآمد یا لیست شغل دقیق بدهم.';
+
+        if ( '' === $job_title ) {
+            $lines[] = '• دقیقاً کدام شغل یا حوزه و در کدام شهر مدنظرت است؟';
+            $lines[] = '• مسیر بعدی: عنوان شغل و شهر را بده تا داده‌های ثبت‌شده را بررسی کنم یا مسیر رشد درآمد را پیشنهاد بدهم.';
+        } else {
+            $lines[] = '• برای «' . $job_title . '» دقیقاً درآمد می‌خواهی یا مسیر رشد؟';
+            $lines[] = '• مسیر بعدی: شهر، سطح سابقه و نوع همکاری را بگو تا پاسخ دقیق‌تری بدهم یا داده‌های هم‌خانواده را بررسی کنیم.';
+        }
+
+        return implode( "\n", array_filter( array_map( 'trim', $lines ) ) );
+    }
+
     protected static function build_market_analysis_reply( $intent, $context, $normalized_message, $alias_data = array() ) {
         $title = isset( $context['job_title'] ) && $context['job_title'] ? $context['job_title'] : '';
         $alias_titles = ! empty( $alias_data['titles'] ) ? (array) $alias_data['titles'] : array();
@@ -3473,6 +3535,22 @@ class BKJA_Chat {
         $direct_intents = array( 'TOP_INCOME_JOBS', 'TECHNICAL_JOBS_COMPARISON', 'HOME_JOBS_SUGGESTION', 'INCOME_GROWTH_ADVICE' );
         if ( in_array( $intent_label, $direct_intents, true ) && ! $is_followup_action ) {
             self::log_intent_route( $intent_label, 'direct_product' );
+            if ( self::should_apply_guardrail( $intent_label, $pre_intent, array() ) ) {
+                $guardrail_reply = self::build_guardrail_response( array() );
+                return self::ensure_context_meta( self::build_response_payload(
+                    $guardrail_reply,
+                    array(),
+                    $message,
+                    false,
+                    'guardrail',
+                    array(
+                        'model'              => $model,
+                        'category'           => $resolved_category,
+                        'intent_label'       => $intent_label,
+                        'normalized_message' => $normalized_message,
+                    )
+                ), array() );
+            }
             if ( 'TOP_INCOME_JOBS' === $intent_label ) {
                 $top_items = class_exists( 'BKJA_Database' ) ? BKJA_Database::get_top_income_jobs( 6, 2 ) : array();
                 $guided_answer = self::build_high_income_response( $top_items );
@@ -3630,6 +3708,23 @@ class BKJA_Chat {
             }
 
             $context['needs_clarification'] = true;
+            $query_intent = self::detect_query_intent( $normalized_message, $context );
+            if ( self::should_apply_guardrail( $intent_label, $query_intent, $context ) ) {
+                $guardrail_reply = self::build_guardrail_response( $context );
+                return self::ensure_context_meta( self::build_response_payload(
+                    $guardrail_reply,
+                    $context,
+                    $message,
+                    false,
+                    'guardrail',
+                    array(
+                        'model'              => $model,
+                        'category'           => $resolved_category,
+                        'intent_label'       => $intent_label,
+                        'normalized_message' => $normalized_message,
+                    )
+                ), $context );
+            }
             return self::ensure_context_meta( self::build_response_payload(
                 'چند مورد نزدیک پیدا کردم. لطفاً یکی را انتخاب کن یا نام دقیق‌تر بنویس.',
                 $context,
@@ -3658,6 +3753,24 @@ class BKJA_Chat {
             && empty( $context['ambiguous'] )
             && ! $is_followup_action ) {
             self::store_last_job_context( (int) $context['primary_job_title_id'], $args['session_id'], (int) $args['user_id'] );
+        }
+
+        $query_intent = self::detect_query_intent( $normalized_message, $context );
+        if ( self::should_apply_guardrail( $intent_label, $query_intent, $context ) ) {
+            $guardrail_reply = self::build_guardrail_response( $context );
+            return self::ensure_context_meta( self::build_response_payload(
+                $guardrail_reply,
+                $context,
+                $message,
+                false,
+                'guardrail',
+                array(
+                    'model'              => $model,
+                    'category'           => $resolved_category,
+                    'intent_label'       => $intent_label,
+                    'normalized_message' => $normalized_message,
+                )
+            ), $context );
         }
 
         if ( 'JOB_COMPARE' === $intent_label || self::is_compare_similar_intent( $normalized_message ) ) {
@@ -3743,8 +3856,6 @@ class BKJA_Chat {
             $cache_enabled   = false;
             $cache_job_title = '__missing__';
         }
-
-        $query_intent = self::detect_query_intent( $normalized_message, $context );
 
         $cache_key           = self::build_cache_key( $normalized_message, $resolved_category, $model, $cache_job_title, $query_intent );
         $legacy_cache_key    = '';
