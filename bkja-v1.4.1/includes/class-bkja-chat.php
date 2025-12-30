@@ -3711,6 +3711,44 @@ class BKJA_Chat {
 
         if ( in_array( $intent_label, $direct_intents, true ) && ! $is_followup_action ) {
             self::log_intent_route( $intent_label, 'direct_product' );
+            if ( 'TOP_INCOME_JOBS' === $intent_label ) {
+                $top_items = array();
+                if ( class_exists( 'BKJA_Database' ) && ! defined( 'BKJA_DEV_SCRIPT' ) ) {
+                    $top_items = BKJA_Database::get_top_income_jobs( 6, 2 );
+                }
+                if ( ! empty( $top_items ) ) {
+                    $guided_answer = self::build_high_income_response( $top_items );
+
+                    return self::ensure_context_meta( self::build_response_payload(
+                        $guided_answer,
+                        array(),
+                        $message,
+                        false,
+                        'guided_high_income',
+                        array(
+                            'model'        => $model,
+                            'category'     => $resolved_category,
+                            'intent_label' => $intent_label,
+                        )
+                    ), array() );
+                }
+
+                $guardrail_reply = self::build_guardrail_response( array() );
+                return self::ensure_context_meta( self::build_response_payload(
+                    $guardrail_reply,
+                    array(),
+                    $message,
+                    false,
+                    'guardrail',
+                    array(
+                        'model'              => $model,
+                        'category'           => $resolved_category,
+                        'intent_label'       => $intent_label,
+                        'normalized_message' => $normalized_message,
+                    )
+                ), array() );
+            }
+
             if ( self::should_apply_guardrail( $intent_label, $pre_intent, array() ) ) {
                 $guardrail_reply = self::build_guardrail_response( array() );
                 return self::ensure_context_meta( self::build_response_payload(
@@ -3727,27 +3765,6 @@ class BKJA_Chat {
                     )
                 ), array() );
             }
-            if ( 'TOP_INCOME_JOBS' === $intent_label ) {
-                $top_items = array();
-                if ( class_exists( 'BKJA_Database' ) && ! defined( 'BKJA_DEV_SCRIPT' ) ) {
-                    $top_items = BKJA_Database::get_top_income_jobs( 6, 2 );
-                }
-                $guided_answer = self::build_high_income_response( $top_items );
-
-                return self::ensure_context_meta( self::build_response_payload(
-                    $guided_answer,
-                    array(),
-                    $message,
-                    false,
-                    'guided_high_income',
-                    array(
-                        'model'        => $model,
-                        'category'     => $resolved_category,
-                        'intent_label' => $intent_label,
-                    )
-                ), array() );
-            }
-
             if ( 'TECHNICAL_JOBS_COMPARISON' === $intent_label ) {
                 $reply = self::build_technical_comparison_response( $normalized_message );
                 return self::ensure_context_meta( self::build_response_payload(
