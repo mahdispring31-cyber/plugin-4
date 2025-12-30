@@ -3382,10 +3382,10 @@ class BKJA_Chat {
 
         $sections = array();
         if ( ! empty( $layers['data_layer'] ) ) {
-            $sections[] = "DATA_LAYER\n" . trim( (string) $layers['data_layer'] );
+            $sections[] = "📊 " . trim( (string) $layers['data_layer'] );
         }
         if ( ! empty( $layers['analysis_layer'] ) ) {
-            $sections[] = "ANALYSIS_LAYER\n" . trim( (string) $layers['analysis_layer'] );
+            $sections[] = "🔎 " . trim( (string) $layers['analysis_layer'] );
         }
         if ( ! empty( $layers['advisory_layer'] ) ) {
             $label = '';
@@ -3396,7 +3396,7 @@ class BKJA_Chat {
                 $text = (string) $layers['advisory_layer'];
             }
             $label_suffix = $label ? ' (' . $label . ')' : '';
-            $sections[] = "ADVISORY_LAYER{$label_suffix}\n" . trim( $text );
+            $sections[] = "💡{$label_suffix} " . trim( $text );
         }
 
         return implode( "\n\n", array_filter( $sections ) );
