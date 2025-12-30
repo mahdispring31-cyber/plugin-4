@@ -325,6 +325,9 @@ class BKJA_Frontend {
             'meta'        => $meta_payload,
             'cards'       => $cards_payload,
         );
+        if ( is_array( $ai_response ) && isset( $ai_response['layers'] ) ) {
+            $response_payload['layers'] = $ai_response['layers'];
+        }
 
         if ( ! $user_id ) {
             $response_payload['guest_message_count'] = (int) $usage_count;
