@@ -2366,23 +2366,25 @@ class BKJA_Chat {
     }
 
     protected static function build_market_analysis_reply( $intent, $context, $normalized_message, $alias_data = array() ) {
-        $title = isset( $context['job_title'] ) && $context['job_title'] ? $context['job_title'] : '';
-        $alias_titles = ! empty( $alias_data['titles'] ) ? (array) $alias_data['titles'] : array();
-        if ( '' === $title && ! empty( $alias_titles[0] ) ) {
-            $title = $alias_titles[0];
+        $lines = array(
+            '• برای این عنوان فعلاً گزارش عددی کافی نداریم.',
+            '• شهر و نوع همکاری‌ات چیه؟',
+            '• سطح مهارت/سابقه‌ات چقدره؟',
+        );
+
+        $candidate_labels = array();
+        if ( isset( $context['candidates'] ) && is_array( $context['candidates'] ) ) {
+            foreach ( array_slice( $context['candidates'], 0, 3 ) as $candidate ) {
+                $label = is_array( $candidate ) ? ( $candidate['label'] ?? '' ) : ( isset( $candidate->label ) ? $candidate->label : '' );
+                $label = trim( (string) $label );
+                if ( '' !== $label ) {
+                    $candidate_labels[] = $label;
+                }
+            }
         }
 
-        $lines = array();
-        $subject = $title ? 'برای «' . $title . '»' : 'در این حوزه';
-        $lines[] = '⚠️ داده مستقیم نداریم؛ بنابراین این پاسخ تحلیلی است.';
-        $lines[] = '• ' . $subject . ' فعلاً داده کافی برای عدد دقیق درآمد نداریم.';
-        $lines[] = '• سرمایه اولیه هم به شهر، مهارت و مدل کاری وابسته است و بدون داده مستقیم عدد نمی‌دهیم.';
-        $lines[] = '• عوامل اثرگذار: شهر/محله، کیفیت نمونه‌کار، مهارت بازاریابی، ثبات در سفارش‌ها، هزینه مواد اولیه.';
-        $lines[] = '• اگر داده دقیق می‌خواهی، شغل‌های هم‌خانواده با گزارش بیشتر را بررسی کنیم.';
-        $lines[] = 'این پاسخ ترکیبی از تحلیل مشاوره‌ای و داده‌های ثبت‌شده کاربران است.';
-
-        if ( empty( $title ) ) {
-            $lines[] = 'اگر عنوان دقیق شغل را بگویی، پاسخ دقیق‌تر می‌شود.';
+        if ( ! empty( $candidate_labels ) ) {
+            $lines[] = '• عناوین نزدیک: ' . implode( '، ', $candidate_labels );
         }
 
         return implode( "\n", array_filter( array_map( 'trim', $lines ) ) );
