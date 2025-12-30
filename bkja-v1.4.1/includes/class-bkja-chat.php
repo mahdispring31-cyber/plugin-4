@@ -1813,6 +1813,52 @@ class BKJA_Chat {
             return 'GENERAL_BUSINESS_QUERY';
         }
 
+        $normalized_text = self::normalize_lookup_text( $text );
+        $phrases         = self::build_job_lookup_phrases( $normalized_text );
+        if ( ! empty( $phrases ) ) {
+            $tokens = preg_split( '/[\s،,.!?؟]+/u', $normalized_text );
+            $tokens = array_values( array_filter( array_map( 'trim', (array) $tokens ) ) );
+            $token_count = count( $tokens );
+            $max_phrase_length = 30;
+
+            if ( $token_count <= 3 ) {
+                $resolver_available = class_exists( 'BKJA_Database' )
+                    && method_exists( 'BKJA_Database', 'resolve_job_query' )
+                    && isset( $GLOBALS['wpdb'] )
+                    && method_exists( $GLOBALS['wpdb'], 'prepare' );
+                $non_job_phrases = array( 'سلام', 'مرسی', 'خوبی', 'چطوری', 'کمک', 'راهنما' );
+
+                foreach ( $phrases as $phrase ) {
+                    $phrase = trim( (string) $phrase );
+                    if ( '' === $phrase ) {
+                        continue;
+                    }
+
+                    $phrase_len = function_exists( 'mb_strlen' ) ? mb_strlen( $phrase, 'UTF-8' ) : strlen( $phrase );
+                    if ( $phrase_len > $max_phrase_length ) {
+                        continue;
+                    }
+
+                    $phrase_lower = function_exists( 'mb_strtolower' ) ? mb_strtolower( $phrase, 'UTF-8' ) : strtolower( $phrase );
+                    if ( in_array( $phrase_lower, $non_job_phrases, true ) ) {
+                        continue;
+                    }
+
+                    if ( $resolver_available ) {
+                        $resolved = BKJA_Database::resolve_job_query( $phrase, array( 'limit' => 1 ) );
+                        $confidence = isset( $resolved['confidence'] ) ? (float) $resolved['confidence'] : 0.0;
+                        $matched_id = isset( $resolved['matched_job_title_id'] ) ? (int) $resolved['matched_job_title_id'] : 0;
+
+                        if ( $matched_id > 0 && $confidence >= 0.78 ) {
+                            return 'JOB_INFO';
+                        }
+                    } else {
+                        return 'JOB_INFO';
+                    }
+                }
+            }
+        }
+
         return $has_job_hint || $is_followup ? 'JOB_INFO' : 'CAREER_SUGGESTION';
     }
 
