@@ -38,6 +38,7 @@ if ( ! function_exists( 'get_option' ) ) {
 
 require_once __DIR__ . '/../includes/class-bkja-analytics.php';
 require_once __DIR__ . '/../includes/class-bkja-database.php';
+require_once __DIR__ . '/../includes/helpers.php';
 require_once __DIR__ . '/../includes/BKJA_State.php';
 require_once __DIR__ . '/../includes/BKJA_RuleEngine.php';
 require_once __DIR__ . '/../includes/class-bkja-chat.php';
@@ -109,6 +110,33 @@ $direct_intent = is_array( $direct_payload ) && isset( $direct_payload['intent_l
 $assert( 'TOP_INCOME_JOBS' === $direct_intent, 'session job context still routes to TOP_INCOME_JOBS' );
 $direct_text = is_array( $direct_payload ) && isset( $direct_payload['text'] ) ? $direct_payload['text'] : '';
 $assert( false === strpos( $direct_text, 'این عنوان را دقیق پیدا نکردم' ), 'direct intent avoids job clarification message' );
+
+$high_income_items = array(
+    array(
+        'label'         => 'برنامه‌نویس بک‌اند',
+        'median_income' => 75000000,
+        'report_count'  => 6,
+    ),
+    array(
+        'label'         => 'دندانپزشک',
+        'median_income' => 120000000,
+        'report_count'  => 5,
+    ),
+    array(
+        'label'         => 'مدیر پروژه ساختمانی',
+        'median_income' => 90000000,
+        'report_count'  => 4,
+    ),
+);
+$high_income_reflection = new ReflectionMethod( 'BKJA_Chat', 'build_high_income_response' );
+$high_income_reflection->setAccessible( true );
+$high_income_reply = (string) $high_income_reflection->invoke( null, $high_income_items );
+$high_income_lines = array_filter( array_map( 'trim', explode( "\n", $high_income_reply ) ) );
+$high_income_job_lines = array_filter( $high_income_lines, function( $line ) {
+    return 0 === strpos( $line, '• ' );
+} );
+$assert( count( $high_income_job_lines ) >= 3, 'high income list includes at least 3 job lines when DB has data' );
+$assert( false === strpos( $high_income_reply, 'داده کافی ندارم' ), 'high income list avoids guardrail response when data exists' );
 
 if ( $failed ) {
     exit( 1 );
