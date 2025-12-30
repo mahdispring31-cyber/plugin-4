@@ -1272,6 +1272,38 @@ class BKJA_Chat {
         return (bool) preg_match( '/افزایش\s*درآمد|درآمدم\s*رو|چطور\s*درآمد|رشد\s*درآمد|بیشتر\s*درآمد/u', $lower );
     }
 
+    protected static function is_home_jobs_suggestion_query( $normalized_message ) {
+        $text = is_string( $normalized_message ) ? $normalized_message : '';
+        if ( '' === $text ) {
+            return false;
+        }
+
+        $lower = function_exists( 'mb_strtolower' ) ? mb_strtolower( $text, 'UTF-8' ) : strtolower( $text );
+        $has_home = preg_match( '/خانگی|در\s*خانه|کار\s*در\s*خانه|کار\s*خانگی|home/u', $lower );
+        $has_suggest = preg_match( '/پیشنهاد|چه\s*شغل|چه\s*کار|ایده|چی\s*خوبه|معرفی/u', $lower );
+
+        return (bool) ( $has_home && $has_suggest );
+    }
+
+    protected static function is_technical_jobs_comparison_query( $normalized_message ) {
+        $text = is_string( $normalized_message ) ? $normalized_message : '';
+        if ( '' === $text ) {
+            return false;
+        }
+
+        $lower = function_exists( 'mb_strtolower' ) ? mb_strtolower( $text, 'UTF-8' ) : strtolower( $text );
+        $has_compare = preg_match( '/مقایسه|compare|vs|versus|کدوم|بهتره|بهتر\s*هست|فرق|تفاوت/u', $lower );
+        if ( ! $has_compare ) {
+            return false;
+        }
+
+        $category = self::detect_job_category( $text );
+        $has_technical = 'technical' === $category
+            || preg_match( '/فنی|مهندسی|تکنسین|برنامه\s*نویس|developer|programmer/i', $lower );
+
+        return (bool) $has_technical;
+    }
+
     protected static function is_compare_similar_intent( $normalized_message ) {
         $text = is_string( $normalized_message ) ? trim( $normalized_message ) : '';
         if ( '' === $text ) {
@@ -1292,6 +1324,34 @@ class BKJA_Chat {
         }
 
         return false;
+    }
+
+    protected static function build_technical_comparison_response( $normalized_message ) {
+        $normalized_message = is_string( $normalized_message ) ? $normalized_message : '';
+        $lines = array(
+            '🧩 مقایسه شغل‌های فنی بهتر است بر اساس داده‌های میدانی انجام شود.',
+            '• معیار کلیدی: نوع مهارت/زیرشاخه فنی، شهر و مدل همکاری (پروژه‌ای یا استخدامی).',
+            '• داده‌های BKJA نشان می‌دهد تفاوت درآمدی بیشتر به مهارت تخصصی و نمونه‌کار وابسته است.',
+            '• برای مقایسه دقیق‌تر، دو عنوان شغلی مشخص یا مهارت دقیق را بگو.',
+            '➡️ قدم بعدی: ۲ عنوان شغلی فنی یا مهارت‌ها را بنویس تا مقایسه کنم.',
+            'این پاسخ ترکیبی از تحلیل مشاوره‌ای و داده‌های ثبت‌شده کاربران است.',
+        );
+
+        return implode( "\n", array_filter( array_map( 'trim', $lines ) ) );
+    }
+
+    protected static function log_intent_route( $intent_label, $route ) {
+        $intent_label = is_string( $intent_label ) ? $intent_label : '';
+        $route = is_string( $route ) ? $route : '';
+
+        if ( '' === $intent_label ) {
+            $intent_label = 'unknown';
+        }
+        if ( '' === $route ) {
+            $route = 'unknown';
+        }
+
+        error_log( sprintf( '[BKJA] intent_route intent="%s" route="%s"', $intent_label, $route ) );
     }
 
     protected static function build_compare_fallback_message() {
@@ -1507,6 +1567,7 @@ class BKJA_Chat {
             'CAREER_SUGGESTION'     => 'پیشنهاد مسیر شغلی',
             'GENERAL_BUSINESS_QUERY'=> 'ایده‌های کسب‌وکار کوچک/خانگی',
             'LOW_CAPITAL_QUERY'     => 'ایده‌های شغلی با سرمایه کم',
+            'HOME_JOBS_SUGGESTION'  => 'ایده‌های شغل خانگی',
         );
 
         $heading = isset( $title_map[ $intent_label ] ) ? $title_map[ $intent_label ] : 'پیشنهاد شغلی';
@@ -1567,12 +1628,29 @@ class BKJA_Chat {
 
         $lower = function_exists( 'mb_strtolower' ) ? mb_strtolower( $text, 'UTF-8' ) : strtolower( $text );
 
+        if ( self::is_technical_jobs_comparison_query( $text ) ) {
+            return 'TECHNICAL_JOBS_COMPARISON';
+        }
+
         if ( self::is_compare_similar_intent( $text ) || preg_match( '/مقایسه|compare|vs|versus/u', $lower ) ) {
             return 'JOB_COMPARE';
         }
 
         if ( self::is_high_income_query( $text ) ) {
-            return $has_job_hint ? 'HIGH_INCOME_QUERY' : 'TOP_INCOME_JOBS';
+            return $has_job_hint ? 'JOB_INCOME' : 'TOP_INCOME_JOBS';
+        }
+
+        if ( self::is_home_jobs_suggestion_query( $text ) ) {
+            return 'HOME_JOBS_SUGGESTION';
+        }
+
+        if ( self::is_income_growth_general_query( $text ) ) {
+            return 'INCOME_GROWTH_ADVICE';
+        }
+
+        $income_pattern = '/درآمد|حقوق|دستمزد|salary|income/i';
+        if ( preg_match( $income_pattern, $lower ) ) {
+            return 'JOB_INCOME';
         }
 
         if ( preg_match( '/چطور\s*بشم|چگونه\s*بشم|از\s*کجا\s*شروع|مسیر\s*یادگیری|یاد\s*بگیرم|راه\s*یادگیری|چطور\s*وارد/u', $lower ) ) {
@@ -3009,6 +3087,7 @@ class BKJA_Chat {
         }
 
         if ( $is_followup_action && $job_title_id <= 0 && '' === $job_title_hint ) {
+            self::log_intent_route( $intent_label, 'followup_missing_job' );
             $payload = self::build_response_payload(
                 'برای انجام این کار، اول کارت یک شغل مشخص را باز کن.',
                 array(),
@@ -3029,18 +3108,99 @@ class BKJA_Chat {
             return $payload;
         }
 
+        $direct_intents = array( 'TOP_INCOME_JOBS', 'TECHNICAL_JOBS_COMPARISON', 'HOME_JOBS_SUGGESTION', 'INCOME_GROWTH_ADVICE' );
+        if ( in_array( $intent_label, $direct_intents, true ) && ! $is_followup_action ) {
+            self::log_intent_route( $intent_label, 'direct_product' );
+            if ( 'TOP_INCOME_JOBS' === $intent_label ) {
+                $top_items = class_exists( 'BKJA_Database' ) ? BKJA_Database::get_top_income_jobs( 6, 2 ) : array();
+                $guided_answer = self::build_high_income_response( $top_items );
+
+                return self::ensure_context_meta( self::build_response_payload(
+                    $guided_answer,
+                    array(),
+                    $message,
+                    false,
+                    'guided_high_income',
+                    array(
+                        'model'        => $model,
+                        'category'     => $resolved_category,
+                        'intent_label' => $intent_label,
+                    )
+                ), array() );
+            }
+
+            if ( 'TECHNICAL_JOBS_COMPARISON' === $intent_label ) {
+                $reply = self::build_technical_comparison_response( $normalized_message );
+                return self::ensure_context_meta( self::build_response_payload(
+                    $reply,
+                    array(),
+                    $message,
+                    false,
+                    'compare_similar_jobs',
+                    array(
+                        'model'        => $model,
+                        'category'     => $resolved_category,
+                        'intent_label' => $intent_label,
+                    )
+                ), array() );
+            }
+
+            if ( 'HOME_JOBS_SUGGESTION' === $intent_label ) {
+                $alias_data = self::resolve_alias_data( $normalized_message );
+                $filters = array( 'home' => true );
+                $budget = self::extract_budget_from_message( $normalized_message );
+                if ( ! empty( $budget['max'] ) ) {
+                    $filters['investment_max'] = (int) $budget['max'];
+                }
+
+                $items = self::get_job_list_candidates( $filters, 6 );
+                if ( empty( $items ) ) {
+                    $fallbacks = self::get_safe_job_suggestions( 6 );
+                    foreach ( $fallbacks as $fallback ) {
+                        $items[] = array( 'label' => $fallback['label'], 'tags' => array() );
+                    }
+                }
+
+                $reply = self::build_suggestion_response( $intent_label, $normalized_message, $items, $alias_data );
+                return self::ensure_context_meta( self::build_response_payload(
+                    $reply,
+                    array(),
+                    $message,
+                    false,
+                    'intent_suggestion',
+                    array(
+                        'model'              => $model,
+                        'category'           => $resolved_category,
+                        'intent_label'       => $intent_label,
+                        'normalized_message' => $normalized_message,
+                    )
+                ), array() );
+            }
+
+            if ( 'INCOME_GROWTH_ADVICE' === $intent_label ) {
+                $reply = self::build_income_growth_general_response();
+                return self::ensure_context_meta( self::build_response_payload(
+                    $reply,
+                    array(),
+                    $message,
+                    false,
+                    'income_growth_general',
+                    array(
+                        'model'              => $model,
+                        'category'           => $resolved_category,
+                        'intent_label'       => $intent_label,
+                        'normalized_message' => $normalized_message,
+                    )
+                ), array() );
+            }
+        }
+
         $context_query = ( $is_followup_action && '' !== $job_title_hint ) ? $job_title_hint : $normalized_message;
-        $skip_context = in_array(
-            $intent_label,
-            array( 'CAREER_SUGGESTION', 'TOP_INCOME_JOBS', 'HIGH_INCOME_QUERY', 'LOW_CAPITAL_QUERY', 'GENERAL_BUSINESS_QUERY' ),
-            true
-        )
-            && ! $is_followup_action
-            && ! $is_followup_only
-            && $job_title_id <= 0
-            && '' === $job_title_hint
-            && '' === $job_slug;
-        $context = $skip_context ? array() : self::get_job_context( $context_query, $job_title_hint, $job_slug, $job_title_id, $job_group_key );
+        $should_resolve_job = in_array( $intent_label, array( 'JOB_INFO', 'JOB_INCOME' ), true );
+        self::log_intent_route( $intent_label, $should_resolve_job ? 'job_resolver' : 'no_job_resolver' );
+        $context = $should_resolve_job
+            ? self::get_job_context( $context_query, $job_title_hint, $job_slug, $job_title_id, $job_group_key )
+            : array();
         $alias_data = self::resolve_alias_data( $normalized_message );
 
         $state = BKJA_RuleEngine::classify(
@@ -3142,24 +3302,6 @@ class BKJA_Chat {
         }
 
         $api_key = self::get_api_key();
-
-        if ( 'TOP_INCOME_JOBS' === $intent_label ) {
-            $top_items = class_exists( 'BKJA_Database' ) ? BKJA_Database::get_top_income_jobs( 6, 2 ) : array();
-            $guided_answer = self::build_high_income_response( $top_items );
-
-            return self::ensure_context_meta( self::build_response_payload(
-                $guided_answer,
-                $context,
-                $message,
-                false,
-                'guided_high_income',
-                array(
-                    'model'    => $model,
-                    'category' => $resolved_category,
-                    'intent_label' => $intent_label,
-                )
-            ), $context );
-        }
 
         if ( in_array( $intent_label, array( 'CAREER_SUGGESTION', 'GENERAL_BUSINESS_QUERY', 'LOW_CAPITAL_QUERY' ), true )
             && empty( $context['job_title'] ) ) {
@@ -3309,9 +3451,6 @@ class BKJA_Chat {
         }
 
         $resolved_intent = $query_intent;
-        if ( 'fuzzy' === $resolved_intent && ! empty( $pre_intent ) && 'unknown' !== $pre_intent ) {
-            $resolved_intent = $pre_intent;
-        }
 
         if ( empty( $context['job_title'] ) && self::is_home_vs_freelance_query( $normalized_message ) ) {
             $reply = self::build_home_vs_freelance_response( $normalized_message, $request_meta );
