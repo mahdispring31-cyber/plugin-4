@@ -49,6 +49,46 @@ class BKJA_Chat {
         return strtr( $text, $map );
     }
 
+    protected static function is_general_direct_prompt( $message ) {
+        $normalized = self::normalize_fa_text_basic( $message );
+        if ( '' === $normalized ) {
+            return false;
+        }
+
+        $lower = function_exists( 'mb_strtolower' ) ? mb_strtolower( $normalized, 'UTF-8' ) : strtolower( $normalized );
+        $compact = preg_replace( '/\s+/u', '', $lower );
+
+        $patterns = array(
+            'پردرآمدترین',
+            'پر درآمدترین',
+            'بیشترین درآمد',
+            'شغل خانگی',
+            'کار در خانه',
+            'افزایش درآمد',
+            'چطور درآمد',
+            'سرمایه دارم',
+            'با سرمایه',
+            'خانگی بهتره یا آزاد',
+        );
+
+        foreach ( $patterns as $pattern ) {
+            $pattern = self::normalize_fa_text_basic( $pattern );
+            if ( '' === $pattern ) {
+                continue;
+            }
+            $pattern_lower = function_exists( 'mb_strtolower' ) ? mb_strtolower( $pattern, 'UTF-8' ) : strtolower( $pattern );
+            $pattern_compact = preg_replace( '/\s+/u', '', $pattern_lower );
+
+            $pos = function_exists( 'mb_strpos' ) ? mb_strpos( $lower, $pattern_lower, 0, 'UTF-8' ) : strpos( $lower, $pattern_lower );
+            $pos_compact = function_exists( 'mb_strpos' ) ? mb_strpos( $compact, $pattern_compact, 0, 'UTF-8' ) : strpos( $compact, $pattern_compact );
+            if ( false !== $pos || false !== $pos_compact ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     protected static function tokenize_meaningful_terms( $text ) {
         $normalized = self::normalize_fa_text_basic( $text );
         $tokens     = preg_split( '/[\s،,.!?؟;:؛\\\-]+/u', $normalized );
@@ -3434,7 +3474,7 @@ class BKJA_Chat {
             return new WP_Error( 'empty_message', 'Message is empty' );
         }
 
-        if ( class_exists( 'BKJA_Database' ) ) {
+        if ( class_exists( 'BKJA_Database' ) && ! defined( 'BKJA_DEV_SCRIPT' ) ) {
             BKJA_Database::ensure_feedback_table();
         }
 
@@ -3469,6 +3509,12 @@ class BKJA_Chat {
         $is_followup_action = '' !== $normalized_action;
 
         $normalized_message  = self::normalize_message( $message );
+        if ( self::is_general_direct_prompt( $normalized_message ) ) {
+            $job_title_id   = 0;
+            $job_title_hint = '';
+            $job_slug       = '';
+            $job_group_key  = '';
+        }
         $is_followup_only    = self::is_followup_message( $normalized_message );
         $intent_label        = self::detect_intent_label(
             $normalized_message,
@@ -3479,6 +3525,12 @@ class BKJA_Chat {
                 'is_followup'    => $is_followup_action || $is_followup_only,
             )
         );
+        $direct_intents = array( 'TOP_INCOME_JOBS', 'TECHNICAL_JOBS_COMPARISON', 'HOME_JOBS_SUGGESTION', 'INCOME_GROWTH_ADVICE' );
+        if ( in_array( $intent_label, $direct_intents, true ) ) {
+            $job_title_id   = 0;
+            $job_title_hint = '';
+            $job_slug       = '';
+        }
         $pre_intent          = self::detect_query_intent( $normalized_message, array() );
         $followup_reference  = self::is_followup_reference( $normalized_message );
         $broad_intent_types  = array( 'job_suggestion', 'home_business', 'capital_query', 'income_query', 'personality_advice', 'learning_path' );
@@ -3487,7 +3539,7 @@ class BKJA_Chat {
         }
 
         $last_meta = array();
-        if ( class_exists( 'BKJA_Database' ) ) {
+        if ( class_exists( 'BKJA_Database' ) && ! defined( 'BKJA_DEV_SCRIPT' ) ) {
             $last_meta = BKJA_Database::get_last_chat_meta( $args['session_id'], (int) $args['user_id'] );
         }
         $last_state = isset( $last_meta['conversation_state'] ) && is_array( $last_meta['conversation_state'] )
@@ -3532,7 +3584,6 @@ class BKJA_Chat {
             return self::apply_conversation_state( $payload, array() );
         }
 
-        $direct_intents = array( 'TOP_INCOME_JOBS', 'TECHNICAL_JOBS_COMPARISON', 'HOME_JOBS_SUGGESTION', 'INCOME_GROWTH_ADVICE' );
         if ( in_array( $intent_label, $direct_intents, true ) && ! $is_followup_action ) {
             self::log_intent_route( $intent_label, 'direct_product' );
             if ( self::should_apply_guardrail( $intent_label, $pre_intent, array() ) ) {
@@ -3552,7 +3603,10 @@ class BKJA_Chat {
                 ), array() );
             }
             if ( 'TOP_INCOME_JOBS' === $intent_label ) {
-                $top_items = class_exists( 'BKJA_Database' ) ? BKJA_Database::get_top_income_jobs( 6, 2 ) : array();
+                $top_items = array();
+                if ( class_exists( 'BKJA_Database' ) && ! defined( 'BKJA_DEV_SCRIPT' ) ) {
+                    $top_items = BKJA_Database::get_top_income_jobs( 6, 2 );
+                }
                 $guided_answer = self::build_high_income_response( $top_items );
 
                 return self::ensure_context_meta( self::build_response_payload(
